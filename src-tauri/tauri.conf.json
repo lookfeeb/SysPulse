@@ -72,10 +72,5 @@
         "type": "downloadBootstrapper"
       }
     }
-  },
-  "plugins": {
-    "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVCODc0QzhCRTZERDMyODMKUldTRE10M21pMHlIVy8zaXRSTkhpajViMFppUmZ5MThIZEVLdkJpQ0pndGJneUxYU3hRTDhGMHMK"
-    }
   }
 }
