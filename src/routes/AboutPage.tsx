@@ -78,7 +78,14 @@ export default function AboutPage() {
     setNotesLoading(true);
     setNotesOpen(true);
     const { body, date } = await fetchReleaseNotes(version);
-    setNotesContent(body);
+    // If GitHub API returned minimal content, fallback to updater notes.
+    let content = body;
+    if (!content || content.length < 20) {
+      if (status.kind === "available" && status.version === version && status.notes) {
+        content = status.notes;
+      }
+    }
+    setNotesContent(content);
     setNotesDate(date);
     setNotesLoading(false);
   };

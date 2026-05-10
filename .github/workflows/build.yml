@@ -115,6 +115,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Get version
         id: version
@@ -125,6 +127,23 @@ jobs:
             VER=$(jq -r '.version' "src-tauri/$VER")
           fi
           echo "version=$VER" >> $GITHUB_OUTPUT
+
+      - name: Generate changelog
+        id: changelog
+        shell: bash
+        run: |
+          TAG="v${{ steps.version.outputs.version }}"
+          # Find the previous tag (the one before current)
+          PREV_TAG=$(git tag --sort=-v:refname | grep -v "^${TAG}$" | head -n1)
+          if [ -z "$PREV_TAG" ]; then
+            # First release, get all commits
+            LOG=$(git log --pretty=format:"- %s" HEAD)
+          else
+            LOG=$(git log --pretty=format:"- %s" "${PREV_TAG}..${TAG}")
+          fi
+          # Write to file for multi-line handling
+          echo "$LOG" > changelog.md
+          echo "file=changelog.md" >> $GITHUB_OUTPUT
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -178,10 +197,13 @@ jobs:
           X64_EXE_ENC=$(urlencode "${X64_EXE}")
           ARM64_EXE_ENC=$(urlencode "${ARM64_EXE}")
 
+          # Read changelog for notes field
+          NOTES=$(cat changelog.md)
+
           # Build latest.json via jq to avoid YAML/heredoc quoting issues.
           jq -n \
             --arg version "${VERSION}" \
-            --arg notes "SysPulse v${VERSION}" \
+            --arg notes "${NOTES}" \
             --arg pub_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --arg x64_sig "${X64_SIG}" \
             --arg x64_url "${BASE_URL}/${X64_EXE_ENC}" \
@@ -205,8 +227,8 @@ jobs:
           name: "SysPulse v${{ steps.version.outputs.version }}"
           draft: false
           prerelease: false
+          body_path: changelog.md
           files: |
             artifacts/**/*.exe
             artifacts/**/*.exe.sig
             latest.json
-          generate_release_notes: true
