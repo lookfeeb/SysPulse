@@ -1,3 +1,3 @@
 fn main() {
-    traffic_monitor_lib::ipc::commands::export_bindings();
+    syspulse_lib::ipc::commands::export_bindings();
 }
