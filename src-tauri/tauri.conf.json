@@ -49,6 +49,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": ["nsis"],
     "resources": {
       "resources/hw-helper/*": "hw-helper/"
