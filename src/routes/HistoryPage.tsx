@@ -42,6 +42,7 @@ export default function HistoryPage() {
     try {
       const r = await queryTrafficHistory(buildQuery());
       setRows([...r].reverse());
+      void message.success({ content: `查询完成，共 ${r.length} 条`, duration: 1.5 });
     } catch (e: unknown) {
       void message.error(e instanceof Error ? e.message : String(e));
     } finally {
@@ -49,9 +50,11 @@ export default function HistoryPage() {
     }
   };
 
+  // Only auto-query on first mount.
   useEffect(() => {
     void onQuery();
-  }, [range, granularity]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const onExport = async () => {
     const path = await save({
@@ -100,7 +103,7 @@ export default function HistoryPage() {
           <Radio.Button value="day">{t("history.day")}</Radio.Button>
           <Radio.Button value="month">{t("history.month")}</Radio.Button>
         </Radio.Group>
-        <Button type="primary" loading={loading} onClick={onQuery}>
+        <Button type="primary" loading={loading} onClick={onQuery} style={{ minWidth: 72 }}>
           {t("history.query")}
         </Button>
         <Button onClick={onExport} disabled={rows.length === 0}>

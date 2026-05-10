@@ -23,15 +23,26 @@ const { Text } = Typography;
 const GITHUB_REPO = "lookfeeb/SysPulse";
 
 /** Fetch release notes for a given version tag from GitHub API. */
-async function fetchReleaseNotes(version: string): Promise<string> {
+async function fetchReleaseNotes(version: string): Promise<{ body: string; date: string }> {
   const tag = version.startsWith("v") ? version : `v${version}`;
-  const res = await fetch(
-    `https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${tag}`,
-    { headers: { Accept: "application/vnd.github+json" } },
-  );
-  if (!res.ok) return "";
-  const data = (await res.json()) as { body?: string };
-  return data.body ?? "";
+  try {
+    const res = await fetch(
+      `https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${tag}`,
+      { headers: { Accept: "application/vnd.github+json" } },
+    );
+    if (!res.ok) return { body: "", date: "" };
+    const data = (await res.json()) as { body?: string; published_at?: string };
+    const date = data.published_at
+      ? new Date(data.published_at).toLocaleDateString("zh-CN", {
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+        })
+      : "";
+    return { body: data.body ?? "", date };
+  } catch {
+    return { body: "", date: "" };
+  }
 }
 
 export default function AboutPage() {
@@ -41,6 +52,7 @@ export default function AboutPage() {
   const [notesOpen, setNotesOpen] = useState(false);
   const [notesVersion, setNotesVersion] = useState("");
   const [notesContent, setNotesContent] = useState("");
+  const [notesDate, setNotesDate] = useState("");
   const [notesLoading, setNotesLoading] = useState(false);
 
   const status = useUpdateStore((s) => s.status);
@@ -59,19 +71,16 @@ export default function AboutPage() {
   }, [status.kind, message]);
 
   /** Open the release notes modal for a specific version. */
-  const showNotes = async (version: string, notes?: string) => {
+  const showNotes = async (version: string) => {
     setNotesVersion(version);
+    setNotesContent("");
+    setNotesDate("");
+    setNotesLoading(true);
     setNotesOpen(true);
-    if (notes) {
-      setNotesContent(notes);
-      setNotesLoading(false);
-    } else {
-      setNotesContent("");
-      setNotesLoading(true);
-      const body = await fetchReleaseNotes(version);
-      setNotesContent(body);
-      setNotesLoading(false);
-    }
+    const { body, date } = await fetchReleaseNotes(version);
+    setNotesContent(body);
+    setNotesDate(date);
+    setNotesLoading(false);
   };
 
   if (!info) return null;
@@ -164,7 +173,7 @@ export default function AboutPage() {
               type="link"
               size="small"
               icon={<FileTextFilled />}
-              onClick={() => void showNotes(status.version, status.notes)}
+              onClick={() => void showNotes(status.version)}
               style={{ padding: 0, height: "auto", fontSize: 12 }}
             >
               查看 v{status.version} 更新说明
@@ -184,6 +193,7 @@ export default function AboutPage() {
         currentVersion={info.version}
         notes={notesContent}
         loading={notesLoading}
+        publishDate={notesDate}
         onClose={() => setNotesOpen(false)}
       />
 
