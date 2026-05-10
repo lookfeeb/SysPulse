@@ -96,8 +96,7 @@ jobs:
           name: SysPulse-v${{ steps.version.outputs.version }}-${{ matrix.arch }}
           path: |
             target/${{ matrix.rust-target }}/release/bundle/nsis/*.exe
-            target/${{ matrix.rust-target }}/release/bundle/nsis/*.nsis.zip
-            target/${{ matrix.rust-target }}/release/bundle/nsis/*.nsis.zip.sig
+            target/${{ matrix.rust-target }}/release/bundle/nsis/*.exe.sig
           if-no-files-found: error
 
   release:
@@ -153,13 +152,13 @@ jobs:
             printf '%s' "${matches[0]}"
           }
 
-          X64_ZIP_PATH=$(resolve_one "artifacts/SysPulse-v${VERSION}-x64/*.nsis.zip")
-          X64_SIG_PATH=$(resolve_one "artifacts/SysPulse-v${VERSION}-x64/*.nsis.zip.sig")
-          ARM64_ZIP_PATH=$(resolve_one "artifacts/SysPulse-v${VERSION}-arm64/*.nsis.zip")
-          ARM64_SIG_PATH=$(resolve_one "artifacts/SysPulse-v${VERSION}-arm64/*.nsis.zip.sig")
+          X64_EXE_PATH=$(resolve_one "artifacts/SysPulse-v${VERSION}-x64/*-setup.exe")
+          X64_SIG_PATH=$(resolve_one "artifacts/SysPulse-v${VERSION}-x64/*-setup.exe.sig")
+          ARM64_EXE_PATH=$(resolve_one "artifacts/SysPulse-v${VERSION}-arm64/*-setup.exe")
+          ARM64_SIG_PATH=$(resolve_one "artifacts/SysPulse-v${VERSION}-arm64/*-setup.exe.sig")
 
-          X64_ZIP=$(basename "${X64_ZIP_PATH}")
-          ARM64_ZIP=$(basename "${ARM64_ZIP_PATH}")
+          X64_EXE=$(basename "${X64_EXE_PATH}")
+          ARM64_EXE=$(basename "${ARM64_EXE_PATH}")
           X64_SIG=$(cat "${X64_SIG_PATH}")
           ARM64_SIG=$(cat "${ARM64_SIG_PATH}")
 
@@ -167,8 +166,8 @@ jobs:
           urlencode() {
             jq -rn --arg s "$1" '$s|@uri'
           }
-          X64_ZIP_ENC=$(urlencode "${X64_ZIP}")
-          ARM64_ZIP_ENC=$(urlencode "${ARM64_ZIP}")
+          X64_EXE_ENC=$(urlencode "${X64_EXE}")
+          ARM64_EXE_ENC=$(urlencode "${ARM64_EXE}")
 
           # Build latest.json via jq to avoid YAML/heredoc quoting issues.
           jq -n \
@@ -176,9 +175,9 @@ jobs:
             --arg notes "SysPulse v${VERSION}" \
             --arg pub_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --arg x64_sig "${X64_SIG}" \
-            --arg x64_url "${BASE_URL}/${X64_ZIP_ENC}" \
+            --arg x64_url "${BASE_URL}/${X64_EXE_ENC}" \
             --arg arm64_sig "${ARM64_SIG}" \
-            --arg arm64_url "${BASE_URL}/${ARM64_ZIP_ENC}" \
+            --arg arm64_url "${BASE_URL}/${ARM64_EXE_ENC}" \
             '{
               version: $version,
               notes: $notes,
@@ -199,7 +198,6 @@ jobs:
           prerelease: false
           files: |
             artifacts/**/*.exe
-            artifacts/**/*.nsis.zip
-            artifacts/**/*.nsis.zip.sig
+            artifacts/**/*.exe.sig
             latest.json
           generate_release_notes: true
