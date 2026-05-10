@@ -30,7 +30,7 @@ export default function CpuPanel({ cpu }: { cpu: CpuHw }) {
   const perCoreTemps = cpu.perCoreTempsC ?? [];
 
   return (
-    <Space direction="vertical" style={{ width: "100%" }} size={12}>
+    <Space vertical style={{ width: "100%" }} size={12}>
       {/* 标题 + 概览指标 */}
       <div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

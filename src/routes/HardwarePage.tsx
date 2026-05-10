@@ -36,7 +36,7 @@ export default function HardwarePage() {
   const fanControlDisabled = helperStatus !== "running";
 
   return (
-    <Space direction="vertical" size={16} style={{ width: "100%" }}>
+    <Space vertical size={16} style={{ width: "100%" }}>
       {/* 状态提示 */}
       {helperStatus === "unavailable" && (
         <Alert

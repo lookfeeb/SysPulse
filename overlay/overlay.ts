@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Menu } from "@tauri-apps/api/menu";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { fmtFreq, fmtPct, fmtRpm, fmtSpeed, fmtTemp, maxValid, sumValid } from "@/utils/format";
+import { fmtBytes, fmtFreq, fmtPct, fmtRpm, fmtSpeed, fmtTemp, maxValid, sumValid } from "@/utils/format";
 import { expandOrderedItems, overlayPairFor } from "@/utils/overlayItems";
 import type { OverlayItem } from "@/bindings";
 
@@ -12,23 +12,69 @@ interface InterfaceStats {
 }
 
 interface Snapshot {
-  cpu: { usagePercent: number };
-  memory: { usedPercent: number };
+  cpu: { usagePercent: number; model?: string; physicalCores?: number };
+  memory: {
+    usedPercent: number;
+    usedBytes?: number;
+    totalBytes?: number;
+    swapUsedBytes?: number;
+    swapTotalBytes?: number;
+  };
   network: { total: InterfaceStats };
 }
 
 interface DiskHw {
+  model?: string | null;
+  bus?: string | null;
   tempC: number | null;
   readBytesPerSec: number | null;
   writeBytesPerSec: number | null;
+  health?: string | null;
+}
+
+interface GpuHw {
+  name?: string | null;
+  vendor?: string | null;
+  usagePercent: number | null;
+  tempC: number | null;
+  memUsedMb?: number | null;
+  memTotalMb?: number | null;
+  powerW?: number | null;
+  fanRpm?: number | null;
+}
+
+interface CpuHw {
+  name?: string | null;
+  packageTempC: number | null;
+  frequencyMhz: number | null;
+  perCoreTempsC?: (number | null)[];
+  totalUsage?: number | null;
+  powerW?: number | null;
+}
+
+interface FanHwItem {
+  name?: string | null;
+  rpm: number | null;
+  pwmPercent?: number | null;
+}
+
+interface NamedValue {
+  name: string;
+  value: number;
+}
+
+interface MotherboardHw {
+  vendor?: string | null;
+  model?: string | null;
+  temperaturesC?: NamedValue[];
 }
 
 interface HwSnapshot {
-  cpu?: { packageTempC: number | null; frequencyMhz: number | null } | null;
-  gpus?: { tempC: number | null; usagePercent: number | null }[];
+  cpu?: CpuHw | null;
+  gpus?: GpuHw[];
   disks?: DiskHw[];
-  motherboard?: { temperaturesC: { value: number }[] } | null;
-  fans?: { rpm: number | null }[];
+  motherboard?: MotherboardHw | null;
+  fans?: FanHwItem[];
 }
 
 interface OverlayConfig {
@@ -252,6 +298,155 @@ function autoFitWindow(root: HTMLElement, options: { allowShrink?: boolean } = {
   }, 120);
 }
 
+let lastSnapshot: Snapshot | null = null;
+let lastHw: HwSnapshot | null = null;
+
+type TooltipBuilder = (s: Snapshot | null, h: HwSnapshot | null) => string;
+
+const tooltipBuilders: Record<string, TooltipBuilder> = {
+  cpu: (s, h) => {
+    const lines = ["CPU 占用"];
+    const usage = h?.cpu?.totalUsage ?? s?.cpu.usagePercent;
+    if (usage != null) lines.push(`当前占用：${fmtPct(usage)}`);
+    if (h?.cpu?.name) lines.push(`型号：${h.cpu.name}`);
+    else if (s?.cpu.model) lines.push(`型号：${s.cpu.model}`);
+    if (s?.cpu.physicalCores) lines.push(`物理核心：${s.cpu.physicalCores}`);
+    if (h?.cpu?.powerW != null) lines.push(`功耗：${h.cpu.powerW.toFixed(1)} W`);
+    return lines.join("\n");
+  },
+  "cpu-temp": (_, h) => {
+    const lines = ["CPU 温度"];
+    lines.push(`封装温度：${fmtTemp(h?.cpu?.packageTempC)}`);
+    const perCore = h?.cpu?.perCoreTempsC ?? [];
+    const cores = perCore.filter((t): t is number => t != null);
+    if (cores.length) {
+      const max = Math.max(...cores);
+      const min = Math.min(...cores);
+      lines.push(`最高核心：${fmtTemp(max)}`);
+      lines.push(`最低核心：${fmtTemp(min)}`);
+    }
+    return lines.join("\n");
+  },
+  "cpu-freq": (_, h) => {
+    const lines = ["CPU 频率"];
+    lines.push(`当前：${fmtFreq(h?.cpu?.frequencyMhz)}`);
+    return lines.join("\n");
+  },
+  mem: (s) => {
+    const lines = ["内存"];
+    if (s?.memory) {
+      lines.push(`占用：${fmtPct(s.memory.usedPercent)}`);
+      if (s.memory.usedBytes != null && s.memory.totalBytes != null) {
+        lines.push(`已用：${fmtBytes(s.memory.usedBytes)} / ${fmtBytes(s.memory.totalBytes)}`);
+      }
+      if (s.memory.swapTotalBytes != null && s.memory.swapTotalBytes > 0) {
+        lines.push(
+          `交换：${fmtBytes(s.memory.swapUsedBytes ?? 0)} / ${fmtBytes(s.memory.swapTotalBytes)}`,
+        );
+      }
+    }
+    return lines.join("\n");
+  },
+  "gpu-usage": (_, h) => {
+    const gpus = h?.gpus ?? [];
+    const lines = ["GPU 占用"];
+    if (!gpus.length) {
+      lines.push("未检测到 GPU");
+      return lines.join("\n");
+    }
+    for (const g of gpus) {
+      const name = g.name || g.vendor || "GPU";
+      lines.push(`${name}：${fmtPct(g.usagePercent)}`);
+    }
+    return lines.join("\n");
+  },
+  "gpu-temp": (_, h) => {
+    const gpus = h?.gpus ?? [];
+    const lines = ["GPU 温度"];
+    if (!gpus.length) {
+      lines.push("未检测到 GPU");
+      return lines.join("\n");
+    }
+    for (const g of gpus) {
+      const name = g.name || g.vendor || "GPU";
+      lines.push(`${name}：${fmtTemp(g.tempC)}`);
+    }
+    return lines.join("\n");
+  },
+  "disk-read": (_, h) => {
+    const disks = h?.disks ?? [];
+    const lines = ["硬盘读写"];
+    const totalR = sumValid(disks.map((d) => d.readBytesPerSec));
+    const totalW = sumValid(disks.map((d) => d.writeBytesPerSec));
+    lines.push(`合计读取：${fmtSpeed(totalR)}`);
+    lines.push(`合计写入：${fmtSpeed(totalW)}`);
+    for (const d of disks) {
+      const model = d.model || "磁盘";
+      lines.push(`${model}：↓${fmtSpeed(d.readBytesPerSec)} ↑${fmtSpeed(d.writeBytesPerSec)}`);
+    }
+    return lines.join("\n");
+  },
+  "disk-temp": (_, h) => {
+    const disks = h?.disks ?? [];
+    const lines = ["磁盘温度"];
+    if (!disks.length) {
+      lines.push("未检测到磁盘");
+      return lines.join("\n");
+    }
+    for (const d of disks) {
+      const model = d.model || "磁盘";
+      lines.push(`${model}：${fmtTemp(d.tempC)}`);
+    }
+    return lines.join("\n");
+  },
+  "fan-rpm": (_, h) => {
+    const fans = (h?.fans ?? []).filter((f) => f.rpm != null && f.rpm > 0);
+    const lines = ["风扇转速"];
+    if (!fans.length) {
+      lines.push("未检测到风扇");
+      return lines.join("\n");
+    }
+    for (const f of fans) {
+      const name = f.name || "风扇";
+      const pwm = f.pwmPercent != null ? `（${Math.round(f.pwmPercent)}%）` : "";
+      lines.push(`${name}：${fmtRpm(f.rpm)}${pwm}`);
+    }
+    return lines.join("\n");
+  },
+  "mb-temp": (_, h) => {
+    const mb = h?.motherboard;
+    const temps = mb?.temperaturesC ?? [];
+    const lines = ["主板温度"];
+    if (mb?.model) lines.push(`主板：${mb.vendor || ""} ${mb.model}`.trim());
+    if (!temps.length) {
+      lines.push("未检测到温度");
+      return lines.join("\n");
+    }
+    for (const t of temps) {
+      lines.push(`${t.name}：${fmtTemp(t.value)}`);
+    }
+    return lines.join("\n");
+  },
+  "net-down": (s) => buildNetTooltip(s),
+  "net-up": (s) => buildNetTooltip(s),
+};
+
+function buildNetTooltip(s: Snapshot | null): string {
+  const total = s?.network.total;
+  const lines = ["网速"];
+  lines.push(`下行：${fmtSpeed(total?.bytesRecvPerSec)}`);
+  lines.push(`上行：${fmtSpeed(total?.bytesSentPerSec)}`);
+  return lines.join("\n");
+}
+
+function applyTooltips(root: HTMLElement, s: Snapshot | null, h: HwSnapshot | null) {
+  root.querySelectorAll<HTMLElement>(".ov-item").forEach((el) => {
+    const key = el.dataset.key || "";
+    const builder = tooltipBuilders[key];
+    if (builder) el.title = builder(s, h);
+  });
+}
+
 async function runMenuAction(action: string) {
   try {
     if (action === "settings") await invoke("show_config_window");
@@ -281,7 +476,6 @@ async function createContextMenu(root: HTMLElement) {
     ],
   });
 
-  root.title = "右键打开菜单，双击打开设置";
   document.addEventListener("contextmenu", (ev) => {
     ev.preventDefault();
     void menu.popup(undefined, getCurrentWindow());
@@ -305,6 +499,19 @@ async function main() {
     autoFitWindow(root, { allowShrink: true });
   }
 
+  // Prime tooltips from the last-known snapshots so hover has data on first render
+  try {
+    const [snap, hw] = await Promise.all([
+      invoke<Snapshot | null>("get_realtime_stats"),
+      invoke<HwSnapshot | null>("get_hw_snapshot"),
+    ]);
+    if (snap) lastSnapshot = snap;
+    if (hw) lastHw = hw;
+    applyTooltips(root, lastSnapshot, lastHw);
+  } catch (e) {
+    console.warn("prime overlay tooltips failed", e);
+  }
+
   // Update on stats events
   const valDown = root.querySelector<HTMLElement>('[data-key="net-down"] .val')!;
   const valUp = root.querySelector<HTMLElement>('[data-key="net-up"] .val')!;
@@ -326,6 +533,8 @@ async function main() {
     valUp.textContent = fmtSpeed(s.network.total.bytesSentPerSec);
     valCpu.textContent = `${Math.round(s.cpu.usagePercent)}%`;
     valMem.textContent = `${Math.round(s.memory.usedPercent)}%`;
+    lastSnapshot = s;
+    applyTooltips(root, lastSnapshot, lastHw);
     // Refit if width changed (e.g., 999 KB/s → 1.0 MB/s)
     autoFitWindow(root);
   });
@@ -350,6 +559,8 @@ async function main() {
       const mbTemps = (h.motherboard?.temperaturesC ?? []).map((t) => t.value);
       valMbTemp.textContent = fmtTemp(maxValid(mbTemps));
     }
+    lastHw = h;
+    applyTooltips(root, lastSnapshot, lastHw);
     autoFitWindow(root);
   });
 

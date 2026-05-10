@@ -31,7 +31,7 @@ export function OverlaySettingsCard() {
     void patch({ overlay: { ...ov, ...changes } });
 
   return (
-    <Space direction="vertical" size={16} style={{ width: "100%" }}>
+    <Space vertical size={16} style={{ width: "100%" }}>
       {/* 显示项选择 */}
       <Card
         size="small"

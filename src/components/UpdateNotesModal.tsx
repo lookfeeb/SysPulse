@@ -79,7 +79,7 @@ export default function UpdateNotesModal({
       footer={null}
       styles={{
         body: { padding: 0 },
-        content: { borderRadius: 12, overflow: "hidden" },
+        container: { borderRadius: 12, overflow: "hidden" },
       }}
       destroyOnHidden
     >
@@ -148,9 +148,9 @@ export default function UpdateNotesModal({
           <>
             {trimmed && (
               <Divider
-                orientation="left"
-                orientationMargin={0}
+                titlePlacement="start"
                 style={{ margin: "0 0 12px", fontSize: 12, color: "#6b7280" }}
+                styles={{ content: { margin: 0 } }}
               >
                 更新内容
               </Divider>

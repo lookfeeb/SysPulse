@@ -69,7 +69,7 @@ graph TB
     subgraph User["👤 用户交互"]
         Tray["🔲 系统托盘<br/>左键/右键菜单"]
         Overlay["📊 任务栏悬浮窗<br/>overlay/index.html<br/>纯 TS + CSS"]
-        ConfigWin["⚙️ 配置窗口<br/>React 18 + Ant Design<br/>src/index.html"]
+        ConfigWin["⚙️ 配置窗口<br/>React 19 + Ant Design 6<br/>src/index.html"]
     end
 
     subgraph Frontend["🌐 前端层 (WebView2)"]
@@ -263,11 +263,11 @@ stateDiagram-v2
 | :-- | :-- | :-- |
 | 桌面框架 | **Tauri 2** | Rust 后端 + 系统 WebView2 前端，体积小、性能高 |
 | 后端语言 | **Rust** | 内存安全、高性能系统编程 |
-| 前端框架 | **React 18** | 配置窗口 UI |
+| 前端框架 | **React 19** | 配置窗口 UI |
 | 类型系统 | **TypeScript** | 前端全量类型覆盖 |
-| UI 组件库 | **Ant Design 5** | 企业级 React 组件 |
+| UI 组件库 | **Ant Design 6** | 企业级 React 组件 |
 | 状态管理 | **Zustand** | 轻量级 React 状态管理 |
-| 构建工具 | **Vite 5** | 极速 HMR 开发体验 |
+| 构建工具 | **Vite 7** | 极速 HMR 开发体验 |
 | 国际化 | **i18next** | 中英文双语支持 |
 | 数据库 | **SQLite**（rusqlite） | 本地流量历史持久化 |
 | IPC 类型生成 | **tauri-specta** | Rust → TypeScript 类型自动生成 |

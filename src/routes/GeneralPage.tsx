@@ -53,7 +53,7 @@ export default function GeneralPage() {
   const autoStartLoading = autoStartStoreLoading || autoStartState === null;
 
   return (
-    <Space direction="vertical" size={16} style={{ width: "100%" }}>
+    <Space vertical size={16} style={{ width: "100%" }}>
       <OverlaySettingsCard />
       <Card title={t("menu.general")} style={{ borderRadius: 10 }}>
         <Form layout="horizontal" labelCol={{ span: 6 }} wrapperCol={{ span: 14 }}>

@@ -17,7 +17,7 @@ export default function MotherboardPanel({ mb }: { mb: MotherboardHw }) {
   const voltages = mb.voltagesV ?? [];
 
   return (
-    <Space direction="vertical" style={{ width: "100%" }} size={12}>
+    <Space vertical style={{ width: "100%" }} size={12}>
       {/* 标题 */}
       <div>
         <Text strong style={{ fontSize: 13 }}>{mb.model}</Text>

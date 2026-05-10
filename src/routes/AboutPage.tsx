@@ -96,7 +96,7 @@ export default function AboutPage() {
   const isDownloading = status.kind === "downloading";
 
   return (
-    <Space direction="vertical" size={16} style={{ width: "100%" }}>
+    <Space vertical size={16} style={{ width: "100%" }}>
       {/* App Identity */}
       <Card style={{ borderRadius: 10 }} styles={{ body: { padding: "20px 24px" } }}>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>

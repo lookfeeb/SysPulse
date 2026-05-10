@@ -22,7 +22,7 @@ function healthColor(h: string): string {
 
 export default function DiskPanel({ disks }: { disks: DiskHw[] }) {
   return (
-    <Space direction="vertical" style={{ width: "100%" }} size={8}>
+    <Space vertical style={{ width: "100%" }} size={8}>
       {disks.map((disk) => {
         const usedPct =
           disk.totalBytes > 0 && disk.usedBytes != null

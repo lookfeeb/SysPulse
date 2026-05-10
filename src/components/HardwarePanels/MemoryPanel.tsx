@@ -10,7 +10,7 @@ export default function MemoryPanel({ mem }: { mem: MemoryHw }) {
   const usedPct = mem.usedPercent;
 
   return (
-    <Space direction="vertical" style={{ width: "100%" }} size={12}>
+    <Space vertical style={{ width: "100%" }} size={12}>
       {/* 概览 */}
       <div
         style={{

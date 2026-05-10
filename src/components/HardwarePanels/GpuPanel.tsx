@@ -18,7 +18,7 @@ function tempColor(t: number | null | undefined): string {
 
 export default function GpuPanel({ gpus }: { gpus: GpuHw[] }) {
   return (
-    <Space direction="vertical" style={{ width: "100%" }} size={12}>
+    <Space vertical style={{ width: "100%" }} size={12}>
       {gpus.map((gpu) => (
         <div
           key={gpu.index}
