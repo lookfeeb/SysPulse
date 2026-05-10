@@ -1,0 +1,39 @@
+node_modules/
+dist/
+dist-ssr/
+*.local
+*.tsbuildinfo
+__pycache__/
+1.txt
+
+# Tauri / Cargo
+target/
+src-tauri/target/
+src-tauri/gen/
+src-tauri/resources/hw-helper/
+
+# C# helper build outputs
+hw-helper/bin/
+hw-helper/obj/
+hw-helper/publish/
+
+# Logs
+*.log
+logs/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Lock files we want to keep / drop
+# Keep: package-lock.json, Cargo.lock
+
+# Local release output (installers copied by build.ps1)
+release/

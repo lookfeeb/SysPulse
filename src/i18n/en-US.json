@@ -1,0 +1,96 @@
+{
+  "app": {
+    "name": "SysPulse",
+    "settings": "SysPulse Settings"
+  },
+  "common": {
+    "confirm": "Confirm",
+    "cancel": "Cancel",
+    "enabled": "On",
+    "disabled": "Off"
+  },
+  "menu": {
+    "dashboard": "Dashboard",
+    "general": "General",
+    "overlay": "Overlay",
+    "hardware": "Hardware",
+    "history": "Traffic History",
+    "about": "About"
+  },
+  "general": {
+    "sampleInterval": "Sample interval",
+    "sampleIntervalHint": "Controls the refresh rate for live network, CPU, and memory data.",
+    "adaptiveInterval": "Adaptive sampling",
+    "adaptiveIntervalHint": "Automatically adjusts interval based on system activity: 500ms when busy, 2000ms when idle.",
+    "autoStart": "Launch at startup",
+    "autoStartHint": "Start SysPulse automatically after signing in to Windows.",
+    "autoStartEnabled": "Launch at startup enabled",
+    "autoStartDisabled": "Launch at startup disabled",
+    "configActions": "Config actions",
+    "resetAll": "Reset all settings",
+    "resetConfirm": "Reset all settings to defaults?",
+    "resetDone": "Settings reset"
+  },
+  "dashboard": {
+    "cpu": "CPU",
+    "cpuFreq": "CPU Frequency",
+    "memory": "Memory",
+    "network": "Network",
+    "down": "Down",
+    "up": "Up",
+    "model": "Model",
+    "cores": "Cores",
+    "ofTotal": "/ {{total}}",
+    "noData": "Waiting for first sample…",
+    "live60s": "Last 60 seconds"
+  },
+  "overlay": {
+    "items": "Items",
+    "taskbarHint": "The window snaps to the notification area at taskbar height; it re-aligns when font size or items change. Win11 deprecated IDeskBand, so a borderless window is used to occupy the slot."
+  },
+  "history": {
+    "from": "From",
+    "to": "To",
+    "granularity": "Granularity",
+    "day": "Day",
+    "month": "Month",
+    "query": "Query",
+    "exportCsv": "Export CSV"
+  },
+  "about": {
+    "version": "Version",
+    "platform": "Platform",
+    "openLogs": "Open logs folder",
+    "openConfig": "Open config folder",
+    "github": "GitHub repo",
+    "attribution": "Third-party components",
+    "lhmAttribution": "Hardware sensor data is provided by LibreHardwareMonitorLib, with low-level access via WinRing0. Both are licensed under MPL 2.0."
+  },
+  "admin": {
+    "notElevatedTitle": "Not running as administrator",
+    "notElevatedDesc": "Hardware sensor reading and fan control require administrator privileges. The packaged build auto-requests UAC elevation; this is a dev-mode launch without elevation, so some sensors may be unavailable and fan control will not work."
+  },
+  "hardware": {
+    "tabName": "Hardware",
+    "helperUnavailable": "Hardware helper subprocess unavailable",
+    "helperRestarting": "Hardware helper subprocess restarting",
+    "summary": "Summary",
+    "sensors": "Sensors",
+    "noSensors": "No sensor data yet"
+  },
+  "overlayItems": {
+    "netDown": "Net Down",
+    "netUp": "Net Up",
+    "cpu": "CPU",
+    "mem": "Memory",
+    "diskRead": "Disk Read",
+    "diskWrite": "Disk Write",
+    "gpu": "GPU",
+    "cpuTemp": "CPU Temp",
+    "gpuTemp": "GPU Temp",
+    "gpuUsage": "GPU Usage",
+    "diskTemp": "Disk Temp",
+    "fanRpm": "Fan RPM",
+    "mbTemp": "MB Temp"
+  }
+}

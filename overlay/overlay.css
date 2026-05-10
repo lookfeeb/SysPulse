@@ -1,0 +1,195 @@
+:root {
+  --font: "Microsoft YaHei UI", "Segoe UI", system-ui, sans-serif;
+  --font-size: 12px;
+  --font-weight: 400;
+  --down-color: #0ea5e9;
+  --up-color: #f97316;
+  --bg: transparent;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100vh;
+  width: 100vw;
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+#root {
+  display: inline-flex;
+  -webkit-app-region: no-drag;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-content: center;
+  border-radius: 0;
+  background: var(--bg);
+  border: 0;
+  box-shadow: none;
+  color: #111827;
+  font-family: var(--font);
+  font-size: var(--font-size);
+  font-weight: var(--font-weight);
+  line-height: 1.2;
+  white-space: normal;
+  height: 100vh;
+  align-items: center;
+  justify-content: center;
+  padding-inline: 4px;
+  overflow: hidden;
+  cursor: context-menu;
+  box-sizing: border-box;
+  max-width: none;
+  gap: 2px 8px;
+  transition:
+    background-color 120ms ease,
+    box-shadow 120ms ease,
+    border-color 120ms ease;
+}
+
+#root.hovering {
+  background: transparent;
+  box-shadow: none;
+}
+
+.ov-row {
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 10px;
+  white-space: nowrap;
+}
+
+.ov-grid {
+  display: grid;
+  grid-template-rows: repeat(2, auto);
+  grid-auto-columns: max-content;
+  grid-auto-flow: column;
+  align-items: baseline;
+  justify-content: center;
+  column-gap: 4px;
+  row-gap: 1px;
+  white-space: nowrap;
+}
+
+.ov-pair-cell {
+  display: grid;
+  grid-template-columns: auto auto auto;
+  grid-template-rows: repeat(2, auto);
+  align-items: baseline;
+  column-gap: 2px;
+  row-gap: 1px;
+  white-space: nowrap;
+}
+
+.ov-pair-cell .ov-item {
+  display: contents;
+}
+
+.ov-pair-cell .ov-item:first-child .lbl {
+  grid-column: 1;
+  grid-row: 1 / 3;
+  align-self: center;
+}
+
+.ov-pair-cell .ov-item:first-child .dir {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.ov-pair-cell .ov-item:first-child .val {
+  grid-column: 3;
+  grid-row: 1;
+}
+
+.ov-pair-cell .ov-item:nth-child(2) .dir {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.ov-pair-cell .ov-item:nth-child(2) .val {
+  grid-column: 3;
+  grid-row: 2;
+}
+
+.ov-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  flex: 0 0 auto;
+  white-space: nowrap;
+  color: #111827;
+}
+
+.ov-item .lbl {
+  opacity: 0.8;
+}
+
+.ov-item .dir {
+  opacity: 0.86;
+}
+
+.ov-item .val {
+  display: inline-block;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: 4.6em;
+}
+
+.ov-net,
+.ov-disk {
+  gap: 3px;
+}
+
+.ov-item[data-key="cpu"] .val,
+.ov-item[data-key="mem"] .val,
+.ov-item[data-key="gpu-usage"] .val {
+  width: 3em;
+}
+
+.ov-item[data-key="cpu-freq"] .val {
+  width: 5em;
+}
+
+.ov-item[data-key="fan-rpm"] .val {
+  width: 5.2em;
+}
+
+.ov-item[data-key="net-down"] .val,
+.ov-item[data-key="net-up"] .val,
+.ov-item[data-key="disk-read"] .val,
+.ov-item[data-key="disk-write"] .val {
+  width: 5.2em;
+}
+
+.ov-item[data-key="net-up"],
+.ov-item[data-key="disk-write"] {
+  margin-left: -6px;
+}
+
+.ov-grid .ov-item[data-key="net-up"],
+.ov-grid .ov-item[data-key="disk-write"] {
+  margin-left: 0;
+}
+
+.ov-item[data-key$="temp"] .val {
+  width: 3.4em;
+}
+
+.ov-item[data-key="net-down"] .val {
+  color: var(--down-color);
+}
+
+.ov-item[data-key="net-up"] .val {
+  color: var(--up-color);
+}
+
+.hidden {
+  display: none !important;
+}

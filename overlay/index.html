@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SysPulse</title>
+    <link rel="stylesheet" href="./overlay.css" />
+  </head>
+  <body>
+    <div id="root">
+      <div class="ov-item" data-key="cpu"><span class="lbl">CPU</span><span class="val">--</span></div>
+      <div class="ov-item hidden" data-key="cpu-temp"><span class="lbl">CPU°</span><span class="val">--</span></div>
+      <div class="ov-item hidden" data-key="cpu-freq"><span class="lbl">CPUƒ</span><span class="val">--</span></div>
+      <div class="ov-item" data-key="mem"><span class="lbl">内存</span><span class="val">--</span></div>
+      <div class="ov-item hidden" data-key="gpu-usage"><span class="lbl">显卡占用</span><span class="val">--</span></div>
+      <div class="ov-item hidden" data-key="gpu-temp"><span class="lbl">显卡温度</span><span class="val">--</span></div>
+      <div class="ov-item ov-disk hidden" data-key="disk-read"><span class="lbl">硬盘</span><span class="dir">↓</span><span class="val">--</span></div>
+      <div class="ov-item ov-disk hidden" data-key="disk-write"><span class="dir">↑</span><span class="val">--</span></div>
+      <div class="ov-item hidden" data-key="disk-temp"><span class="lbl">硬盘温度</span><span class="val">--</span></div>
+      <div class="ov-item hidden" data-key="fan-rpm"><span class="lbl">风扇</span><span class="val">--</span></div>
+      <div class="ov-item hidden" data-key="mb-temp"><span class="lbl">主板温度</span><span class="val">--</span></div>
+      <div class="ov-item ov-net" data-key="net-up"><span class="dir">↑</span><span class="val">--</span></div>
+      <div class="ov-item ov-net" data-key="net-down"><span class="dir">↓</span><span class="val">--</span></div>
+    </div>
+    <script type="module" src="./overlay.ts"></script>
+  </body>
+</html>

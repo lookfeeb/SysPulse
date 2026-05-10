@@ -1,0 +1,29 @@
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  height: 100vh;
+  font-family: "Microsoft YaHei UI", "Segoe UI", system-ui, -apple-system,
+    sans-serif;
+  background: var(--bg-color, #fff);
+}
+
+#root {
+  display: flex;
+  flex-direction: column;
+}
+
+.app-content-scroll {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.app-content-scroll::-webkit-scrollbar,
+.app-content-scroll:hover::-webkit-scrollbar,
+.app-content-scroll:focus::-webkit-scrollbar,
+.app-content-scroll:focus-within::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}

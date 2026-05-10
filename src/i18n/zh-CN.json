@@ -1,0 +1,96 @@
+{
+  "app": {
+    "name": "SysPulse",
+    "settings": "SysPulse 设置"
+  },
+  "common": {
+    "confirm": "确认",
+    "cancel": "取消",
+    "enabled": "开启",
+    "disabled": "关闭"
+  },
+  "menu": {
+    "dashboard": "概览",
+    "general": "通用",
+    "overlay": "显示",
+    "hardware": "硬件监控",
+    "history": "流量历史",
+    "about": "关于"
+  },
+  "general": {
+    "sampleInterval": "采样间隔",
+    "sampleIntervalHint": "影响实时网速、CPU、内存等基础数据刷新频率。",
+    "adaptiveInterval": "自适应采样",
+    "adaptiveIntervalHint": "开启后根据系统活跃度自动调整：高负载时 500ms，空闲时 2000ms。",
+    "autoStart": "开机自启",
+    "autoStartHint": "登录 Windows 后自动启动 SysPulse。",
+    "autoStartEnabled": "已开启开机自启",
+    "autoStartDisabled": "已关闭开机自启",
+    "configActions": "配置操作",
+    "resetAll": "恢复默认配置",
+    "resetConfirm": "确定要恢复所有配置为默认值吗？",
+    "resetDone": "已恢复默认配置"
+  },
+  "dashboard": {
+    "cpu": "CPU",
+    "memory": "内存",
+    "network": "网络",
+    "down": "下行",
+    "up": "上行",
+    "model": "型号",
+    "cores": "核心",
+    "ofTotal": "/ {{total}}",
+    "noData": "等待第一个采样…",
+    "live60s": "最近 60 秒"
+  },
+  "overlay": {
+    "items": "显示项",
+    "taskbarHint": "窗口会按任务栏高度贴到通知区左侧；字号/显示项变更时会重新对齐。Win11 已弃用 IDeskBand，因此这里使用无边框窗口模拟任务栏占位。"
+  },
+  "history": {
+    "from": "起",
+    "to": "止",
+    "granularity": "维度",
+    "day": "按日",
+    "month": "按月",
+    "query": "查询",
+    "exportCsv": "导出 CSV"
+  },
+  "about": {
+    "version": "版本",
+    "platform": "平台",
+    "openLogs": "打开日志目录",
+    "openConfig": "打开配置目录",
+    "github": "GitHub 仓库",
+    "attribution": "第三方组件",
+    "lhmAttribution": "硬件传感器数据由 LibreHardwareMonitorLib 提供，底层通过 WinRing0 访问硬件寄存器，均基于 MPL 2.0 协议开源。"
+  },
+  "admin": {
+    "notElevatedTitle": "未以管理员权限运行",
+    "notElevatedDesc": "硬件传感器读取与风扇控制需要管理员权限。打包版会自动请求 UAC 提权；当前是开发模式下未提权运行，部分传感器可能读不到、风扇控制不可用。"
+  },
+  "hardware": {
+    "tabName": "硬件监控",
+    "helperUnavailable": "硬件采集子进程不可用",
+    "helperRestarting": "硬件采集子进程正在重启",
+    "summary": "总览",
+    "sensors": "传感器",
+    "noSensors": "暂无传感器数据"
+  },
+  "overlayItems": {
+    "netDown": "网速",
+    "netUp": "网速",
+    "cpu": "CPU 占用",
+    "cpuFreq": "CPU 频率",
+    "mem": "内存占用",
+    "diskRead": "硬盘读写",
+    "diskWrite": "硬盘读写",
+    "gpu": "GPU 占用",
+    "cpuTemp": "CPU 温度",
+    "gpuTemp": "GPU 温度",
+    "gpuUsage": "GPU 占用",
+    "diskTemp": "磁盘温度",
+    "fanRpm": "风扇转速",
+    "mbTemp": "主板温度"
+  }
+}
