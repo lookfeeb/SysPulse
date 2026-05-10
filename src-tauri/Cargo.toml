@@ -6,6 +6,15 @@ authors = ["SysPulse"]
 edition = "2021"
 rust-version = "1.78"
 default-run = "syspulse"
+autobins = false
+
+[[bin]]
+name = "syspulse"
+path = "src/main.rs"
+
+[[bin]]
+name = "export_bindings"
+path = "src/bin/export_bindings.rs"
 
 [lib]
 name = "syspulse_lib"

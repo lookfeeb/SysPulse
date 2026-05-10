@@ -95,12 +95,38 @@ jobs:
           path: target/${{ matrix.rust-target }}/release/bundle/nsis/*.exe
           if-no-files-found: warn
 
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(jq -r '.version' src-tauri/tauri.conf.json)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: SysPulse-*
+
+      - name: List artifacts
+        run: find artifacts -type f
+
       - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           name: "SysPulse v${{ steps.version.outputs.version }}"
           draft: false
           prerelease: false
-          files: target/${{ matrix.rust-target }}/release/bundle/nsis/*.exe
+          files: artifacts/**/*.exe
           generate_release_notes: true
