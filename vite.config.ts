@@ -29,6 +29,7 @@ export default defineConfig({
       input: {
         main: path.resolve(__dirname, "index.html"),
         overlay: path.resolve(__dirname, "overlay/index.html"),
+        "overlay-tooltip": path.resolve(__dirname, "overlay-tooltip/index.html"),
       },
       output: {
         manualChunks: {

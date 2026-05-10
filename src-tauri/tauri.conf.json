@@ -44,6 +44,21 @@
         "visible": false,
         "focus": false,
         "url": "overlay/index.html"
+      },
+      {
+        "label": "overlay-tooltip",
+        "title": "SysPulseTooltip",
+        "width": 260,
+        "height": 120,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "shadow": false,
+        "visible": false,
+        "focus": false,
+        "url": "overlay-tooltip/index.html"
       }
     ]
   },

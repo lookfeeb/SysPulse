@@ -47,6 +47,15 @@ async resizeOverlay(args: ResizeArgs) : Promise<null> {
 async dockOverlayToTaskbar() : Promise<null> {
     return await TAURI_INVOKE("dock_overlay_to_taskbar");
 },
+async showOverlayTooltip(args: ShowTooltipArgs) : Promise<null> {
+    return await TAURI_INVOKE("show_overlay_tooltip", { args });
+},
+async hideOverlayTooltip() : Promise<null> {
+    return await TAURI_INVOKE("hide_overlay_tooltip");
+},
+async overlayTooltipFit(args: OverlayTooltipFitArgs) : Promise<null> {
+    return await TAURI_INVOKE("overlay_tooltip_fit", { args });
+},
 async getHwSnapshot() : Promise<HwSnapshot | null> {
     return await TAURI_INVOKE("get_hw_snapshot");
 },
@@ -133,11 +142,21 @@ export type NetworkSnapshot = { interfaces: InterfaceStats[]; total: InterfaceSt
 export type OpenPathArgs = { path: string }
 export type OverlayConfig = { items: OverlayItem[] }
 export type OverlayItem = "net-down" | "net-up" | "cpu" | "cpu-freq" | "mem" | "disk-read" | "disk-write" | "gpu" | "cpu-temp" | "gpu-temp" | "gpu-usage" | "disk-temp" | "fan-rpm" | "mb-temp"
+export type OverlayTooltipFitArgs = { width: number; height: number }
 export type ResetFanControlArgs = { fanId: string }
 export type ResizeArgs = { width: number; height: number }
 export type SetConfigArgs = { patch: JsonValue }
 export type SetFanCurveArgs = { fanId: string; curve: FanCurvePoint[] }
 export type SetFanManualArgs = { fanId: string; pwm: number }
+export type ShowTooltipArgs = { title: string; lines: string[]; 
+/**
+ * Anchor x in physical pixels (usually the hovered item's screen x).
+ */
+anchorX: number; 
+/**
+ * Anchor y in physical pixels (usually the overlay top in screen coords).
+ */
+anchorY: number }
 export type Snapshot = { timestampMs: number; cpu: CpuSnapshot; memory: MemorySnapshot; network: NetworkSnapshot }
 
 /** tauri-specta globals **/

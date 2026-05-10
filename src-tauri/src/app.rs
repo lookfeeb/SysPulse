@@ -26,6 +26,7 @@ pub struct AppState {
     pub hw_sampler: HwSamplerHandle,
     pub last_hw_snapshot: Arc<RwLock<Option<HwSnapshot>>>,
     pub fan_control: hw::FanControlManager,
+    pub last_overlay_tooltip_anchor: Arc<RwLock<Option<(i32, i32)>>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -173,6 +174,7 @@ pub fn setup(app: &mut App) -> std::result::Result<(), Box<dyn std::error::Error
         hw_sampler,
         last_hw_snapshot,
         fan_control,
+        last_overlay_tooltip_anchor: Arc::new(RwLock::new(None)),
     });
 
     // 10. Apply initial overlay window state (visibility / position)

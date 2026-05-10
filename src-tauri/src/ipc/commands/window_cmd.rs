@@ -5,6 +5,7 @@ use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, State};
 
 const CONFIG_LABEL: &str = "config";
 const OVERLAY_LABEL: &str = "overlay";
+const OVERLAY_TOOLTIP_LABEL: &str = "overlay-tooltip";
 
 #[tauri::command]
 #[specta::specta]
@@ -286,4 +287,138 @@ fn restore_overlay_popup_style(w: &tauri::WebviewWindow) -> Result<(), AppError>
 #[cfg(not(windows))]
 fn restore_overlay_popup_style(_w: &tauri::WebviewWindow) -> Result<(), AppError> {
     Ok(())
+}
+
+
+#[derive(serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ShowTooltipArgs {
+    pub title: String,
+    pub lines: Vec<String>,
+    /// Anchor x in physical pixels (usually the hovered item's screen x).
+    pub anchor_x: i32,
+    /// Anchor y in physical pixels (usually the overlay top in screen coords).
+    pub anchor_y: i32,
+}
+
+#[derive(serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct OverlayTooltipFitArgs {
+    pub width: u32,
+    pub height: u32,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn show_overlay_tooltip(app: AppHandle, args: ShowTooltipArgs) -> Result<(), IpcError> {
+    if let Some(w) = app.get_webview_window(OVERLAY_TOOLTIP_LABEL) {
+        // Push payload to the tooltip webview to render.
+        use tauri::Emitter;
+        #[derive(serde::Serialize, Clone)]
+        struct Payload {
+            title: String,
+            lines: Vec<String>,
+        }
+        let _ = app.emit_to(
+            OVERLAY_TOOLTIP_LABEL,
+            "overlay-tooltip:show",
+            Payload {
+                title: args.title,
+                lines: args.lines,
+            },
+        );
+
+        // Provisional position (the tooltip webview will call back with its real size).
+        w.set_position(PhysicalPosition::new(args.anchor_x, args.anchor_y))
+            .map_err(AppError::Tauri)?;
+        w.set_always_on_top(true).map_err(AppError::Tauri)?;
+        w.show().map_err(AppError::Tauri)?;
+        // Remember the anchor so we can reflow after size is known.
+        if let Some(state) = app.try_state::<AppState>() {
+            *state.last_overlay_tooltip_anchor.write() = Some((args.anchor_x, args.anchor_y));
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn hide_overlay_tooltip(app: AppHandle) -> Result<(), IpcError> {
+    if let Some(w) = app.get_webview_window(OVERLAY_TOOLTIP_LABEL) {
+        w.hide().map_err(AppError::Tauri)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn overlay_tooltip_fit(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    args: OverlayTooltipFitArgs,
+) -> Result<(), IpcError> {
+    if let Some(w) = app.get_webview_window(OVERLAY_TOOLTIP_LABEL) {
+        let scale = w.scale_factor().unwrap_or(1.0).max(0.1);
+        let width = ((args.width as f64) * scale).ceil().max(40.0) as u32;
+        let height = ((args.height as f64) * scale).ceil().max(20.0) as u32;
+        w.set_size(PhysicalSize::new(width, height))
+            .map_err(AppError::Tauri)?;
+
+        if let Some((anchor_x, anchor_y)) = *state.last_overlay_tooltip_anchor.read() {
+            let (x, y) = clamp_tooltip_position(
+                anchor_x,
+                anchor_y,
+                width as i32,
+                height as i32,
+            );
+            w.set_position(PhysicalPosition::new(x, y))
+                .map_err(AppError::Tauri)?;
+        }
+    }
+    Ok(())
+}
+
+/// Choose a tooltip position that prefers "above the anchor" (since the overlay
+/// sits on the taskbar). Falls back to below if there's no room.
+fn clamp_tooltip_position(anchor_x: i32, anchor_y: i32, width: i32, height: i32) -> (i32, i32) {
+    // Best effort: clamp against the primary monitor if we can query it.
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::POINT;
+        use windows::Win32::Graphics::Gdi::{
+            GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+        };
+
+        let pt = POINT {
+            x: anchor_x,
+            y: anchor_y,
+        };
+        let hmon = unsafe { MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST) };
+        let mut info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        let ok = unsafe { GetMonitorInfoW(hmon, &mut info).as_bool() };
+        if ok {
+            let work = info.rcWork;
+            let gap = 6;
+            // Prefer above anchor
+            let above_y = anchor_y - height - gap;
+            let below_y = anchor_y + gap;
+            let y = if above_y >= work.top {
+                above_y
+            } else {
+                below_y.min(work.bottom - height)
+            };
+            let mut x = anchor_x - width / 2;
+            if x < work.left + 4 {
+                x = work.left + 4;
+            }
+            if x + width > work.right - 4 {
+                x = work.right - width - 4;
+            }
+            return (x, y);
+        }
+    }
+    (anchor_x, anchor_y - height - 6)
 }
