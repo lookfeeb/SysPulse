@@ -20,7 +20,6 @@
     "core:menu:default",
     "core:tray:default",
     "core:path:default",
-    "autostart:default",
     "dialog:default",
     "opener:default",
     "updater:default"

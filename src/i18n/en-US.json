@@ -26,6 +26,7 @@
     "autoStartHint": "Start SysPulse automatically after signing in to Windows.",
     "autoStartEnabled": "Launch at startup enabled",
     "autoStartDisabled": "Launch at startup disabled",
+    "language": "Language",
     "configActions": "Config actions",
     "resetAll": "Reset all settings",
     "resetConfirm": "Reset all settings to defaults?",

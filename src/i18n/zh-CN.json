@@ -26,6 +26,7 @@
     "autoStartHint": "登录 Windows 后自动启动 SysPulse。",
     "autoStartEnabled": "已开启开机自启",
     "autoStartDisabled": "已关闭开机自启",
+    "language": "界面语言",
     "configActions": "配置操作",
     "resetAll": "恢复默认配置",
     "resetConfirm": "确定要恢复所有配置为默认值吗？",

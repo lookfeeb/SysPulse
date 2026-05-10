@@ -25,7 +25,11 @@ const router = createMemoryRouter([
       ...PAGES.map((p) => ({ path: p.path, element: p.element })),
     ],
   },
-]);
+], {
+  future: {
+    v7_relativeSplatPath: true,
+  },
+});
 
 export default function App() {
   const load = useConfigStore((s) => s.load);
@@ -68,7 +72,7 @@ export default function App() {
       }}
     >
       <AntdApp>
-        <RouterProvider router={router} />
+        <RouterProvider router={router} future={{ v7_startTransition: true }} />
       </AntdApp>
     </ConfigProvider>
   );

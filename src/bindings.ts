@@ -70,6 +70,15 @@ async resetAllFanControls() : Promise<FanControlStatus> {
 },
 async isAdmin() : Promise<boolean> {
     return await TAURI_INVOKE("is_admin");
+},
+async autostartIsEnabled() : Promise<boolean> {
+    return await TAURI_INVOKE("autostart_is_enabled");
+},
+async autostartEnable() : Promise<null> {
+    return await TAURI_INVOKE("autostart_enable");
+},
+async autostartDisable() : Promise<null> {
+    return await TAURI_INVOKE("autostart_disable");
 }
 }
 
@@ -96,7 +105,13 @@ export type FanControlMode = "bios" | "manual" | "curve"
 export type FanControlStatus = { fuseHold: boolean; fuseReason: string | null; maxTempC: number | null; entries: FanControlEntry[] }
 export type FanCurvePoint = { tempC: number; pwm: number }
 export type FanHw = { id: string; name: string; rpm: number | null; pwmPercent: number | null; controllable: boolean }
-export type GeneralConfig = { sampleIntervalMs: number; adaptiveInterval: boolean }
+export type GeneralConfig = { sampleIntervalMs: number; 
+/**
+ * When true, the sampler dynamically adjusts the interval based on system activity.
+ * Active (CPU>50% or net>1MB/s) → 500ms, idle → 2000ms.
+ * The `sample_interval_ms` field is ignored when adaptive is enabled.
+ */
+adaptiveInterval: boolean }
 export type GpuHw = { index: number; name: string; vendor: string; usagePercent: number | null; memUsedMb: number | null; memTotalMb: number | null; tempC: number | null; powerW: number | null; fanRpm: number | null; fanPwm: number | null }
 export type HelperStatus = "starting" | "running" | "restarting" | "unavailable"
 export type HelperStatusEvent = { status: HelperStatus; reason?: string | null }

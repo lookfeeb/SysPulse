@@ -1,3 +1,4 @@
+pub mod autostart_cmd;
 pub mod config_cmd;
 pub mod history_cmd;
 pub mod hw_cmd;
@@ -44,6 +45,9 @@ pub fn builder() -> tauri_specta::Builder<tauri::Wry> {
             hw_cmd::reset_fan_control,
             hw_cmd::reset_all_fan_controls,
             hw_cmd::is_admin,
+            autostart_cmd::autostart_is_enabled,
+            autostart_cmd::autostart_enable,
+            autostart_cmd::autostart_disable,
         ])
 }
 
@@ -72,5 +76,8 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         hw_cmd::reset_fan_control,
         hw_cmd::reset_all_fan_controls,
         hw_cmd::is_admin,
+        autostart_cmd::autostart_is_enabled,
+        autostart_cmd::autostart_enable,
+        autostart_cmd::autostart_disable,
     ]
 }

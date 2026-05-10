@@ -1,16 +1,16 @@
 import { useEffect, useState } from "react";
-import { App as AntdApp, Card, Form, InputNumber, Space, Switch, Typography } from "antd";
-import { ThunderboltOutlined, DashboardOutlined, PoweroffOutlined } from "@ant-design/icons";
-import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
+import { App as AntdApp, Card, Form, InputNumber, Select, Space, Switch, Typography } from "antd";
+import { ThunderboltOutlined, DashboardOutlined, PoweroffOutlined, GlobalOutlined } from "@ant-design/icons";
 import { useTranslation } from "react-i18next";
 import { useConfigStore } from "@/stores/configStore";
+import { commands } from "@/bindings";
 import type { GeneralConfig } from "@/bindings";
 import { OverlaySettingsCard } from "@/routes/OverlayPage";
 
 const { Text } = Typography;
 
 export default function GeneralPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { message } = AntdApp.useApp();
   const config = useConfigStore((s) => s.config);
   const patch = useConfigStore((s) => s.patch);
@@ -20,7 +20,8 @@ export default function GeneralPage() {
   useEffect(() => {
     let cancelled = false;
     setAutoStartLoading(true);
-    void isEnabled()
+    void commands
+      .autostartIsEnabled()
       .then((enabled) => {
         if (!cancelled) setAutoStart(enabled);
       })
@@ -48,11 +49,11 @@ export default function GeneralPage() {
   const onAutoStartChange = async (checked: boolean) => {
     setAutoStartLoading(true);
     try {
-      if (checked) await enable();
-      else await disable();
-      setAutoStart(await isEnabled());
+      if (checked) await commands.autostartEnable();
+      else await commands.autostartDisable();
+      setAutoStart(await commands.autostartIsEnabled());
     } catch (e: unknown) {
-      setAutoStart(await isEnabled().catch(() => autoStart));
+      setAutoStart(await commands.autostartIsEnabled().catch(() => autoStart));
       void message.error(e instanceof Error ? e.message : String(e));
     } finally {
       setAutoStartLoading(false);
@@ -78,6 +79,26 @@ export default function GeneralPage() {
               <Text type="secondary" style={{ fontSize: 12 }}>
                 {autoStart ? "已开启" : "已关闭"}
               </Text>
+            </div>
+          </Form.Item>
+
+          {/* 语言切换 */}
+          <Form.Item label={t("general.language")} style={{ marginBottom: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <GlobalOutlined style={{ color: "#3388cc", fontSize: 14 }} />
+              <Select
+                value={i18n.language}
+                onChange={(value) => {
+                  void i18n.changeLanguage(value);
+                  localStorage.setItem("lang", value);
+                }}
+                style={{ width: 160 }}
+                size="small"
+                options={[
+                  { value: "zh-CN", label: "简体中文" },
+                  { value: "en-US", label: "English" },
+                ]}
+              />
             </div>
           </Form.Item>
 
