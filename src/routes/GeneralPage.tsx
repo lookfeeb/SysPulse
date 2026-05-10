@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { App as AntdApp, Card, Form, InputNumber, Select, Space, Switch, Typography } from "antd";
 import { ThunderboltOutlined, DashboardOutlined, PoweroffOutlined, GlobalOutlined } from "@ant-design/icons";
 import { useTranslation } from "react-i18next";
 import { useConfigStore } from "@/stores/configStore";
-import { commands } from "@/bindings";
+import { useAutostartStore } from "@/stores/autostartStore";
 import type { GeneralConfig } from "@/bindings";
 import { OverlaySettingsCard } from "@/routes/OverlayPage";
 
@@ -14,27 +14,21 @@ export default function GeneralPage() {
   const { message } = AntdApp.useApp();
   const config = useConfigStore((s) => s.config);
   const patch = useConfigStore((s) => s.patch);
-  const [autoStart, setAutoStart] = useState(false);
-  const [autoStartLoading, setAutoStartLoading] = useState(true);
+  const autoStartState = useAutostartStore((s) => s.enabled);
+  const autoStartStoreLoading = useAutostartStore((s) => s.loading);
+  const refreshAutoStart = useAutostartStore((s) => s.refresh);
+  const setAutoStartEnabled = useAutostartStore((s) => s.setEnabled);
 
   useEffect(() => {
     let cancelled = false;
-    setAutoStartLoading(true);
-    void commands
-      .autostartIsEnabled()
-      .then((enabled) => {
-        if (!cancelled) setAutoStart(enabled);
-      })
+    void refreshAutoStart()
       .catch((e: unknown) => {
         if (!cancelled) void message.error(e instanceof Error ? e.message : String(e));
-      })
-      .finally(() => {
-        if (!cancelled) setAutoStartLoading(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [message]);
+  }, [message, refreshAutoStart]);
 
   if (!config) return null;
 
@@ -47,20 +41,16 @@ export default function GeneralPage() {
   };
 
   const onAutoStartChange = async (checked: boolean) => {
-    setAutoStartLoading(true);
     try {
-      if (checked) await commands.autostartEnable();
-      else await commands.autostartDisable();
-      setAutoStart(await commands.autostartIsEnabled());
+      await setAutoStartEnabled(checked);
     } catch (e: unknown) {
-      setAutoStart(await commands.autostartIsEnabled().catch(() => autoStart));
       void message.error(e instanceof Error ? e.message : String(e));
-    } finally {
-      setAutoStartLoading(false);
     }
   };
 
   const adaptive = config.general.adaptiveInterval;
+  const autoStart = autoStartState ?? false;
+  const autoStartLoading = autoStartStoreLoading || autoStartState === null;
 
   return (
     <Space direction="vertical" size={16} style={{ width: "100%" }}>
