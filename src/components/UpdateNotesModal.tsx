@@ -18,6 +18,7 @@ interface Props {
   version: string;
   currentVersion: string;
   notes: string;
+  loading?: boolean;
   onClose: () => void;
 }
 
@@ -26,6 +27,7 @@ export default function UpdateNotesModal({
   version,
   currentVersion,
   notes,
+  loading = false,
   onClose,
 }: Props) {
   // Render async so large notes don't block the modal opening animation.
@@ -34,7 +36,7 @@ export default function UpdateNotesModal({
   const trimmed = useMemo(() => notes.trim(), [notes]);
 
   useEffect(() => {
-    if (!open) {
+    if (!open || loading) {
       setHtml(null);
       return;
     }
@@ -62,7 +64,7 @@ export default function UpdateNotesModal({
     return () => {
       cancelled = true;
     };
-  }, [open, trimmed]);
+  }, [open, trimmed, loading]);
 
   return (
     <Modal
@@ -72,10 +74,12 @@ export default function UpdateNotesModal({
       title={
         <span>
           <CloudDownloadOutlined style={{ marginRight: 8, color: "#3388cc" }} />
-          新版本 v{version}
-          <Tag color="default" style={{ marginLeft: 10, fontWeight: 400 }}>
-            当前 v{currentVersion}
-          </Tag>
+          {version === currentVersion ? `v${version} 更新日志` : `新版本 v${version}`}
+          {version !== currentVersion && (
+            <Tag color="default" style={{ marginLeft: 10, fontWeight: 400 }}>
+              当前 v{currentVersion}
+            </Tag>
+          )}
         </span>
       }
       width={640}

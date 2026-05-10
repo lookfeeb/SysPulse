@@ -71,7 +71,13 @@ jobs:
         shell: pwsh
         run: |
           $conf = Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json
-          echo "version=$($conf.version)" >> $env:GITHUB_OUTPUT
+          $ver = $conf.version
+          if ($ver -match '\.json$') {
+            $pkgPath = Join-Path "src-tauri" $ver
+            $pkg = Get-Content $pkgPath | ConvertFrom-Json
+            $ver = $pkg.version
+          }
+          echo "version=$ver" >> $env:GITHUB_OUTPUT
 
       - name: Build Tauri (LTO)
         if: ${{ github.event.inputs.lto == 'true' || startsWith(github.ref, 'refs/tags/') }}
@@ -114,8 +120,11 @@ jobs:
         id: version
         shell: bash
         run: |
-          VERSION=$(jq -r '.version' src-tauri/tauri.conf.json)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          VER=$(jq -r '.version' src-tauri/tauri.conf.json)
+          if [[ "$VER" == *.json ]]; then
+            VER=$(jq -r '.version' "src-tauri/$VER")
+          fi
+          echo "version=$VER" >> $GITHUB_OUTPUT
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4

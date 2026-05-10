@@ -187,11 +187,12 @@ function OrderEditor({
 
   useEffect(() => {
     if (dragIndex == null) return;
-    window.addEventListener("pointerup", endDrag);
-    window.addEventListener("pointercancel", endDrag);
+    const handler = (e: PointerEvent) => endDrag(e);
+    window.addEventListener("pointerup", handler);
+    window.addEventListener("pointercancel", handler);
     return () => {
-      window.removeEventListener("pointerup", endDrag);
-      window.removeEventListener("pointercancel", endDrag);
+      window.removeEventListener("pointerup", handler);
+      window.removeEventListener("pointercancel", handler);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dragIndex]);
@@ -212,13 +213,23 @@ function OrderEditor({
     if (event.button !== 0) return;
     dragIndexRef.current = index;
     setDragIndex(index);
+    // Capture pointer so move/up events keep firing even when pointer leaves the element.
+    (event.currentTarget.closest("[data-order-container]") as HTMLElement | null)
+      ?.setPointerCapture(event.pointerId);
     event.preventDefault();
   };
 
-  const endDrag = () => {
+  const endDrag = (event?: PointerEvent | ReactPointerEvent<HTMLDivElement>) => {
     if (dragIndexRef.current != null) onChange(draftRef.current);
     dragIndexRef.current = null;
     setDragIndex(null);
+    // Release capture if we still hold it.
+    if (event && "pointerId" in event) {
+      const container = document.querySelector("[data-order-container]") as HTMLElement | null;
+      if (container && container.hasPointerCapture((event as PointerEvent).pointerId)) {
+        container.releasePointerCapture((event as PointerEvent).pointerId);
+      }
+    }
   };
 
   const dragMove = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -253,9 +264,10 @@ function OrderEditor({
 
   return (
     <div
+      data-order-container
       onPointerMove={dragMove}
-      onPointerUp={endDrag}
-      onPointerCancel={endDrag}
+      onPointerUp={(e) => endDrag(e)}
+      onPointerCancel={(e) => endDrag(e)}
       style={{
         display: "grid",
         gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
@@ -292,7 +304,7 @@ function OrderEditor({
             }}
             title="拖动调整顺序"
           >
-            <HolderOutlined style={{ color: "#9ca3af", fontSize: 12 }} />
+            <HolderOutlined style={{ color: "#9ca3af", fontSize: 12, pointerEvents: "none" }} />
             <span
               style={{
                 background: active ? "#3388cc" : "#f3f4f6",
@@ -306,6 +318,7 @@ function OrderEditor({
                 alignItems: "center",
                 justifyContent: "center",
                 padding: "0 5px",
+                pointerEvents: "none",
               }}
             >
               {index + 1}
@@ -317,6 +330,7 @@ function OrderEditor({
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
+                pointerEvents: "none",
               }}
             >
               {label}

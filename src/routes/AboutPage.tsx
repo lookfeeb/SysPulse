@@ -20,11 +20,28 @@ import UpdateNotesModal from "@/components/UpdateNotesModal";
 
 const { Text } = Typography;
 
+const GITHUB_REPO = "lookfeeb/SysPulse";
+
+/** Fetch release notes for a given version tag from GitHub API. */
+async function fetchReleaseNotes(version: string): Promise<string> {
+  const tag = version.startsWith("v") ? version : `v${version}`;
+  const res = await fetch(
+    `https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${tag}`,
+    { headers: { Accept: "application/vnd.github+json" } },
+  );
+  if (!res.ok) return "";
+  const data = (await res.json()) as { body?: string };
+  return data.body ?? "";
+}
+
 export default function AboutPage() {
   const { t } = useTranslation();
   const { message } = AntdApp.useApp();
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [notesOpen, setNotesOpen] = useState(false);
+  const [notesVersion, setNotesVersion] = useState("");
+  const [notesContent, setNotesContent] = useState("");
+  const [notesLoading, setNotesLoading] = useState(false);
 
   const status = useUpdateStore((s) => s.status);
   const checkForUpdate = useUpdateStore((s) => s.checkForUpdate);
@@ -40,6 +57,22 @@ export default function AboutPage() {
       void message.success("更新已下载，重启后生效");
     }
   }, [status.kind, message]);
+
+  /** Open the release notes modal for a specific version. */
+  const showNotes = async (version: string, notes?: string) => {
+    setNotesVersion(version);
+    setNotesOpen(true);
+    if (notes) {
+      setNotesContent(notes);
+      setNotesLoading(false);
+    } else {
+      setNotesContent("");
+      setNotesLoading(true);
+      const body = await fetchReleaseNotes(version);
+      setNotesContent(body);
+      setNotesLoading(false);
+    }
+  };
 
   if (!info) return null;
 
@@ -68,7 +101,14 @@ export default function AboutPage() {
           <div style={{ flex: 1 }}>
             <Text style={{ fontSize: 18, fontWeight: 700, display: "block" }}>{info.name}</Text>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
-              <Tag color="blue" style={{ margin: 0, fontWeight: 600 }}>v{info.version}</Tag>
+              <Tag
+                color="blue"
+                style={{ margin: 0, fontWeight: 600, cursor: "pointer" }}
+                onClick={() => void showNotes(info.version)}
+                title="点击查看当前版本更新日志"
+              >
+                v{info.version}
+              </Tag>
               <Text type="secondary" style={{ fontSize: 12 }}>
                 <WindowsOutlined style={{ marginRight: 4 }} />
                 {info.os} / {info.arch}
@@ -124,7 +164,7 @@ export default function AboutPage() {
               type="link"
               size="small"
               icon={<FileTextFilled />}
-              onClick={() => setNotesOpen(true)}
+              onClick={() => void showNotes(status.version, status.notes)}
               style={{ padding: 0, height: "auto", fontSize: 12 }}
             >
               查看 v{status.version} 更新说明
@@ -138,15 +178,14 @@ export default function AboutPage() {
         )}
       </Card>
 
-      {status.kind === "available" && (
-        <UpdateNotesModal
-          open={notesOpen}
-          version={status.version}
-          currentVersion={info.version}
-          notes={status.notes}
-          onClose={() => setNotesOpen(false)}
-        />
-      )}
+      <UpdateNotesModal
+        open={notesOpen}
+        version={notesVersion}
+        currentVersion={info.version}
+        notes={notesContent}
+        loading={notesLoading}
+        onClose={() => setNotesOpen(false)}
+      />
 
       {/* Paths */}
       <Card
