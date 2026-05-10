@@ -130,36 +130,64 @@ jobs:
       - name: Generate latest.json
         shell: bash
         run: |
+          set -euo pipefail
+          shopt -s nullglob
+
           VERSION="${{ steps.version.outputs.version }}"
           TAG="v${VERSION}"
           BASE_URL="https://github.com/lookfeeb/SysPulse/releases/download/${TAG}"
 
-          # Read signatures
-          X64_SIG=$(cat artifacts/SysPulse-v${VERSION}-x64/*.nsis.zip.sig 2>/dev/null || echo "")
-          ARM64_SIG=$(cat artifacts/SysPulse-v${VERSION}-arm64/*.nsis.zip.sig 2>/dev/null || echo "")
-
-          # Find zip filenames
-          X64_ZIP=$(basename artifacts/SysPulse-v${VERSION}-x64/*.nsis.zip 2>/dev/null || echo "")
-          ARM64_ZIP=$(basename artifacts/SysPulse-v${VERSION}-arm64/*.nsis.zip 2>/dev/null || echo "")
-
-          # Build latest.json
-          cat > latest.json << EOF
-          {
-            "version": "${VERSION}",
-            "notes": "SysPulse v${VERSION}",
-            "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "platforms": {
-              "windows-x86_64": {
-                "signature": "${X64_SIG}",
-                "url": "${BASE_URL}/${X64_ZIP}"
-              },
-              "windows-aarch64": {
-                "signature": "${ARM64_SIG}",
-                "url": "${BASE_URL}/${ARM64_ZIP}"
-              }
-            }
+          # Helper: resolve a unique file path from a glob or fail loudly.
+          resolve_one() {
+            local pattern="$1"
+            local -a matches=( $pattern )
+            if [ ${#matches[@]} -eq 0 ]; then
+              echo "ERROR: no file matched: $pattern" >&2
+              exit 1
+            fi
+            if [ ${#matches[@]} -gt 1 ]; then
+              echo "ERROR: multiple files matched: $pattern" >&2
+              printf '  %s\n' "${matches[@]}" >&2
+              exit 1
+            fi
+            printf '%s' "${matches[0]}"
           }
-          EOF
+
+          X64_ZIP_PATH=$(resolve_one "artifacts/SysPulse-v${VERSION}-x64/*.nsis.zip")
+          X64_SIG_PATH=$(resolve_one "artifacts/SysPulse-v${VERSION}-x64/*.nsis.zip.sig")
+          ARM64_ZIP_PATH=$(resolve_one "artifacts/SysPulse-v${VERSION}-arm64/*.nsis.zip")
+          ARM64_SIG_PATH=$(resolve_one "artifacts/SysPulse-v${VERSION}-arm64/*.nsis.zip.sig")
+
+          X64_ZIP=$(basename "${X64_ZIP_PATH}")
+          ARM64_ZIP=$(basename "${ARM64_ZIP_PATH}")
+          X64_SIG=$(cat "${X64_SIG_PATH}")
+          ARM64_SIG=$(cat "${ARM64_SIG_PATH}")
+
+          # URL-encode filenames (spaces → %20 etc.) for safety.
+          urlencode() {
+            jq -rn --arg s "$1" '$s|@uri'
+          }
+          X64_ZIP_ENC=$(urlencode "${X64_ZIP}")
+          ARM64_ZIP_ENC=$(urlencode "${ARM64_ZIP}")
+
+          # Build latest.json via jq to avoid YAML/heredoc quoting issues.
+          jq -n \
+            --arg version "${VERSION}" \
+            --arg notes "SysPulse v${VERSION}" \
+            --arg pub_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg x64_sig "${X64_SIG}" \
+            --arg x64_url "${BASE_URL}/${X64_ZIP_ENC}" \
+            --arg arm64_sig "${ARM64_SIG}" \
+            --arg arm64_url "${BASE_URL}/${ARM64_ZIP_ENC}" \
+            '{
+              version: $version,
+              notes: $notes,
+              pub_date: $pub_date,
+              platforms: {
+                "windows-x86_64": { signature: $x64_sig, url: $x64_url },
+                "windows-aarch64": { signature: $arm64_sig, url: $arm64_url }
+              }
+            }' > latest.json
 
           cat latest.json
 

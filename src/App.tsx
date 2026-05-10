@@ -13,6 +13,7 @@ import { PAGES, DEFAULT_PATH } from "@/routes/registry";
 import { useConfigStore, bindConfigEvents } from "@/stores/configStore";
 import { bindLiveEvents, useLiveStore } from "@/stores/liveStore";
 import { bindHwEvents, useHwStore } from "@/stores/hwStore";
+import { useUpdateStore } from "@/stores/updateStore";
 
 import "@/i18n";
 
@@ -35,6 +36,7 @@ export default function App() {
   const load = useConfigStore((s) => s.load);
   const prime = useLiveStore((s) => s.prime);
   const primeHw = useHwStore((s) => s.prime);
+  const startAutoUpdateCheck = useUpdateStore((s) => s.startAutoCheck);
 
   useEffect(() => {
     void load();
@@ -43,7 +45,10 @@ export default function App() {
     void bindConfigEvents();
     void bindLiveEvents();
     void bindHwEvents();
-  }, [load, prime, primeHw]);
+    // Silent background update probe so the About page has a result ready
+    // without waiting for the user to click "Check for updates".
+    startAutoUpdateCheck();
+  }, [load, prime, primeHw, startAutoUpdateCheck]);
 
   return (
     <ConfigProvider

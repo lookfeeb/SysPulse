@@ -10,86 +10,41 @@ import {
   InfoCircleOutlined,
   WindowsOutlined,
   CodeOutlined,
+  FileTextFilled,
 } from "@ant-design/icons";
 import { useTranslation } from "react-i18next";
 import { getAppInfo, openPath, quitApp } from "@/ipc";
 import type { AppInfo } from "@/bindings";
-import { check } from "@tauri-apps/plugin-updater";
+import { useUpdateStore, type UpdateStatus } from "@/stores/updateStore";
+import UpdateNotesModal from "@/components/UpdateNotesModal";
 
 const { Text } = Typography;
-
-type UpdateState =
-  | { status: "idle" }
-  | { status: "checking" }
-  | { status: "latest" }
-  | { status: "available"; version: string; notes: string }
-  | { status: "downloading"; progress: number }
-  | { status: "ready" }
-  | { status: "error"; message: string };
 
 export default function AboutPage() {
   const { t } = useTranslation();
   const { message } = AntdApp.useApp();
   const [info, setInfo] = useState<AppInfo | null>(null);
-  const [updateState, setUpdateState] = useState<UpdateState>({ status: "idle" });
+  const [notesOpen, setNotesOpen] = useState(false);
+
+  const status = useUpdateStore((s) => s.status);
+  const checkForUpdate = useUpdateStore((s) => s.checkForUpdate);
+  const downloadAndInstall = useUpdateStore((s) => s.downloadAndInstall);
 
   useEffect(() => {
     void getAppInfo().then(setInfo);
   }, []);
 
-  const checkForUpdate = async () => {
-    setUpdateState({ status: "checking" });
-    try {
-      const update = await check();
-      if (update) {
-        setUpdateState({
-          status: "available",
-          version: update.version,
-          notes: update.body ?? "",
-        });
-      } else {
-        setUpdateState({ status: "latest" });
-      }
-    } catch (e: unknown) {
-      setUpdateState({
-        status: "error",
-        message: e instanceof Error ? e.message : String(e),
-      });
-    }
-  };
-
-  const doUpdate = async () => {
-    setUpdateState({ status: "downloading", progress: 0 });
-    try {
-      const update = await check();
-      if (!update) {
-        setUpdateState({ status: "latest" });
-        return;
-      }
-      let downloaded = 0;
-      let contentLength = 0;
-      await update.downloadAndInstall((event) => {
-        if (event.event === "Started" && event.data.contentLength) {
-          contentLength = event.data.contentLength;
-        } else if (event.event === "Progress") {
-          downloaded += event.data.chunkLength;
-          const pct = contentLength > 0 ? Math.round((downloaded / contentLength) * 100) : 0;
-          setUpdateState({ status: "downloading", progress: pct });
-        } else if (event.event === "Finished") {
-          setUpdateState({ status: "ready" });
-        }
-      });
-      setUpdateState({ status: "ready" });
+  // Surface install-ready transitions as a toast.
+  useEffect(() => {
+    if (status.kind === "ready") {
       void message.success("更新已下载，重启后生效");
-    } catch (e: unknown) {
-      setUpdateState({
-        status: "error",
-        message: e instanceof Error ? e.message : String(e),
-      });
     }
-  };
+  }, [status.kind, message]);
 
   if (!info) return null;
+
+  const isChecking = status.kind === "checking";
+  const isDownloading = status.kind === "downloading";
 
   return (
     <Space direction="vertical" size={16} style={{ width: "100%" }}>
@@ -118,31 +73,31 @@ export default function AboutPage() {
                 <WindowsOutlined style={{ marginRight: 4 }} />
                 {info.os} / {info.arch}
               </Text>
-              <UpdateBadge state={updateState} />
+              <UpdateBadge status={status} />
             </div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             <Button
-              icon={<SyncOutlined spin={updateState.status === "checking"} />}
-              loading={updateState.status === "checking"}
+              icon={<SyncOutlined spin={isChecking} />}
+              loading={isChecking}
               onClick={() => void checkForUpdate()}
-              disabled={updateState.status === "downloading"}
+              disabled={isDownloading}
               size="small"
             >
               检查更新
             </Button>
-            {updateState.status === "available" && (
+            {status.kind === "available" && (
               <Button
                 type="primary"
                 icon={<CloudDownloadOutlined />}
-                onClick={() => void doUpdate()}
+                onClick={() => void downloadAndInstall()}
                 size="small"
                 style={{ background: "#22c55e", borderColor: "#22c55e" }}
               >
-                安装 v{updateState.version}
+                安装 v{status.version}
               </Button>
             )}
-            {updateState.status === "ready" && (
+            {status.kind === "ready" && (
               <Button
                 type="primary"
                 size="small"
@@ -155,25 +110,43 @@ export default function AboutPage() {
           </div>
         </div>
 
-        {updateState.status === "downloading" && (
+        {status.kind === "downloading" && (
           <Progress
-            percent={updateState.progress}
+            percent={status.progress}
             size="small"
             strokeColor="#3388cc"
             style={{ maxWidth: 320, marginTop: 12 }}
           />
         )}
-        {updateState.status === "available" && updateState.notes && (
-          <Text type="secondary" style={{ display: "block", fontSize: 12, marginTop: 10 }}>
-            更新说明：{updateState.notes}
-          </Text>
+        {status.kind === "available" && (
+          <div style={{ marginTop: 10 }}>
+            <Button
+              type="link"
+              size="small"
+              icon={<FileTextFilled />}
+              onClick={() => setNotesOpen(true)}
+              style={{ padding: 0, height: "auto", fontSize: 12 }}
+            >
+              查看 v{status.version} 更新说明
+            </Button>
+          </div>
         )}
-        {updateState.status === "error" && (
+        {status.kind === "error" && (
           <Text type="danger" style={{ display: "block", fontSize: 12, marginTop: 10 }}>
-            检查失败：{updateState.message}
+            检查失败：{status.message}
           </Text>
         )}
       </Card>
+
+      {status.kind === "available" && (
+        <UpdateNotesModal
+          open={notesOpen}
+          version={status.version}
+          currentVersion={info.version}
+          notes={status.notes}
+          onClose={() => setNotesOpen(false)}
+        />
+      )}
 
       {/* Paths */}
       <Card
@@ -265,14 +238,16 @@ function PathRow({
   );
 }
 
-function UpdateBadge({ state }: { state: UpdateState }) {
-  switch (state.status) {
+function UpdateBadge({ status }: { status: UpdateStatus }) {
+  switch (status.kind) {
+    case "checking":
+      return <Tag icon={<SyncOutlined spin />} color="processing" style={{ margin: 0 }}>检查中</Tag>;
     case "latest":
       return <Tag icon={<CheckCircleOutlined />} color="success" style={{ margin: 0 }}>已是最新</Tag>;
     case "available":
       return <Tag icon={<CloudDownloadOutlined />} color="warning" style={{ margin: 0 }}>有新版本</Tag>;
     case "downloading":
-      return <Tag icon={<SyncOutlined spin />} color="processing" style={{ margin: 0 }}>下载中 {state.progress}%</Tag>;
+      return <Tag icon={<SyncOutlined spin />} color="processing" style={{ margin: 0 }}>下载中 {status.progress}%</Tag>;
     case "ready":
       return <Tag icon={<CheckCircleOutlined />} color="success" style={{ margin: 0 }}>更新就绪</Tag>;
     case "error":

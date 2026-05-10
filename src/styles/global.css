@@ -27,3 +27,91 @@ body,
   width: 0;
   height: 0;
 }
+
+/* Markdown rendered inside UpdateNotesModal */
+.update-notes {
+  font-size: 13px;
+  line-height: 1.65;
+  color: #1f2937;
+  max-height: 60vh;
+  overflow-y: auto;
+  word-break: break-word;
+}
+
+.update-notes h1,
+.update-notes h2,
+.update-notes h3,
+.update-notes h4 {
+  margin: 14px 0 6px;
+  line-height: 1.3;
+  font-weight: 600;
+}
+
+.update-notes h1 { font-size: 18px; }
+.update-notes h2 { font-size: 16px; }
+.update-notes h3 { font-size: 14px; }
+.update-notes h4 { font-size: 13px; }
+
+.update-notes p { margin: 6px 0; }
+
+.update-notes ul,
+.update-notes ol {
+  margin: 6px 0;
+  padding-left: 22px;
+}
+
+.update-notes li { margin: 2px 0; }
+
+.update-notes a {
+  color: #3388cc;
+  text-decoration: none;
+}
+.update-notes a:hover { text-decoration: underline; }
+
+.update-notes code {
+  background: #f3f4f6;
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-family: "JetBrains Mono", Consolas, monospace;
+  font-size: 12px;
+}
+
+.update-notes pre {
+  background: #f3f4f6;
+  border-radius: 6px;
+  padding: 10px 12px;
+  overflow: auto;
+  margin: 8px 0;
+}
+
+.update-notes pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.update-notes blockquote {
+  margin: 8px 0;
+  padding: 4px 12px;
+  border-left: 3px solid #d1d5db;
+  color: #4b5563;
+  background: #f9fafb;
+  border-radius: 0 4px 4px 0;
+}
+
+.update-notes hr {
+  margin: 12px 0;
+  border: none;
+  border-top: 1px solid #e5e7eb;
+}
+
+.update-notes table {
+  border-collapse: collapse;
+  margin: 8px 0;
+}
+.update-notes th,
+.update-notes td {
+  border: 1px solid #e5e7eb;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+.update-notes th { background: #f9fafb; }
