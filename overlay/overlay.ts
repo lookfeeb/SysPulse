@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Menu } from "@tauri-apps/api/menu";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { fmtBytes, fmtFreq, fmtPct, fmtRpm, fmtSpeed, fmtTemp, maxValid, sumValid } from "@/utils/format";
+import { fmtFreq, fmtPct, fmtRpm, fmtSpeed, fmtTemp, maxValid, sumValid } from "@/utils/format";
 import { expandOrderedItems, overlayPairFor } from "@/utils/overlayItems";
 import type { OverlayItem } from "@/bindings";
 
@@ -12,69 +12,23 @@ interface InterfaceStats {
 }
 
 interface Snapshot {
-  cpu: { usagePercent: number; model?: string; physicalCores?: number };
-  memory: {
-    usedPercent: number;
-    usedBytes?: number;
-    totalBytes?: number;
-    swapUsedBytes?: number;
-    swapTotalBytes?: number;
-  };
+  cpu: { usagePercent: number };
+  memory: { usedPercent: number };
   network: { total: InterfaceStats };
 }
 
 interface DiskHw {
-  model?: string | null;
-  bus?: string | null;
   tempC: number | null;
   readBytesPerSec: number | null;
   writeBytesPerSec: number | null;
-  health?: string | null;
-}
-
-interface GpuHw {
-  name?: string | null;
-  vendor?: string | null;
-  usagePercent: number | null;
-  tempC: number | null;
-  memUsedMb?: number | null;
-  memTotalMb?: number | null;
-  powerW?: number | null;
-  fanRpm?: number | null;
-}
-
-interface CpuHw {
-  name?: string | null;
-  packageTempC: number | null;
-  frequencyMhz: number | null;
-  perCoreTempsC?: (number | null)[];
-  totalUsage?: number | null;
-  powerW?: number | null;
-}
-
-interface FanHwItem {
-  name?: string | null;
-  rpm: number | null;
-  pwmPercent?: number | null;
-}
-
-interface NamedValue {
-  name: string;
-  value: number;
-}
-
-interface MotherboardHw {
-  vendor?: string | null;
-  model?: string | null;
-  temperaturesC?: NamedValue[];
 }
 
 interface HwSnapshot {
-  cpu?: CpuHw | null;
-  gpus?: GpuHw[];
+  cpu?: { packageTempC: number | null; frequencyMhz: number | null } | null;
+  gpus?: { tempC: number | null; usagePercent: number | null }[];
   disks?: DiskHw[];
-  motherboard?: MotherboardHw | null;
-  fans?: FanHwItem[];
+  motherboard?: { temperaturesC: { value: number }[] } | null;
+  fans?: { rpm: number | null }[];
 }
 
 interface OverlayConfig {
@@ -108,6 +62,7 @@ function applyConfig(cfg: OverlayConfig, root: HTMLElement) {
   });
   layoutItems(root, orderedKeys);
 }
+
 function ensureOverlayRow(root: HTMLElement, className: string): HTMLElement {
   let row = root.querySelector<HTMLElement>(`.${className}`);
   if (!row) {
@@ -298,216 +253,6 @@ function autoFitWindow(root: HTMLElement, options: { allowShrink?: boolean } = {
   }, 120);
 }
 
-let lastSnapshot: Snapshot | null = null;
-let lastHw: HwSnapshot | null = null;
-
-type TooltipContent = { title: string; lines: string[] };
-type TooltipBuilder = (s: Snapshot | null, h: HwSnapshot | null) => TooltipContent;
-
-const tooltipBuilders: Record<string, TooltipBuilder> = {
-  cpu: (s, h) => {
-    const lines: string[] = [];
-    const usage = h?.cpu?.totalUsage ?? s?.cpu.usagePercent;
-    if (usage != null) lines.push(`当前占用：${fmtPct(usage)}`);
-    if (h?.cpu?.name) lines.push(`型号：${h.cpu.name}`);
-    else if (s?.cpu.model) lines.push(`型号：${s.cpu.model}`);
-    if (s?.cpu.physicalCores) lines.push(`物理核心：${s.cpu.physicalCores}`);
-    if (h?.cpu?.powerW != null) lines.push(`功耗：${h.cpu.powerW.toFixed(1)} W`);
-    return { title: "CPU 占用", lines };
-  },
-  "cpu-temp": (_, h) => {
-    const lines: string[] = [];
-    lines.push(`封装温度：${fmtTemp(h?.cpu?.packageTempC)}`);
-    const perCore = h?.cpu?.perCoreTempsC ?? [];
-    const cores = perCore.filter((t): t is number => t != null);
-    if (cores.length) {
-      lines.push(`最高核心：${fmtTemp(Math.max(...cores))}`);
-      lines.push(`最低核心：${fmtTemp(Math.min(...cores))}`);
-    }
-    return { title: "CPU 温度", lines };
-  },
-  "cpu-freq": (_, h) => ({
-    title: "CPU 频率",
-    lines: [`当前：${fmtFreq(h?.cpu?.frequencyMhz)}`],
-  }),
-  mem: (s) => {
-    const lines: string[] = [];
-    if (s?.memory) {
-      lines.push(`占用：${fmtPct(s.memory.usedPercent)}`);
-      if (s.memory.usedBytes != null && s.memory.totalBytes != null) {
-        lines.push(`已用：${fmtBytes(s.memory.usedBytes)} / ${fmtBytes(s.memory.totalBytes)}`);
-      }
-      if (s.memory.swapTotalBytes != null && s.memory.swapTotalBytes > 0) {
-        lines.push(
-          `交换：${fmtBytes(s.memory.swapUsedBytes ?? 0)} / ${fmtBytes(s.memory.swapTotalBytes)}`,
-        );
-      }
-    }
-    return { title: "内存", lines };
-  },
-  "gpu-usage": (_, h) => {
-    const gpus = h?.gpus ?? [];
-    const lines: string[] = [];
-    if (!gpus.length) lines.push("未检测到 GPU");
-    for (const g of gpus) {
-      const name = g.name || g.vendor || "GPU";
-      lines.push(`${name}：${fmtPct(g.usagePercent)}`);
-    }
-    return { title: "GPU 占用", lines };
-  },
-  "gpu-temp": (_, h) => {
-    const gpus = h?.gpus ?? [];
-    const lines: string[] = [];
-    if (!gpus.length) lines.push("未检测到 GPU");
-    for (const g of gpus) {
-      const name = g.name || g.vendor || "GPU";
-      lines.push(`${name}：${fmtTemp(g.tempC)}`);
-    }
-    return { title: "GPU 温度", lines };
-  },
-  "disk-read": (_, h) => {
-    const disks = h?.disks ?? [];
-    const lines: string[] = [];
-    const totalR = sumValid(disks.map((d) => d.readBytesPerSec));
-    const totalW = sumValid(disks.map((d) => d.writeBytesPerSec));
-    lines.push(`合计读取：${fmtSpeed(totalR)}`);
-    lines.push(`合计写入：${fmtSpeed(totalW)}`);
-    for (const d of disks) {
-      const model = d.model || "磁盘";
-      lines.push(`${model}：↓${fmtSpeed(d.readBytesPerSec)} ↑${fmtSpeed(d.writeBytesPerSec)}`);
-    }
-    return { title: "硬盘读写", lines };
-  },
-  "disk-temp": (_, h) => {
-    const disks = h?.disks ?? [];
-    const lines: string[] = [];
-    if (!disks.length) lines.push("未检测到磁盘");
-    for (const d of disks) {
-      const model = d.model || "磁盘";
-      lines.push(`${model}：${fmtTemp(d.tempC)}`);
-    }
-    return { title: "磁盘温度", lines };
-  },
-  "fan-rpm": (_, h) => {
-    const fans = (h?.fans ?? []).filter((f) => f.rpm != null && f.rpm > 0);
-    const lines: string[] = [];
-    if (!fans.length) lines.push("未检测到风扇");
-    for (const f of fans) {
-      const name = f.name || "风扇";
-      const pwm = f.pwmPercent != null ? `（${Math.round(f.pwmPercent)}%）` : "";
-      lines.push(`${name}：${fmtRpm(f.rpm)}${pwm}`);
-    }
-    return { title: "风扇转速", lines };
-  },
-  "mb-temp": (_, h) => {
-    const mb = h?.motherboard;
-    const temps = mb?.temperaturesC ?? [];
-    const lines: string[] = [];
-    if (mb?.model) lines.push(`主板：${(mb.vendor || "") + " " + mb.model}`.trim());
-    if (!temps.length) lines.push("未检测到温度");
-    for (const t of temps) lines.push(`${t.name}：${fmtTemp(t.value)}`);
-    return { title: "主板温度", lines };
-  },
-  "net-down": (s) => buildNetTooltip(s),
-  "net-up": (s) => buildNetTooltip(s),
-};
-
-function buildNetTooltip(s: Snapshot | null): TooltipContent {
-  const total = s?.network.total;
-  return {
-    title: "网速",
-    lines: [
-      `下行：${fmtSpeed(total?.bytesRecvPerSec)}`,
-      `上行：${fmtSpeed(total?.bytesSentPerSec)}`,
-    ],
-  };
-}
-
-let hoveredKey: string | null = null;
-
-function buildContentFor(key: string): TooltipContent | null {
-  const builder = tooltipBuilders[key];
-  if (!builder) return null;
-  return builder(lastSnapshot, lastHw);
-}
-
-async function showTooltipFor(key: string, el: HTMLElement) {
-  const content = buildContentFor(key);
-  if (!content) return;
-  const rect = el.getBoundingClientRect();
-  const dpr = window.devicePixelRatio || 1;
-  const anchor = await mapClientToScreen(rect.left + rect.width / 2, rect.top, dpr);
-  try {
-    await invoke("show_overlay_tooltip", {
-      args: {
-        title: content.title,
-        lines: content.lines,
-        anchorX: Math.round(anchor.x),
-        anchorY: Math.round(anchor.y),
-      },
-    });
-  } catch (e) {
-    console.warn("show_overlay_tooltip failed", e);
-  }
-}
-
-async function hideTooltip() {
-  try {
-    await invoke("hide_overlay_tooltip");
-  } catch {
-    /* ignore */
-  }
-}
-
-async function mapClientToScreen(clientX: number, clientY: number, dpr: number) {
-  // Convert in-window CSS coordinates to physical screen pixels.
-  try {
-    const pos = await getCurrentWindow().outerPosition();
-    return {
-      x: pos.x + clientX * dpr,
-      y: pos.y + clientY * dpr,
-    };
-  } catch {
-    return { x: clientX * dpr, y: clientY * dpr };
-  }
-}
-
-function refreshActiveTooltip() {
-  if (!hoveredKey) return;
-  const el = document.querySelector<HTMLElement>(`.ov-item[data-key="${hoveredKey}"]`);
-  if (!el) return;
-  const content = buildContentFor(hoveredKey);
-  if (!content) return;
-  // Only re-emit the payload; position is kept.
-  const rect = el.getBoundingClientRect();
-  const dpr = window.devicePixelRatio || 1;
-  void mapClientToScreen(rect.left + rect.width / 2, rect.top, dpr).then((anchor) => {
-    void invoke("show_overlay_tooltip", {
-      args: {
-        title: content.title,
-        lines: content.lines,
-        anchorX: Math.round(anchor.x),
-        anchorY: Math.round(anchor.y),
-      },
-    });
-  });
-}
-
-function bindItemHover(root: HTMLElement) {
-  root.querySelectorAll<HTMLElement>(".ov-item").forEach((el) => {
-    if (el.dataset.hoverBound === "1") return;
-    el.dataset.hoverBound = "1";
-    el.addEventListener("mouseenter", () => {
-      hoveredKey = el.dataset.key || null;
-      if (hoveredKey) void showTooltipFor(hoveredKey, el);
-    });
-    el.addEventListener("mouseleave", () => {
-      if (hoveredKey === el.dataset.key) hoveredKey = null;
-      void hideTooltip();
-    });
-  });
-}
-
 async function runMenuAction(action: string) {
   try {
     if (action === "settings") await invoke("show_config_window");
@@ -559,19 +304,6 @@ async function main() {
     applyConfig(config, root);
     autoFitWindow(root, { allowShrink: true });
   }
-  bindItemHover(root);
-
-  // Prime tooltips from the last-known snapshots so hover has data on first render
-  try {
-    const [snap, hw] = await Promise.all([
-      invoke<Snapshot | null>("get_realtime_stats"),
-      invoke<HwSnapshot | null>("get_hw_snapshot"),
-    ]);
-    if (snap) lastSnapshot = snap;
-    if (hw) lastHw = hw;
-  } catch (e) {
-    console.warn("prime overlay tooltips failed", e);
-  }
 
   // Update on stats events
   const valDown = root.querySelector<HTMLElement>('[data-key="net-down"] .val')!;
@@ -588,15 +320,27 @@ async function main() {
   const valFanRpm = root.querySelector<HTMLElement>('[data-key="fan-rpm"] .val');
   const valMbTemp = root.querySelector<HTMLElement>('[data-key="mb-temp"] .val');
 
+  // On cold boot the webview may not have fully laid out when the first
+  // autoFitWindow fires (the window is shown + docked before CSS grid settles).
+  // We force a re-layout with allowShrink on the first data event to fix the
+  // "squished" appearance after auto-start.
+  let firstDataReceived = false;
+  function onFirstData() {
+    if (firstDataReceived) return;
+    firstDataReceived = true;
+    // Give the grid a moment to settle after the first real values are painted.
+    setTimeout(() => autoFitWindow(root, { allowShrink: true }), 80);
+    // And a second pass slightly later in case fonts/metrics were still loading.
+    setTimeout(() => autoFitWindow(root, { allowShrink: true }), 400);
+  }
+
   await listen<Snapshot>("stats:update", (e) => {
     const s = e.payload;
     valDown.textContent = fmtSpeed(s.network.total.bytesRecvPerSec);
     valUp.textContent = fmtSpeed(s.network.total.bytesSentPerSec);
     valCpu.textContent = `${Math.round(s.cpu.usagePercent)}%`;
     valMem.textContent = `${Math.round(s.memory.usedPercent)}%`;
-    lastSnapshot = s;
-    refreshActiveTooltip();
-    // Refit if width changed (e.g., 999 KB/s → 1.0 MB/s)
+    onFirstData();
     autoFitWindow(root);
   });
 
@@ -620,15 +364,13 @@ async function main() {
       const mbTemps = (h.motherboard?.temperaturesC ?? []).map((t) => t.value);
       valMbTemp.textContent = fmtTemp(maxValid(mbTemps));
     }
-    lastHw = h;
-    refreshActiveTooltip();
+    onFirstData();
     autoFitWindow(root);
   });
 
   await listen<OverlayConfig>("overlay:config-changed", (e) => {
     config = e.payload;
     applyConfig(config, root);
-    bindItemHover(root);
     autoFitWindow(root, { allowShrink: true });
   });
 

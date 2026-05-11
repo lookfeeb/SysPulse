@@ -79,7 +79,7 @@ impl Default for NetworkConfig {
             monitor_mode: NetworkMonitorMode::All,
             monitor_interfaces: vec![],
             include_loopback: false,
-            include_virtual: true,
+            include_virtual: false,
         }
     }
 }

@@ -38,10 +38,13 @@ impl NetworkCollector {
         };
 
         let allow_iface = |row: &Row| -> bool {
-            if !cfg.include_loopback && row.is_loopback {
+            // Only count physical adapters (Ethernet / WiFi) that are currently up.
+            // This excludes loopback, virtual adapters (VMware, Hyper-V, VPN tunnels, etc.)
+            // which can produce erratic counter values.
+            if !row.is_physical {
                 return false;
             }
-            if !cfg.include_virtual && !row.is_physical && !row.is_loopback {
+            if !row.is_up {
                 return false;
             }
             true
