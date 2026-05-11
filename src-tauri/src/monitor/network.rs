@@ -38,16 +38,25 @@ impl NetworkCollector {
         };
 
         let allow_iface = |row: &Row| -> bool {
-            // Only count physical adapters (Ethernet / WiFi) that are currently up.
-            // This excludes loopback, virtual adapters (VMware, Hyper-V, VPN tunnels, etc.)
-            // which can produce erratic counter values.
-            if !row.is_physical {
-                return false;
-            }
+            // Include any interface that is:
+            // - currently Up
+            // - not loopback
+            // - not a tunnel/PPP (VPN)
+            // - either a known physical type (Ethernet/WiFi) OR has a non-zero
+            //   byte counter (catches USB NICs with unusual ifType)
             if !row.is_up {
                 return false;
             }
-            true
+            if row.is_loopback || row.is_tunnel {
+                return false;
+            }
+            // Physical adapters always pass
+            if row.is_physical {
+                return true;
+            }
+            // For non-physical types, only include if they have actual traffic
+            // (filters out idle virtual adapters like VMware/Hyper-V)
+            row.bytes_in > 0 || row.bytes_out > 0
         };
 
         let in_monitor_set = |row: &Row| -> bool {
@@ -121,6 +130,7 @@ struct Row {
     is_up: bool,
     is_loopback: bool,
     is_physical: bool,
+    is_tunnel: bool,
     bytes_in: u64,
     bytes_out: u64,
 }
@@ -137,6 +147,7 @@ fn read_rows() -> Result<Vec<Row>> {
             is_up: r.is_up,
             is_loopback: r.is_loopback,
             is_physical: r.is_physical,
+            is_tunnel: r.is_tunnel,
             bytes_in: r.bytes_in,
             bytes_out: r.bytes_out,
         })
@@ -158,6 +169,7 @@ fn read_rows() -> Result<Vec<Row>> {
             is_up: true,
             is_loopback: name.starts_with("lo"),
             is_physical: !(name.starts_with("docker") || name.starts_with("veth")),
+            is_tunnel: false,
             bytes_in: data.total_received(),
             bytes_out: data.total_transmitted(),
         });

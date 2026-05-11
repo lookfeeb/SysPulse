@@ -13,6 +13,8 @@ use windows::Win32::NetworkManagement::Ndis::IfOperStatusUp;
 const IF_TYPE_ETHERNET_CSMACD: u32 = 6;
 const IF_TYPE_SOFTWARE_LOOPBACK: u32 = 24;
 const IF_TYPE_IEEE80211: u32 = 71;
+const IF_TYPE_TUNNEL: u32 = 131;
+const IF_TYPE_PPP: u32 = 23;
 
 #[derive(Debug, Clone)]
 pub struct IfRow {
@@ -24,6 +26,7 @@ pub struct IfRow {
     pub is_up: bool,
     pub is_loopback: bool,
     pub is_physical: bool,
+    pub is_tunnel: bool,
     pub bytes_in: u64,
     pub bytes_out: u64,
     pub mtu: u32,
@@ -52,6 +55,7 @@ pub fn list_interfaces() -> Result<Vec<IfRow>> {
             let is_up = row.OperStatus == IfOperStatusUp;
             let is_loopback = row.Type == IF_TYPE_SOFTWARE_LOOPBACK;
             let is_physical = row.Type == IF_TYPE_ETHERNET_CSMACD || row.Type == IF_TYPE_IEEE80211;
+            let is_tunnel = row.Type == IF_TYPE_TUNNEL || row.Type == IF_TYPE_PPP;
 
             out.push(IfRow {
                 luid: row.InterfaceLuid.Value,
@@ -62,6 +66,7 @@ pub fn list_interfaces() -> Result<Vec<IfRow>> {
                 is_up,
                 is_loopback,
                 is_physical,
+                is_tunnel,
                 bytes_in: row.InOctets,
                 bytes_out: row.OutOctets,
                 mtu: row.Mtu,
