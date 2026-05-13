@@ -2,6 +2,10 @@ use crate::app::AppState;
 use crate::config::OverlayConfig;
 use crate::error::{AppError, IpcError};
 use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, State};
+#[cfg(windows)]
+use windows::Win32::Foundation::RECT;
+#[cfg(windows)]
+use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
 
 const CONFIG_LABEL: &str = "config";
 const OVERLAY_LABEL: &str = "overlay";
@@ -36,7 +40,6 @@ pub fn apply_overlay_config(app: &AppHandle, cfg: &OverlayConfig) -> Result<(), 
     }
     Ok(())
 }
-
 
 #[derive(serde::Deserialize, specta::Type)]
 pub struct ResizeArgs {
@@ -105,6 +108,18 @@ pub fn dock_overlay_now(app: &AppHandle) -> Result<(), AppError> {
                     .map_err(AppError::Tauri)?;
             }
             let (x, y) = crate::windows_api::taskbar::dock_position(&layout, win_w, win_h);
+            if let Some(rect) = current_window_rect(&w) {
+                let current_w = rect.right - rect.left;
+                let current_h = rect.bottom - rect.top;
+                if rect.left == x
+                    && rect.top == y
+                    && current_w == win_w
+                    && current_h == win_h
+                    && overlay_is_taskbar_child(&w, layout.hwnd)
+                {
+                    return Ok(());
+                }
+            }
             match dock_overlay_as_taskbar_child(&w, &layout, x, y, win_w, win_h) {
                 Ok(()) => {}
                 Err(e) => {
@@ -122,6 +137,30 @@ pub fn dock_overlay_now(app: &AppHandle) -> Result<(), AppError> {
         let _ = app;
     }
     Ok(())
+}
+
+#[cfg(windows)]
+fn current_window_rect(w: &tauri::WebviewWindow) -> Option<RECT> {
+    use windows::Win32::Foundation::HWND;
+
+    let hwnd = HWND(w.hwnd().ok()?.0 as _);
+    let mut rect = RECT::default();
+    unsafe { GetWindowRect(hwnd, &mut rect).ok()? };
+    Some(rect)
+}
+
+#[cfg(windows)]
+fn overlay_is_taskbar_child(
+    w: &tauri::WebviewWindow,
+    taskbar: windows::Win32::Foundation::HWND,
+) -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::GetParent;
+
+    let Ok(hwnd) = w.hwnd() else {
+        return false;
+    };
+    unsafe { GetParent(HWND(hwnd.0 as _)).ok() == Some(taskbar) }
 }
 
 pub fn spawn_taskbar_overlay_z_order_watchdog(app: AppHandle) {

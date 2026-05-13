@@ -74,6 +74,7 @@ body {
   column-gap: 4px;
   row-gap: 1px;
   white-space: nowrap;
+  contain: layout paint;
 }
 
 .ov-pair-cell {
@@ -136,10 +137,13 @@ body {
 .ov-item .val {
   display: inline-block;
   font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "lnum" 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   width: 4.6em;
+  text-align: right;
+  contain: layout paint;
 }
 
 .ov-net,
