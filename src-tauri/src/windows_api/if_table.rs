@@ -15,6 +15,7 @@ const IF_TYPE_SOFTWARE_LOOPBACK: u32 = 24;
 const IF_TYPE_IEEE80211: u32 = 71;
 const IF_TYPE_TUNNEL: u32 = 131;
 const IF_TYPE_PPP: u32 = 23;
+const IF_ROW_FLAG_HARDWARE_INTERFACE: u8 = 0x01;
 
 #[derive(Debug, Clone)]
 pub struct IfRow {
@@ -54,7 +55,10 @@ pub fn list_interfaces() -> Result<Vec<IfRow>> {
             let desc = utf16_to_string(&row.Description);
             let is_up = row.OperStatus == IfOperStatusUp;
             let is_loopback = row.Type == IF_TYPE_SOFTWARE_LOOPBACK;
-            let is_physical = row.Type == IF_TYPE_ETHERNET_CSMACD || row.Type == IF_TYPE_IEEE80211;
+            let is_hardware =
+                row.InterfaceAndOperStatusFlags._bitfield & IF_ROW_FLAG_HARDWARE_INTERFACE != 0;
+            let is_physical =
+                is_hardware || row.Type == IF_TYPE_ETHERNET_CSMACD || row.Type == IF_TYPE_IEEE80211;
             let is_tunnel = row.Type == IF_TYPE_TUNNEL || row.Type == IF_TYPE_PPP;
 
             out.push(IfRow {

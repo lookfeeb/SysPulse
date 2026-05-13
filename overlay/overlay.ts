@@ -211,6 +211,7 @@ function layoutItems(root: HTMLElement, orderedKeys: string[]) {
 let lastFitWidth = 0;
 let lastFitHeight = 0;
 let fitTimer: number | null = null;
+let pendingFitAfterText = false;
 
 function autoFitWindow(root: HTMLElement, options: { allowShrink?: boolean } = {}) {
   if (fitTimer != null) {
@@ -251,6 +252,21 @@ function autoFitWindow(root: HTMLElement, options: { allowShrink?: boolean } = {
       }
     });
   }, 120);
+}
+
+function scheduleFitAfterText(root: HTMLElement) {
+  if (pendingFitAfterText) return;
+  pendingFitAfterText = true;
+  window.setTimeout(() => {
+    pendingFitAfterText = false;
+    autoFitWindow(root, { allowShrink: true });
+  }, 80);
+}
+
+function setText(el: HTMLElement | null, value: string): boolean {
+  if (!el || el.textContent === value) return false;
+  el.textContent = value;
+  return true;
 }
 
 async function runMenuAction(action: string) {
@@ -336,36 +352,37 @@ async function main() {
 
   await listen<Snapshot>("stats:update", (e) => {
     const s = e.payload;
-    valDown.textContent = fmtSpeed(s.network.total.bytesRecvPerSec);
-    valUp.textContent = fmtSpeed(s.network.total.bytesSentPerSec);
-    valCpu.textContent = `${Math.round(s.cpu.usagePercent)}%`;
-    valMem.textContent = `${Math.round(s.memory.usedPercent)}%`;
+    let changed = false;
+    changed = setText(valDown, fmtSpeed(s.network.total.bytesRecvPerSec)) || changed;
+    changed = setText(valUp, fmtSpeed(s.network.total.bytesSentPerSec)) || changed;
+    changed = setText(valCpu, `${Math.round(s.cpu.usagePercent)}%`) || changed;
+    changed = setText(valMem, `${Math.round(s.memory.usedPercent)}%`) || changed;
     onFirstData();
-    autoFitWindow(root);
+    if (changed && lastFitWidth === 0) scheduleFitAfterText(root);
   });
 
   await listen<HwSnapshot>("hw:update", (e) => {
     const h = e.payload;
-    if (valCpuTemp) valCpuTemp.textContent = fmtTemp(h.cpu?.packageTempC);
-    if (valCpuFreq) valCpuFreq.textContent = fmtFreq(h.cpu?.frequencyMhz);
+    let changed = false;
+    changed = setText(valCpuTemp, fmtTemp(h.cpu?.packageTempC)) || changed;
+    changed = setText(valCpuFreq, fmtFreq(h.cpu?.frequencyMhz)) || changed;
     const gpuUsage = maxValid((h.gpus ?? []).map((g) => g.usagePercent));
-    if (valGpuTemp)
-      valGpuTemp.textContent = fmtTemp(maxValid((h.gpus ?? []).map((g) => g.tempC)));
-    if (valGpuUsage) valGpuUsage.textContent = fmtPct(gpuUsage);
-    if (valDiskR)
-      valDiskR.textContent = fmtSpeed(sumValid((h.disks ?? []).map((d) => d.readBytesPerSec)));
-    if (valDiskW)
-      valDiskW.textContent = fmtSpeed(sumValid((h.disks ?? []).map((d) => d.writeBytesPerSec)));
-    if (valDiskTemp)
-      valDiskTemp.textContent = fmtTemp(maxValid((h.disks ?? []).map((d) => d.tempC)));
-    if (valFanRpm)
-      valFanRpm.textContent = fmtRpm(maxValid((h.fans ?? []).map((f) => f.rpm)));
+    changed = setText(valGpuTemp, fmtTemp(maxValid((h.gpus ?? []).map((g) => g.tempC)))) || changed;
+    changed = setText(valGpuUsage, fmtPct(gpuUsage)) || changed;
+    changed =
+      setText(valDiskR, fmtSpeed(sumValid((h.disks ?? []).map((d) => d.readBytesPerSec)))) ||
+      changed;
+    changed =
+      setText(valDiskW, fmtSpeed(sumValid((h.disks ?? []).map((d) => d.writeBytesPerSec)))) ||
+      changed;
+    changed = setText(valDiskTemp, fmtTemp(maxValid((h.disks ?? []).map((d) => d.tempC)))) || changed;
+    changed = setText(valFanRpm, fmtRpm(maxValid((h.fans ?? []).map((f) => f.rpm)))) || changed;
     if (valMbTemp) {
       const mbTemps = (h.motherboard?.temperaturesC ?? []).map((t) => t.value);
-      valMbTemp.textContent = fmtTemp(maxValid(mbTemps));
+      changed = setText(valMbTemp, fmtTemp(maxValid(mbTemps))) || changed;
     }
     onFirstData();
-    autoFitWindow(root);
+    if (changed && lastFitWidth === 0) scheduleFitAfterText(root);
   });
 
   await listen<OverlayConfig>("overlay:config-changed", (e) => {

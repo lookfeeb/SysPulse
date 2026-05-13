@@ -40,23 +40,18 @@ impl NetworkCollector {
         let allow_iface = |row: &Row| -> bool {
             // Include any interface that is:
             // - currently Up
-            // - not loopback
+            // - allowed by loopback / virtual adapter config
             // - not a tunnel/PPP (VPN)
-            // - either a known physical type (Ethernet/WiFi) OR has a non-zero
-            //   byte counter (catches USB NICs with unusual ifType)
             if !row.is_up {
                 return false;
             }
-            if row.is_loopback || row.is_tunnel {
+            if row.is_tunnel {
                 return false;
             }
-            // Physical adapters always pass
-            if row.is_physical {
-                return true;
+            if row.is_loopback {
+                return cfg.include_loopback;
             }
-            // For non-physical types, only include if they have actual traffic
-            // (filters out idle virtual adapters like VMware/Hyper-V)
-            row.bytes_in > 0 || row.bytes_out > 0
+            row.is_physical || cfg.include_virtual
         };
 
         let in_monitor_set = |row: &Row| -> bool {
