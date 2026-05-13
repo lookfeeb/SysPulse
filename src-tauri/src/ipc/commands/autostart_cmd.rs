@@ -1,8 +1,12 @@
 use crate::error::{AppError, IpcError};
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use winreg::enums::*;
 use winreg::RegKey;
+
+/// Prevent child console windows from flashing on screen.
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// Legacy registry key path previously used for current-user auto-start.
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
@@ -56,6 +60,7 @@ fn current_exe_path() -> Result<PathBuf, IpcError> {
 fn create_scheduled_task(exe_path: &Path) -> Result<(), IpcError> {
     let task_command = quote_for_task_action(exe_path);
     let output = Command::new("schtasks")
+        .creation_flags(CREATE_NO_WINDOW)
         .args([
             "/Create",
             "/TN",
@@ -88,6 +93,7 @@ fn delete_scheduled_task() -> Result<(), IpcError> {
     }
 
     let output = Command::new("schtasks")
+        .creation_flags(CREATE_NO_WINDOW)
         .args(["/Delete", "/TN", TASK_NAME, "/F"])
         .output()
         .map_err(|e| AppError::Config(format!("failed to run schtasks: {e}")))?;
@@ -105,6 +111,7 @@ fn delete_scheduled_task() -> Result<(), IpcError> {
 
 fn scheduled_task_exists() -> Result<bool, IpcError> {
     let output = Command::new("schtasks")
+        .creation_flags(CREATE_NO_WINDOW)
         .args(["/Query", "/TN", TASK_NAME])
         .output()
         .map_err(|e| AppError::Config(format!("failed to run schtasks: {e}")))?;
@@ -113,6 +120,7 @@ fn scheduled_task_exists() -> Result<bool, IpcError> {
 
 fn scheduled_task_points_to(exe_path: &Path) -> Result<bool, IpcError> {
     let output = Command::new("schtasks")
+        .creation_flags(CREATE_NO_WINDOW)
         .args(["/Query", "/TN", TASK_NAME, "/XML"])
         .output()
         .map_err(|e| AppError::Config(format!("failed to run schtasks: {e}")))?;

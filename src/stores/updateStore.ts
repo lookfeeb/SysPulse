@@ -89,8 +89,11 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
   startAutoCheck: () => {
     if (get().autoCheckStarted) return;
     set({ autoCheckStarted: true });
-    // Silent — never flip the UI into "checking…" just because the app booted.
-    void get().checkForUpdate({ silent: true });
+    // Delay the silent check by 60s so the network stack is ready on cold boot
+    // (e.g. auto-start at logon before Wi-Fi/Ethernet is fully connected).
+    setTimeout(() => {
+      void get().checkForUpdate({ silent: true });
+    }, 60_000);
   },
 }));
 
