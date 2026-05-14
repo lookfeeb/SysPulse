@@ -138,8 +138,6 @@ body {
   display: inline-block;
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum" 1, "lnum" 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
   width: 4.6em;
   text-align: right;
