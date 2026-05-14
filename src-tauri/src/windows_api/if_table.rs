@@ -30,6 +30,8 @@ pub struct IfRow {
     pub is_tunnel: bool,
     pub bytes_in: u64,
     pub bytes_out: u64,
+    pub in_speed_bps: u64,
+    pub out_speed_bps: u64,
     pub mtu: u32,
 }
 
@@ -73,6 +75,8 @@ pub fn list_interfaces() -> Result<Vec<IfRow>> {
                 is_tunnel,
                 bytes_in: row.InOctets,
                 bytes_out: row.OutOctets,
+                in_speed_bps: row.ReceiveLinkSpeed,
+                out_speed_bps: row.TransmitLinkSpeed,
                 mtu: row.Mtu,
             });
         }

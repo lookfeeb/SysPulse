@@ -34,7 +34,7 @@ body {
   font-family: var(--font);
   font-size: var(--font-size);
   font-weight: var(--font-weight);
-  line-height: 1.2;
+  line-height: 1;
   white-space: normal;
   height: 100vh;
   align-items: center;
@@ -58,7 +58,7 @@ body {
 
 .ov-row {
   display: inline-flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: center;
   gap: 10px;
   white-space: nowrap;
@@ -69,7 +69,7 @@ body {
   grid-template-rows: repeat(2, auto);
   grid-auto-columns: max-content;
   grid-auto-flow: column;
-  align-items: baseline;
+  align-items: center;
   justify-content: center;
   column-gap: 4px;
   row-gap: 1px;
@@ -80,8 +80,8 @@ body {
 .ov-pair-cell {
   display: grid;
   grid-template-columns: auto auto auto;
-  grid-template-rows: repeat(2, auto);
-  align-items: baseline;
+  grid-template-rows: repeat(2, 1em);
+  align-items: center;
   column-gap: 2px;
   row-gap: 1px;
   white-space: nowrap;
@@ -100,26 +100,30 @@ body {
 .ov-pair-cell .ov-item:first-child .dir {
   grid-column: 2;
   grid-row: 1;
+  align-self: center;
 }
 
 .ov-pair-cell .ov-item:first-child .val {
   grid-column: 3;
   grid-row: 1;
+  align-self: center;
 }
 
 .ov-pair-cell .ov-item:nth-child(2) .dir {
   grid-column: 2;
   grid-row: 2;
+  align-self: center;
 }
 
 .ov-pair-cell .ov-item:nth-child(2) .val {
   grid-column: 3;
   grid-row: 2;
+  align-self: center;
 }
 
 .ov-item {
   display: inline-flex;
-  align-items: baseline;
+  align-items: center;
   gap: 2px;
   flex: 0 0 auto;
   white-space: nowrap;
@@ -128,10 +132,12 @@ body {
 
 .ov-item .lbl {
   opacity: 0.8;
+  line-height: 1;
 }
 
 .ov-item .dir {
   opacity: 0.86;
+  line-height: 1;
 }
 
 .ov-item .val {
@@ -141,6 +147,7 @@ body {
   white-space: nowrap;
   width: 4.6em;
   text-align: right;
+  line-height: 1;
   contain: layout paint;
 }
 

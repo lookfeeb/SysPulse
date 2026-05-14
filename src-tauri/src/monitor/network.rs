@@ -4,16 +4,21 @@ use crate::monitor::snapshot::{InterfaceStats, NetworkSnapshot};
 use std::collections::HashMap;
 use std::time::Instant;
 
+const MIN_RATE_SAMPLE_MS: u32 = 200;
+const DEFAULT_MAX_BYTES_PER_SEC: u64 = 125 * 1024 * 1024; // 1 Gbps fallback for unknown links.
+const RATE_HEADROOM_NUMERATOR: u64 = 115;
+const RATE_HEADROOM_DENOMINATOR: u64 = 100;
+
 pub struct NetworkCollector {
     last_at: Option<Instant>,
-    last_bytes: HashMap<u64, (u64, u64)>, // luid -> (in, out)
+    last_state: HashMap<u64, LastIfaceState>,
 }
 
 impl NetworkCollector {
     pub fn new() -> Self {
         Self {
             last_at: None,
-            last_bytes: HashMap::new(),
+            last_state: HashMap::new(),
         }
     }
 
@@ -66,18 +71,21 @@ impl NetworkCollector {
 
         for row in rows {
             current_luids.insert(row.luid);
-            let prev = self.last_bytes.get(&row.luid).copied();
-            let (rate_in, rate_out) = match prev {
-                Some((pi, po)) if secs > 0.0 => {
-                    let di = row.bytes_in.saturating_sub(pi);
-                    let do_ = row.bytes_out.saturating_sub(po);
-                    ((di as f64 / secs) as u64, (do_ as f64 / secs) as u64)
-                }
-                _ => (0u64, 0u64),
-            };
+            let prev = self.last_state.get(&row.luid).copied();
+            let (rate_in, rate_out, accepted_in, accepted_out) =
+                compute_rates(&row, prev, elapsed_ms, secs);
 
-            self.last_bytes
-                .insert(row.luid, (row.bytes_in, row.bytes_out));
+            self.last_state.insert(
+                row.luid,
+                LastIfaceState {
+                    bytes_in: row.bytes_in,
+                    bytes_out: row.bytes_out,
+                    rate_in,
+                    rate_out,
+                    accepted_bytes_in: accepted_in,
+                    accepted_bytes_out: accepted_out,
+                },
+            );
 
             if !allow_iface(&row) {
                 continue;
@@ -91,6 +99,8 @@ impl NetworkCollector {
                 is_physical: row.is_physical,
                 bytes_sent_total: row.bytes_out,
                 bytes_recv_total: row.bytes_in,
+                accepted_bytes_sent_total: accepted_out,
+                accepted_bytes_recv_total: accepted_in,
                 bytes_sent_per_sec: rate_out,
                 bytes_recv_per_sec: rate_in,
             };
@@ -106,7 +116,7 @@ impl NetworkCollector {
         }
 
         // Drop disappeared interfaces from the prev map.
-        self.last_bytes.retain(|k, _| current_luids.contains(k));
+        self.last_state.retain(|k, _| current_luids.contains(k));
         self.last_at = Some(now);
 
         Ok(NetworkSnapshot {
@@ -115,6 +125,16 @@ impl NetworkCollector {
             sample_interval_ms: elapsed_ms,
         })
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LastIfaceState {
+    bytes_in: u64,
+    bytes_out: u64,
+    rate_in: u64,
+    rate_out: u64,
+    accepted_bytes_in: u64,
+    accepted_bytes_out: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -128,6 +148,71 @@ struct Row {
     is_tunnel: bool,
     bytes_in: u64,
     bytes_out: u64,
+    in_speed_bps: u64,
+    out_speed_bps: u64,
+}
+
+fn compute_rates(
+    row: &Row,
+    prev: Option<LastIfaceState>,
+    elapsed_ms: u32,
+    secs: f64,
+) -> (u64, u64, u64, u64) {
+    let Some(prev) = prev else {
+        return (0, 0, row.bytes_in, row.bytes_out);
+    };
+
+    // Windows counters can reset when adapters sleep, roam, reconnect, or get
+    // recreated. Treat rollback as a baseline reset instead of a huge delta.
+    if row.bytes_in < prev.bytes_in || row.bytes_out < prev.bytes_out {
+        return (0, 0, row.bytes_in, row.bytes_out);
+    }
+
+    if elapsed_ms < MIN_RATE_SAMPLE_MS || secs <= 0.0 {
+        return (
+            prev.rate_in,
+            prev.rate_out,
+            prev.accepted_bytes_in,
+            prev.accepted_bytes_out,
+        );
+    }
+
+    let delta_in = row.bytes_in - prev.bytes_in;
+    let delta_out = row.bytes_out - prev.bytes_out;
+    let rate_in = (delta_in as f64 / secs) as u64;
+    let rate_out = (delta_out as f64 / secs) as u64;
+    let max_in = max_plausible_bytes_per_sec(row.in_speed_bps);
+    let max_out = max_plausible_bytes_per_sec(row.out_speed_bps);
+
+    if rate_in > max_in || rate_out > max_out {
+        tracing::debug!(
+            luid = row.luid,
+            name = %row.name,
+            elapsed_ms,
+            rate_in,
+            rate_out,
+            max_in,
+            max_out,
+            "ignored implausible network rate sample"
+        );
+        return (
+            prev.rate_in,
+            prev.rate_out,
+            prev.accepted_bytes_in,
+            prev.accepted_bytes_out,
+        );
+    }
+
+    (rate_in, rate_out, row.bytes_in, row.bytes_out)
+}
+
+fn max_plausible_bytes_per_sec(link_speed_bps: u64) -> u64 {
+    let base = if link_speed_bps > 0 {
+        link_speed_bps / 8
+    } else {
+        DEFAULT_MAX_BYTES_PER_SEC
+    };
+    base.saturating_mul(RATE_HEADROOM_NUMERATOR) / RATE_HEADROOM_DENOMINATOR
 }
 
 #[cfg(windows)]
@@ -145,6 +230,8 @@ fn read_rows() -> Result<Vec<Row>> {
             is_tunnel: r.is_tunnel,
             bytes_in: r.bytes_in,
             bytes_out: r.bytes_out,
+            in_speed_bps: r.in_speed_bps,
+            out_speed_bps: r.out_speed_bps,
         })
         .collect())
 }
@@ -167,6 +254,8 @@ fn read_rows() -> Result<Vec<Row>> {
             is_tunnel: false,
             bytes_in: data.total_received(),
             bytes_out: data.total_transmitted(),
+            in_speed_bps: 0,
+            out_speed_bps: 0,
         });
         next_luid += 1;
     }

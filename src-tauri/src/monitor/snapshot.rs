@@ -29,6 +29,8 @@ pub struct InterfaceStats {
     pub is_physical: bool,
     pub bytes_sent_total: u64,
     pub bytes_recv_total: u64,
+    pub accepted_bytes_sent_total: u64,
+    pub accepted_bytes_recv_total: u64,
     pub bytes_sent_per_sec: u64,
     pub bytes_recv_per_sec: u64,
 }

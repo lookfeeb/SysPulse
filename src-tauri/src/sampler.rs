@@ -249,12 +249,15 @@ pub fn spawn(config: Arc<ConfigManager>, writer: WriterHandle) -> SamplerHandle 
                         let prev = prev_totals.get(&iface.luid).copied();
                         let (drecv, dsent) = match prev {
                             Some((r, s)) => (
-                                iface.bytes_recv_total.saturating_sub(r),
-                                iface.bytes_sent_total.saturating_sub(s),
+                                iface.accepted_bytes_recv_total.saturating_sub(r),
+                                iface.accepted_bytes_sent_total.saturating_sub(s),
                             ),
                             None => (0, 0),
                         };
-                        prev_totals.insert(iface.luid, (iface.bytes_recv_total, iface.bytes_sent_total));
+                        prev_totals.insert(
+                            iface.luid,
+                            (iface.accepted_bytes_recv_total, iface.accepted_bytes_sent_total),
+                        );
                         if drecv > 0 || dsent > 0 {
                             writer.try_send_delta(TrafficDelta {
                                 luid: iface.luid,
