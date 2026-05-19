@@ -168,14 +168,21 @@ pub fn spawn_watchdog(
     manager: FanControlManager,
     client: Arc<HwClient>,
     last_snapshot: Arc<RwLock<Option<HwSnapshot>>>,
-) {
+) -> tokio_util::sync::CancellationToken {
+    let token = tokio_util::sync::CancellationToken::new();
+    let child = token.child_token();
     tauri::async_runtime::spawn(async move {
         let mut ticker = tokio::time::interval(WATCHDOG_INTERVAL);
         loop {
-            ticker.tick().await;
-            run_watchdog_once(&app, &manager, &client, &last_snapshot).await;
+            tokio::select! {
+                _ = ticker.tick() => {
+                    run_watchdog_once(&app, &manager, &client, &last_snapshot).await;
+                }
+                _ = child.cancelled() => { break; }
+            }
         }
     });
+    token
 }
 
 pub async fn reset_all_best_effort(manager: &FanControlManager, client: &HwClient) {

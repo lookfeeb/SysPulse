@@ -39,7 +39,7 @@ body {
   height: 100vh;
   align-items: center;
   justify-content: center;
-  padding-inline: 4px;
+  padding-inline: 1px;
   overflow: hidden;
   cursor: context-menu;
   box-sizing: border-box;
@@ -71,7 +71,7 @@ body {
   grid-auto-flow: column;
   align-items: center;
   justify-content: center;
-  column-gap: 4px;
+  column-gap: 2px;
   row-gap: 1px;
   white-space: nowrap;
   contain: layout paint;
@@ -146,7 +146,7 @@ body {
   font-feature-settings: "tnum" 1, "lnum" 1;
   white-space: nowrap;
   width: 4.6em;
-  text-align: right;
+  text-align: left;
   line-height: 1;
   contain: layout paint;
 }

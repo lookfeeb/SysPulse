@@ -79,6 +79,15 @@ async autostartEnable() : Promise<null> {
 },
 async autostartDisable() : Promise<null> {
     return await TAURI_INVOKE("autostart_disable");
+},
+async scanCleanup() : Promise<ScanResult> {
+    return await TAURI_INVOKE("scan_cleanup");
+},
+async cleanCategories(args: CleanArgs) : Promise<CleanResult> {
+    return await TAURI_INVOKE("clean_categories", { args });
+},
+async scanLargeFiles(args: LargeFileScanArgs) : Promise<LargeFileScanResult> {
+    return await TAURI_INVOKE("scan_large_files", { args });
 }
 }
 
@@ -94,6 +103,9 @@ async autostartDisable() : Promise<null> {
 
 export type AppConfig = { schemaVersion: number; general: GeneralConfig; overlay: OverlayConfig; network: NetworkConfig; history: HistoryConfig }
 export type AppInfo = { name: string; version: string; os: string; arch: string; configDir: string; logsDir: string; dbFile: string }
+export type CleanArgs = { categoryIds: string[]; excludedPaths: string[] }
+export type CleanResult = { freedBytes: number; deletedFiles: number; errors: string[] }
+export type CleanupCategory = { id: string; name: string; description: string; sizeBytes: number; fileCount: number; paths: PathDetail[] }
 export type CpuHw = { name: string; packageTempC: number | null; perCoreTempsC?: (number | null)[]; perCoreUsage?: number[]; totalUsage: number; frequencyMhz: number | null; powerW: number | null }
 export type CpuSnapshot = { usagePercent: number; perCore: number[] | null; model: string; physicalCores: number }
 export type DailyTraffic = { date: string; iface: string | null; bytesRecv: number; bytesSent: number }
@@ -122,6 +134,9 @@ export type HwSnapshot = { timestampMs: number; cpu: CpuHw | null; gpus?: GpuHw[
 export type InterfaceStats = { luid: number; name: string; description: string; isUp: boolean; isPhysical: boolean; bytesSentTotal: number; bytesRecvTotal: number; acceptedBytesSentTotal: number; acceptedBytesRecvTotal: number; bytesSentPerSec: number; bytesRecvPerSec: number }
 export type IpcError = { code: string; message: string }
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
+export type LargeFile = { path: string; sizeBytes: number }
+export type LargeFileScanArgs = { root: string; minSizeMb: number; limit: number }
+export type LargeFileScanResult = { files: LargeFile[]; totalScanned: number }
 export type MemoryHw = { totalBytes: number; usedBytes: number; usedPercent: number; swapTotalBytes: number; swapUsedBytes: number; modules?: MemoryModule[]; frequencyMhz: number | null; channels: number | null }
 export type MemoryModule = { slot: string; capacityBytes: number; speedMtps: number | null; manufacturer: string; partNumber: string }
 export type MemorySnapshot = { totalBytes: number; usedBytes: number; usedPercent: number; swapTotalBytes: number; swapUsedBytes: number }
@@ -133,8 +148,10 @@ export type NetworkSnapshot = { interfaces: InterfaceStats[]; total: InterfaceSt
 export type OpenPathArgs = { path: string }
 export type OverlayConfig = { items: OverlayItem[] }
 export type OverlayItem = "net-down" | "net-up" | "cpu" | "cpu-freq" | "mem" | "disk-read" | "disk-write" | "gpu" | "cpu-temp" | "gpu-temp" | "gpu-usage" | "disk-temp" | "fan-rpm" | "mb-temp"
+export type PathDetail = { path: string; sizeBytes: number; fileCount: number }
 export type ResetFanControlArgs = { fanId: string }
 export type ResizeArgs = { width: number; height: number }
+export type ScanResult = { categories: CleanupCategory[]; totalSizeBytes: number; totalFileCount: number }
 export type SetConfigArgs = { patch: JsonValue }
 export type SetFanCurveArgs = { fanId: string; curve: FanCurvePoint[] }
 export type SetFanManualArgs = { fanId: string; pwm: number }

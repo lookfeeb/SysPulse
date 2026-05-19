@@ -19,6 +19,9 @@ import { fmtBytes } from "@/utils/format";
 
 const { RangePicker } = DatePicker;
 
+// Module-level cache: survives route switches without re-querying
+let cachedRows: DailyTraffic[] | null = null;
+
 export default function HistoryPage() {
   const { t } = useTranslation();
   const { message } = AntdApp.useApp();
@@ -27,7 +30,7 @@ export default function HistoryPage() {
     dayjs(),
   ]);
   const [granularity, setGranularity] = useState<"day" | "month">("day");
-  const [rows, setRows] = useState<DailyTraffic[]>([]);
+  const [rows, setRows] = useState<DailyTraffic[]>(cachedRows ?? []);
   const [loading, setLoading] = useState(false);
 
   const buildQuery = (): HistoryQuery => ({
@@ -41,8 +44,10 @@ export default function HistoryPage() {
     setLoading(true);
     try {
       const r = await queryTrafficHistory(buildQuery());
-      setRows([...r].reverse());
-      void message.success({ content: `查询完成，共 ${r.length} 条`, duration: 1.5 });
+      const sorted = [...r].reverse();
+      setRows(sorted);
+      cachedRows = sorted;
+      void message.success({ content: `查询完成，共 ${r.length} 条`, duration: 1.5, key: "history-query" });
     } catch (e: unknown) {
       void message.error(e instanceof Error ? e.message : String(e));
     } finally {
@@ -50,9 +55,11 @@ export default function HistoryPage() {
     }
   };
 
-  // Only auto-query on first mount.
+  // Only auto-query on first mount if no cache exists.
   useEffect(() => {
-    void onQuery();
+    if (!cachedRows) {
+      void onQuery();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

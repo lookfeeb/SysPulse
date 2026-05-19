@@ -197,7 +197,7 @@ function OrderEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dragIndex]);
 
-  const moveItem = (from: number, to: number, persist: boolean) => {
+  const moveItem = (from: number, to: number) => {
     if (from === to) return draftRef.current;
     const next = [...draftRef.current];
     const [item] = next.splice(from, 1);
@@ -205,7 +205,7 @@ function OrderEditor({
     dragIndexRef.current = to;
     draftRef.current = next;
     setDraftItems(next);
-    if (persist) onChange(next);
+    onChange(next);
     return next;
   };
 
@@ -220,7 +220,6 @@ function OrderEditor({
   };
 
   const endDrag = (event?: PointerEvent | ReactPointerEvent<HTMLDivElement>) => {
-    if (dragIndexRef.current != null) onChange(draftRef.current);
     dragIndexRef.current = null;
     setDragIndex(null);
     // Release capture if we still hold it.
@@ -240,7 +239,7 @@ function OrderEditor({
     const to = Number(target?.dataset.orderIndex);
     if (Number.isInteger(to)) {
       const from = dragIndexRef.current;
-      if (from != null) moveItem(from, to, false);
+      if (from != null) moveItem(from, to);
     }
   };
 
@@ -302,7 +301,7 @@ function OrderEditor({
                 : "0 1px 0 rgba(0,0,0,0.02)",
               transition: "box-shadow 120ms ease",
             }}
-            title="拖动调整顺序"
+            title={label}
           >
             <HolderOutlined style={{ color: "#9ca3af", fontSize: 12, pointerEvents: "none" }} />
             <span

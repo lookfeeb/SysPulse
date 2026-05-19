@@ -25,8 +25,11 @@ def main() -> None:
         sys.exit(1)
 
     project_dir = ps_quote(PROJECT_DIR)
+    # 透传当前用户的 PATH（含 node/npm/cargo/rustup 等），避免提权后 Administrator 账户找不到
+    current_path = ps_quote(os.environ.get("PATH", ""))
     ps_command = "; ".join(
         [
+            f"$env:Path = {current_path} + ';' + $env:Path",
             f"Set-Location -LiteralPath {project_dir}",
             "Remove-Item Env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue",
             "Get-Process traffic-monitor -ErrorAction SilentlyContinue | Stop-Process -Force",

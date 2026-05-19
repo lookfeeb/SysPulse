@@ -15,6 +15,7 @@
     "overlay": "Overlay",
     "hardware": "Hardware",
     "history": "Traffic History",
+    "cleanup": "Disk Cleanup",
     "about": "About"
   },
   "general": {

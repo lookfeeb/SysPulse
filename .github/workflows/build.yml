@@ -133,16 +133,23 @@ jobs:
         shell: bash
         run: |
           TAG="v${{ steps.version.outputs.version }}"
-          # Find the previous tag (the one before current)
-          PREV_TAG=$(git tag --sort=-v:refname | grep -v "^${TAG}$" | head -n1)
-          if [ -z "$PREV_TAG" ]; then
-            # First release, get all commits
-            LOG=$(git log --pretty=format:"- %s" HEAD)
-          else
-            LOG=$(git log --pretty=format:"- %s" "${PREV_TAG}..${TAG}")
+          # Use the full commit message body of the tag commit as changelog.
+          # This captures the detailed 【模块】 sections written in the commit.
+          BODY=$(git tag -l --format='%(contents:body)' "$TAG")
+          if [ -z "$BODY" ]; then
+            # Fallback: lightweight tag, get body from the commit it points to
+            BODY=$(git log -1 --pretty=format:"%b" "$TAG")
           fi
-          # Write to file for multi-line handling
-          echo "$LOG" > changelog.md
+          if [ -z "$BODY" ]; then
+            # Final fallback: list commit subjects since previous tag
+            PREV_TAG=$(git tag --sort=-v:refname | grep -v "^${TAG}$" | head -n1)
+            if [ -z "$PREV_TAG" ]; then
+              BODY=$(git log --pretty=format:"- %s" HEAD)
+            else
+              BODY=$(git log --pretty=format:"- %s" "${PREV_TAG}..${TAG}")
+            fi
+          fi
+          echo "$BODY" > changelog.md
           echo "file=changelog.md" >> $GITHUB_OUTPUT
 
       - name: Download all artifacts

@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import {
   AppstoreOutlined,
+  ClearOutlined,
   FireOutlined,
   HistoryOutlined,
   InfoCircleOutlined,
@@ -11,6 +12,7 @@ import DashboardPage from "@/routes/DashboardPage";
 import GeneralPage from "@/routes/GeneralPage";
 import HardwarePage from "@/routes/HardwarePage";
 import HistoryPage from "@/routes/HistoryPage";
+import CleanupPage from "@/routes/CleanupPage";
 import AboutPage from "@/routes/AboutPage";
 
 export interface PageDef {
@@ -25,6 +27,7 @@ export const PAGES: PageDef[] = [
   { path: "general", labelKey: "menu.general", icon: <SettingOutlined />, element: <GeneralPage /> },
   { path: "hardware", labelKey: "menu.hardware", icon: <FireOutlined />, element: <HardwarePage /> },
   { path: "history", labelKey: "menu.history", icon: <HistoryOutlined />, element: <HistoryPage /> },
+  { path: "cleanup", labelKey: "menu.cleanup", icon: <ClearOutlined />, element: <CleanupPage /> },
   { path: "about", labelKey: "menu.about", icon: <InfoCircleOutlined />, element: <AboutPage /> },
 ];
 

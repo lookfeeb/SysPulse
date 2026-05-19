@@ -26,6 +26,7 @@ pub struct AppState {
     pub hw_sampler: HwSamplerHandle,
     pub last_hw_snapshot: Arc<RwLock<Option<HwSnapshot>>>,
     pub fan_control: hw::FanControlManager,
+    pub fan_watchdog_token: tokio_util::sync::CancellationToken,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -153,7 +154,7 @@ pub fn setup(app: &mut App) -> std::result::Result<(), Box<dyn std::error::Error
     }
 
     let fan_control = hw::FanControlManager::new();
-    hw::fan_control::spawn_watchdog(
+    let fan_watchdog_token = hw::fan_control::spawn_watchdog(
         app.handle().clone(),
         fan_control.clone(),
         hw_client.clone(),
@@ -173,6 +174,7 @@ pub fn setup(app: &mut App) -> std::result::Result<(), Box<dyn std::error::Error
         hw_sampler,
         last_hw_snapshot,
         fan_control,
+        fan_watchdog_token,
     });
 
     // 10. Apply initial overlay window state (visibility / position)
@@ -288,6 +290,7 @@ pub fn request_quit(app: AppHandle) {
 
 pub async fn quit_gracefully(app: AppHandle) {
     let cleanup = app.try_state::<AppState>().map(|state| {
+        state.fan_watchdog_token.cancel();
         (
             state.fan_control.clone(),
             state.hw_client.clone(),
@@ -298,21 +301,25 @@ pub async fn quit_gracefully(app: AppHandle) {
     });
 
     if let Some((fan_control, hw_client, writer, sampler, hw_sampler)) = cleanup {
-        let result = tokio::time::timeout(std::time::Duration::from_secs(4), async move {
-            crate::hw::fan_control::reset_all_best_effort(&fan_control, &hw_client).await;
-            writer.flush().await;
-            sampler.shutdown().await;
-            hw_sampler.shutdown().await;
-            hw_client.shutdown().await;
+        // Run cleanup with a hard 2s deadline. Operations are parallelized
+        // so a stuck hw-helper doesn't block DB flush or sampler shutdown.
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), async move {
+            tokio::join!(
+                async { crate::hw::fan_control::reset_all_best_effort(&fan_control, &hw_client).await; hw_client.shutdown().await; },
+                async { writer.flush().await; },
+                async { sampler.shutdown().await; },
+                async { hw_sampler.shutdown().await; },
+            );
         })
         .await;
-
-        if result.is_err() {
-            tracing::warn!("quit cleanup timed out; forcing app exit");
-        }
     }
 
     app.exit(0);
+
+    // Final safety net: if app.exit didn't terminate the process (e.g. a
+    // background task is blocking the runtime), force-kill after 500ms.
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    std::process::exit(0);
 }
 
 pub fn on_window_event(window: &tauri::Window, event: &WindowEvent) {
