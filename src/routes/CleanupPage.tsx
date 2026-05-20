@@ -40,7 +40,7 @@ export default function CleanupPage() {
 
   const totalSelected = categories
     .filter((c) => selected.has(c.id))
-    .reduce((sum, c) => sum + c.sizeBytes, 0);
+    .reduce((sum, c) => sum + c.paths.filter((p) => !excludedPaths.has(p.path)).reduce((s, p) => s + p.sizeBytes, 0), 0);
 
   const onScan = async () => {
     setScanning(true);
@@ -176,16 +176,23 @@ export default function CleanupPage() {
       >
         {detailCat && (
           <div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#fafafa", borderRadius: 8, padding: "12px 16px", marginBottom: 16 }}>
-              <div>
-                <Text type="secondary" style={{ fontSize: 12 }}>占用空间</Text>
-                <div style={{ fontSize: 20, fontWeight: 600, color: "#cf1322" }}>{fmtSize(detailCat.sizeBytes)}</div>
-              </div>
-              <div style={{ textAlign: "right" }}>
-                <Text type="secondary" style={{ fontSize: 12 }}>文件数量</Text>
-                <div style={{ fontSize: 20, fontWeight: 600 }}>{detailCat.fileCount.toLocaleString()}</div>
-              </div>
-            </div>
+            {(() => {
+              const checked = detailCat.paths.filter((p) => !excludedPaths.has(p.path));
+              const checkedSize = checked.reduce((s, p) => s + p.sizeBytes, 0);
+              const checkedCount = checked.reduce((s, p) => s + p.fileCount, 0);
+              return (
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#fafafa", borderRadius: 8, padding: "12px 16px", marginBottom: 16 }}>
+                  <div>
+                    <Text type="secondary" style={{ fontSize: 12 }}>占用空间</Text>
+                    <div style={{ fontSize: 20, fontWeight: 600, color: "#cf1322" }}>{fmtSize(checkedSize)}</div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <Text type="secondary" style={{ fontSize: 12 }}>文件数量</Text>
+                    <div style={{ fontSize: 20, fontWeight: 600 }}>{checkedCount.toLocaleString()}</div>
+                  </div>
+                </div>
+              );
+            })()}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
               <Text type="secondary" style={{ fontSize: 12 }}>扫描路径（取消勾选的路径不会被清理）</Text>
               {(() => {
