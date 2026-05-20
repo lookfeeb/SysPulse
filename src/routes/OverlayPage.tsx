@@ -74,7 +74,7 @@ export function OverlaySettingsCard() {
       >
         <OrderEditor
           value={toDisplayItems(ov.items)}
-          onChange={(items) => apply({ items: toConfigItems(items) })}
+          onCommit={(items) => apply({ items: toConfigItems(items) })}
         />
       </Card>
 
@@ -169,10 +169,10 @@ function ItemsPicker({
 
 function OrderEditor({
   value,
-  onChange,
+  onCommit,
 }: {
   value: OverlayItem[];
-  onChange: (items: OverlayItem[]) => void;
+  onCommit: (items: OverlayItem[]) => void;
 }) {
   const [draftItems, setDraftItems] = useState<OverlayItem[]>(value);
   const draftRef = useRef<OverlayItem[]>(value);
@@ -205,7 +205,6 @@ function OrderEditor({
     dragIndexRef.current = to;
     draftRef.current = next;
     setDraftItems(next);
-    onChange(next);
     return next;
   };
 
@@ -214,21 +213,27 @@ function OrderEditor({
     dragIndexRef.current = index;
     setDragIndex(index);
     // Capture pointer so move/up events keep firing even when pointer leaves the element.
-    (event.currentTarget.closest("[data-order-container]") as HTMLElement | null)
-      ?.setPointerCapture(event.pointerId);
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Pointer capture is a progressive enhancement; window pointerup still commits.
+    }
     event.preventDefault();
   };
 
   const endDrag = (event?: PointerEvent | ReactPointerEvent<HTMLDivElement>) => {
+    if (dragIndexRef.current == null) return;
+    const changed = draftRef.current.join("|") !== value.join("|");
     dragIndexRef.current = null;
     setDragIndex(null);
     // Release capture if we still hold it.
     if (event && "pointerId" in event) {
-      const container = document.querySelector("[data-order-container]") as HTMLElement | null;
-      if (container && container.hasPointerCapture((event as PointerEvent).pointerId)) {
-        container.releasePointerCapture((event as PointerEvent).pointerId);
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (target?.hasPointerCapture((event as PointerEvent).pointerId)) {
+        target.releasePointerCapture((event as PointerEvent).pointerId);
       }
     }
+    if (changed) onCommit(draftRef.current);
   };
 
   const dragMove = (event: ReactPointerEvent<HTMLDivElement>) => {

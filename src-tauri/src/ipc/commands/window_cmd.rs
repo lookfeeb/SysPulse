@@ -36,7 +36,6 @@ pub fn apply_overlay_config(app: &AppHandle, cfg: &OverlayConfig) -> Result<(), 
         w.set_always_on_top(false).map_err(AppError::Tauri)?;
         w.set_ignore_cursor_events(false).map_err(AppError::Tauri)?;
         w.show().map_err(AppError::Tauri)?;
-        dock_overlay_now(app)?;
     }
     Ok(())
 }
@@ -165,7 +164,7 @@ fn overlay_is_taskbar_child(
 
 pub fn spawn_taskbar_overlay_z_order_watchdog(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_millis(1500));
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
         loop {
             interval.tick().await;
             if let Err(e) = restore_taskbar_overlay_if_config_visible(&app) {
@@ -186,9 +185,6 @@ fn restore_taskbar_overlay_if_config_visible(app: &AppHandle) -> Result<(), AppE
         w.set_always_on_top(false).ok();
         let is_window_visible = w.is_visible().unwrap_or(false);
         if is_window_visible {
-            dock_overlay_now(app)?;
-        } else {
-            w.show().map_err(AppError::Tauri)?;
             dock_overlay_now(app)?;
         }
     }

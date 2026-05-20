@@ -1,20 +1,28 @@
 import { Layout, Menu, Tooltip } from "antd";
+import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { PAGES, DEFAULT_PATH } from "@/routes/registry";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { getAppInfo } from "@/ipc";
 
 const { Sider } = Layout;
 
-/** 预留公网链接，后续替换为实际项目主页 */
-const PROJECT_URL = "https://github.com/user/SysPulse";
+const PROJECT_URL = "https://github.com/lookfeeb/SysPulse";
 
 export default function SideMenu() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
+  const [version, setVersion] = useState<string | null>(null);
   const selectedKey =
     location.pathname === "/" ? DEFAULT_PATH : location.pathname;
+
+  useEffect(() => {
+    void getAppInfo()
+      .then((info) => setVersion(info.version))
+      .catch(() => setVersion(null));
+  }, []);
 
   return (
     <Sider
@@ -37,7 +45,7 @@ export default function SideMenu() {
           marginBottom: 8,
         }}
       >
-        <Tooltip title="SysPulse v0.1.0" placement="right">
+        <Tooltip title={`SysPulse${version ? ` v${version}` : ""}`} placement="right">
           <div
             onClick={() => void openUrl(PROJECT_URL)}
             style={{

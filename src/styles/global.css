@@ -28,6 +28,19 @@ body,
   height: 0;
 }
 
+.cleanup-path-list,
+.cleanup-detail-list {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.cleanup-path-list::-webkit-scrollbar,
+.cleanup-detail-list::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 /* Markdown rendered inside UpdateNotesModal */
 .update-notes {
   font-size: 13px;

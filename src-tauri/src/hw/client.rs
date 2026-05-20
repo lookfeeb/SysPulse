@@ -245,6 +245,7 @@ impl HwClient {
         match timeout(REQ_TIMEOUT, rx).await {
             Ok(Ok(resp)) => {
                 self.inner.timeouts.store(0, Ordering::Relaxed);
+                mark_running_if_available(&self.inner);
                 Ok(resp)
             }
             Ok(Err(_recv_err)) => {
@@ -287,7 +288,6 @@ async fn supervisor_loop(state: Arc<InnerState>, mut rx: mpsc::Receiver<Supervis
         match spawn_one(&state).await {
             Ok(child) => {
                 attempt = 0;
-                set_status(&state, HelperStatus::Running, None);
                 match wait_for_exit_or_command(child, &mut rx).await {
                     SupervisorExit::Exited => {
                         clear_runtime(&state).await;
@@ -382,7 +382,7 @@ async fn spawn_one(state: &Arc<InnerState>) -> std::io::Result<Child> {
     *state.writer_tx.write().await = Some(writer_tx);
     state.timeouts.store(0, Ordering::Relaxed);
 
-    spawn_writer_task(stdin, writer_rx);
+    spawn_writer_task(stdin, writer_rx, state.clone());
     spawn_stderr_task(stderr);
     spawn_reader_task(stdout, state.clone());
 
@@ -417,7 +417,11 @@ async fn wait_for_exit_or_command(
     }
 }
 
-fn spawn_writer_task(mut stdin: ChildStdin, mut rx: mpsc::Receiver<HelperRequest>) {
+fn spawn_writer_task(
+    mut stdin: ChildStdin,
+    mut rx: mpsc::Receiver<HelperRequest>,
+    state: Arc<InnerState>,
+) {
     tokio::spawn(async move {
         while let Some(req) = rx.recv().await {
             let json = match serde_json::to_string(&req) {
@@ -429,14 +433,17 @@ fn spawn_writer_task(mut stdin: ChildStdin, mut rx: mpsc::Receiver<HelperRequest
             };
             if let Err(e) = stdin.write_all(json.as_bytes()).await {
                 tracing::warn!("hw helper stdin write failed: {e}");
+                request_supervisor_restart(&state, format!("stdin write failed: {e}"));
                 break;
             }
             if let Err(e) = stdin.write_all(b"\n").await {
                 tracing::warn!("hw helper stdin newline failed: {e}");
+                request_supervisor_restart(&state, format!("stdin newline failed: {e}"));
                 break;
             }
             if let Err(e) = stdin.flush().await {
                 tracing::warn!("hw helper stdin flush failed: {e}");
+                request_supervisor_restart(&state, format!("stdin flush failed: {e}"));
                 break;
             }
         }
@@ -465,18 +472,23 @@ fn spawn_reader_task(stdout: tokio::process::ChildStdout, state: Arc<InnerState>
                 }
                 let id = resp.id as u64;
                 if let Some(sender) = state.pending.lock().remove(&id) {
+                    mark_running_if_available(&state);
                     let _ = sender.send(resp);
                 } else {
                     // The helper responded, but we already timed out on this request.
                     // This proves the helper is alive — reset the timeout counter to
                     // prevent spurious restarts caused by transient slowness.
                     state.timeouts.store(0, Ordering::Relaxed);
+                    mark_running_if_available(&state);
                     tracing::debug!(target: "hw_helper", "stray response id={id} (helper alive, was slow)");
                 }
                 continue;
             }
             if let Ok(ev) = serde_json::from_str::<HelperEvent>(&line) {
                 tracing::info!(target: "hw_helper", event = ev.event, ?ev.data, "event");
+                if ev.event == "ready" {
+                    mark_running_if_available(&state);
+                }
                 continue;
             }
             tracing::warn!(target: "hw_helper", "unparseable line: {line}");
@@ -521,6 +533,19 @@ fn set_status(state: &Arc<InnerState>, new: HelperStatus, reason: Option<String>
     let _ = state.status_tx.send(HelperStatusEvent {
         status: new,
         reason,
+    });
+}
+
+fn mark_running_if_available(state: &Arc<InnerState>) {
+    let mut status = state.status.lock();
+    if *status == HelperStatus::Running {
+        return;
+    }
+    *status = HelperStatus::Running;
+    drop(status);
+    let _ = state.status_tx.send(HelperStatusEvent {
+        status: HelperStatus::Running,
+        reason: None,
     });
 }
 

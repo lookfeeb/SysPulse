@@ -1,6 +1,7 @@
 use crate::config::ConfigManager;
 use crate::monitor::{MonitorRegistry, Snapshot};
 use crate::storage::{TrafficDelta, WriterHandle};
+use chrono::NaiveDate;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -39,7 +40,7 @@ const ADAPTIVE_MAX_MS: u64 = 2000;
 const SIGNAL_ALPHA: f64 = 0.3;
 
 /// EWMA smoothing factor for the output interval (lower = smoother transitions)
-const INTERVAL_ALPHA_UP: f64 = 0.6;   // speed up quickly
+const INTERVAL_ALPHA_UP: f64 = 0.6; // speed up quickly
 const INTERVAL_ALPHA_DOWN: f64 = 0.15; // slow down gradually (hysteresis)
 
 /// Curve exponent: <1 makes it more aggressive at low activity
@@ -54,7 +55,7 @@ const W_NET_DELTA: f64 = 0.20;
 /// Normalization constants
 const CPU_FULL: f64 = 100.0;
 const NET_FULL: f64 = 10_000_000.0; // 10 MB/s = "full" activity
-const DELTA_CPU_FULL: f64 = 30.0;   // 30% jump per tick = max delta signal
+const DELTA_CPU_FULL: f64 = 30.0; // 30% jump per tick = max delta signal
 const DELTA_NET_FULL: f64 = 5_000_000.0; // 5 MB/s change per tick = max
 
 struct AdaptiveEngine {
@@ -93,8 +94,8 @@ impl AdaptiveEngine {
     /// Feed a new snapshot and return the recommended interval in ms.
     fn update(&mut self, snap: &Snapshot) -> u64 {
         let raw_cpu = snap.cpu.usage_percent as f64;
-        let raw_net = (snap.network.total.bytes_recv_per_sec
-            + snap.network.total.bytes_sent_per_sec) as f64;
+        let raw_net =
+            (snap.network.total.bytes_recv_per_sec + snap.network.total.bytes_sent_per_sec) as f64;
 
         if !self.initialized {
             // First sample: initialize without delta
@@ -199,7 +200,10 @@ pub fn spawn(config: Arc<ConfigManager>, writer: WriterHandle) -> SamplerHandle 
         let mut registry = match tokio::task::spawn_blocking({
             let cfg = initial_cfg.clone();
             move || MonitorRegistry::build(&cfg)
-        }).await.unwrap() {
+        })
+        .await
+        .unwrap()
+        {
             Ok(r) => r,
             Err(e) => {
                 tracing::error!(?e, "failed to build collectors");
@@ -217,15 +221,17 @@ pub fn spawn(config: Arc<ConfigManager>, writer: WriterHandle) -> SamplerHandle 
         let mut paused = false;
         let mut adaptive_engine = AdaptiveEngine::new();
 
-        // Immediately perform first sample so UI gets data ASAP (don't wait for first tick)
-        {
-            let snap = registry.sample(Instant::now(), &current_cfg);
-            let _ = bus_for_task.send(snap);
-        }
-
         // Per-luid prev totals to compute deltas for persistence (separate from
         // per-second rate computation in the collector).
-        let mut prev_totals: HashMap<u64, (u64, u64)> = HashMap::new();
+        let mut delta_tracker = TrafficDeltaTracker::new();
+
+        // Immediately perform first sample so UI gets data ASAP (don't wait for first tick),
+        // and initialize persistence baselines so the next sample records real deltas.
+        {
+            let snap = registry.sample(Instant::now(), &current_cfg);
+            delta_tracker.observe(&snap, &writer).await;
+            let _ = bus_for_task.send(snap);
+        }
 
         loop {
             tokio::select! {
@@ -243,30 +249,7 @@ pub fn spawn(config: Arc<ConfigManager>, writer: WriterHandle) -> SamplerHandle 
                         }
                     }
 
-                    // Persist deltas (per interface, per local-day bucket).
-                    let today = chrono::Local::now().date_naive();
-                    for iface in &snap.network.interfaces {
-                        let prev = prev_totals.get(&iface.luid).copied();
-                        let (drecv, dsent) = match prev {
-                            Some((r, s)) => (
-                                iface.accepted_bytes_recv_total.saturating_sub(r),
-                                iface.accepted_bytes_sent_total.saturating_sub(s),
-                            ),
-                            None => (0, 0),
-                        };
-                        prev_totals.insert(
-                            iface.luid,
-                            (iface.accepted_bytes_recv_total, iface.accepted_bytes_sent_total),
-                        );
-                        if drecv > 0 || dsent > 0 {
-                            writer.try_send_delta(TrafficDelta {
-                                luid: iface.luid,
-                                date_local: today,
-                                bytes_recv: drecv,
-                                bytes_sent: dsent,
-                            });
-                        }
-                    }
+                    delta_tracker.observe(&snap, &writer).await;
 
                     let _ = bus_for_task.send(snap);
                 }
@@ -308,5 +291,70 @@ pub fn spawn(config: Arc<ConfigManager>, writer: WriterHandle) -> SamplerHandle 
     SamplerHandle {
         cmd_tx,
         bus: bus_tx,
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PrevTrafficTotal {
+    recv: u64,
+    sent: u64,
+    date_local: NaiveDate,
+}
+
+struct TrafficDeltaTracker {
+    prev_totals: HashMap<u64, PrevTrafficTotal>,
+    last_date: Option<NaiveDate>,
+}
+
+impl TrafficDeltaTracker {
+    fn new() -> Self {
+        Self {
+            prev_totals: HashMap::new(),
+            last_date: None,
+        }
+    }
+
+    async fn observe(&mut self, snap: &Snapshot, writer: &WriterHandle) {
+        let today = chrono::Local::now().date_naive();
+        let date_changed = self.last_date.is_some_and(|date| date != today);
+        let mut seen = std::collections::HashSet::new();
+
+        for iface in &snap.network.interfaces {
+            seen.insert(iface.luid);
+            let recv = iface.accepted_bytes_recv_total;
+            let sent = iface.accepted_bytes_sent_total;
+            let prev = self.prev_totals.get(&iface.luid).copied();
+
+            if let Some(prev) = prev {
+                let drecv = recv.saturating_sub(prev.recv);
+                let dsent = sent.saturating_sub(prev.sent);
+                if drecv > 0 || dsent > 0 {
+                    writer
+                        .send_delta(TrafficDelta {
+                            luid: iface.luid,
+                            date_local: prev.date_local,
+                            bytes_recv: drecv,
+                            bytes_sent: dsent,
+                        })
+                        .await;
+                }
+            }
+
+            self.prev_totals.insert(
+                iface.luid,
+                PrevTrafficTotal {
+                    recv,
+                    sent,
+                    date_local: today,
+                },
+            );
+        }
+
+        self.prev_totals.retain(|luid, _| seen.contains(luid));
+        self.last_date = Some(today);
+
+        if date_changed {
+            writer.flush().await;
+        }
     }
 }

@@ -10,7 +10,6 @@ use tauri::{AppHandle, Emitter};
 const WATCHDOG_INTERVAL: Duration = Duration::from_secs(2);
 const PWM_WRITE_DELTA: f64 = 2.0;
 const FUSE_TEMP_C: f64 = 90.0;
-const FUSE_RELEASE_TEMP_C: f64 = 85.0;
 const MAX_WRITE_FAILURES: u32 = 3;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, specta::Type)]
@@ -200,23 +199,18 @@ async fn run_watchdog_once(
     last_snapshot: &Arc<RwLock<Option<HwSnapshot>>>,
 ) {
     let snapshot = last_snapshot.read().clone();
-    let max_temp = snapshot.as_ref().and_then(max_temperature);
+    let max_temp = snapshot.as_ref().and_then(max_control_temperature);
 
     {
         let mut inner = manager.inner.write();
         inner.max_temp_c = max_temp;
         if inner.fuse_hold {
-            if max_temp.is_some_and(|t| t <= FUSE_RELEASE_TEMP_C) {
-                inner.fuse_hold = false;
-                inner.fuse_reason = None;
-            } else {
-                let client = client.clone();
-                tauri::async_runtime::spawn(async move {
-                    let _ = client.reset_fans().await;
-                });
-                let _ = app.emit("fan-control:changed", status_from_inner(&inner));
-                return;
-            }
+            let client = client.clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = client.reset_fans().await;
+            });
+            let _ = app.emit("fan-control:changed", status_from_inner(&inner));
+            return;
         }
         if max_temp.is_some_and(|t| t >= FUSE_TEMP_C) && !inner.entries.is_empty() {
             inner.fuse_hold = true;
@@ -284,7 +278,7 @@ async fn run_watchdog_once(
     let _ = app.emit("fan-control:changed", manager.status());
 }
 
-pub fn max_temperature(snapshot: &HwSnapshot) -> Option<f64> {
+pub fn max_control_temperature(snapshot: &HwSnapshot) -> Option<f64> {
     let mut values = Vec::new();
     if let Some(cpu) = &snapshot.cpu {
         values.extend(cpu.package_temp_c);
@@ -292,12 +286,6 @@ pub fn max_temperature(snapshot: &HwSnapshot) -> Option<f64> {
     }
     for gpu in &snapshot.gpus {
         values.extend(gpu.temp_c);
-    }
-    for disk in &snapshot.disks {
-        values.extend(disk.temp_c);
-    }
-    if let Some(mb) = &snapshot.motherboard {
-        values.extend(mb.temperatures_c.iter().map(|t| t.value));
     }
     values
         .into_iter()
@@ -324,7 +312,7 @@ pub fn interpolate_curve(points: &[FanCurvePoint], temp_c: f64) -> f64 {
     points.last().map(|p| p.pwm).unwrap_or(100.0)
 }
 
-fn normalize_curve(mut curve: Vec<FanCurvePoint>) -> Result<Vec<FanCurvePoint>, String> {
+pub(crate) fn normalize_curve(mut curve: Vec<FanCurvePoint>) -> Result<Vec<FanCurvePoint>, String> {
     if curve.len() < 2 {
         return Err("curve needs at least 2 points".into());
     }
@@ -402,7 +390,7 @@ mod tests {
     }
 
     #[test]
-    fn max_temperature_uses_highest_available_sensor() {
+    fn max_control_temperature_uses_cpu_gpu_sensors() {
         let snap = HwSnapshot {
             cpu: Some(crate::hw::snapshot::CpuHw {
                 package_temp_c: Some(60.0),
@@ -426,6 +414,6 @@ mod tests {
             }),
             ..Default::default()
         };
-        assert_eq!(max_temperature(&snap), Some(88.0));
+        assert_eq!(max_control_temperature(&snap), Some(72.0));
     }
 }

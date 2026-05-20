@@ -77,6 +77,7 @@ export default function SummaryCards({ snap }: { snap: HwSnapshot | null }) {
 
   const maxGpuTemp = maxValid(gpus.map((g) => g.tempC), { positiveOnly: true });
   const maxDiskTemp = maxValid(disks.map((d) => d.tempC), { positiveOnly: true });
+  const hottestDisk = [...disks].sort((a, b) => (b.tempC ?? 0) - (a.tempC ?? 0))[0];
 
   // 主板最高温度（排除 0°C 的无效传感器）
   const maxMbTemp = maxValid(mbTemps.map((t) => t.value), { positiveOnly: true });
@@ -117,7 +118,7 @@ export default function SummaryCards({ snap }: { snap: HwSnapshot | null }) {
           label={maxDiskTemp != null && (maxMbTemp == null || maxDiskTemp >= (maxMbTemp ?? 0)) ? "硬盘温度" : "主板温度"}
           source={
             maxDiskTemp != null && (maxMbTemp == null || maxDiskTemp >= (maxMbTemp ?? 0))
-              ? (disks.sort((a, b) => (b.tempC ?? 0) - (a.tempC ?? 0))[0]?.model?.split(" ").slice(0, 3).join(" ") ?? "硬盘")
+              ? (hottestDisk?.model?.split(" ").slice(0, 3).join(" ") ?? "硬盘")
               : (hotMbSensor?.name ?? snap?.motherboard?.model ?? "主板")
           }
           tempC={

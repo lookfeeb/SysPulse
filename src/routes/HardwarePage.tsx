@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Alert, App as AntdApp, Card, Space, Typography } from "antd";
-import { useHwStore, bindHwEvents } from "@/stores/hwStore";
+import { useHwStore } from "@/stores/hwStore";
 import { isAdmin, resetAllFanControls } from "@/ipc";
 import SummaryCards from "@/components/HardwarePanels/SummaryCards";
 import SensorList from "@/components/HardwarePanels/SensorList";
@@ -17,11 +17,9 @@ export default function HardwarePage() {
   const [admin, setAdmin] = useState(false);
 
   useEffect(() => {
-    void bindHwEvents();
     void prime();
     void isAdmin().then(setAdmin).catch(() => setAdmin(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [prime]);
 
   async function resetAllFans() {
     try {

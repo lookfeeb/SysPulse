@@ -127,7 +127,11 @@ function Copy-Installers {
             if ($file.Name -match "uninstall" -or $file.Name -match "Uninstall") { continue }
 
             $ext = $file.Extension
-            $destName = "SysPulse_v${version}_setup${ext}"
+            $bundleType = Split-Path -Leaf (Split-Path -Parent $file.FullName)
+            $stem = [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
+            $safeStem = ($stem -replace '[^\w.-]+', '_')
+            $safeBundle = ($bundleType -replace '[^\w.-]+', '_')
+            $destName = "SysPulse_v${version}_${safeBundle}_${safeStem}${ext}"
             $destPath = Join-Path $releaseDir $destName
             Copy-Item $file.FullName $destPath -Force
             $sizeMb = [math]::Round($file.Length / 1MB, 1)

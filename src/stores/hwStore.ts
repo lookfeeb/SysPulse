@@ -13,6 +13,7 @@ import {
   subscribeHwUpdate,
   subscribeHelperStatus,
 } from "@/ipc";
+import { createEventBinder } from "@/utils/bindOnce";
 
 const HISTORY_LIMIT = 60;
 
@@ -64,11 +65,21 @@ export const useHwStore = create<HwState>((set) => ({
   setFanControl: (s) => set({ fanControl: s }),
 }));
 
-let bound = false;
-export async function bindHwEvents() {
-  if (bound) return;
-  bound = true;
-  await subscribeHwUpdate((s) => useHwStore.getState().setSnapshot(s));
-  await subscribeHelperStatus((e) => useHwStore.getState().setHelper(e));
-  await subscribeFanControl((s) => useHwStore.getState().setFanControl(s));
-}
+export const bindHwEvents = createEventBinder(async () => {
+  const unlisteners: Array<() => void> = [];
+  try {
+    unlisteners.push(await subscribeHwUpdate((s) => useHwStore.getState().setSnapshot(s)));
+    unlisteners.push(await subscribeHelperStatus((e) => useHwStore.getState().setHelper(e)));
+    unlisteners.push(await subscribeFanControl((s) => useHwStore.getState().setFanControl(s)));
+    return unlisteners;
+  } catch (error) {
+    for (const unlisten of unlisteners) {
+      try {
+        unlisten();
+      } catch {
+        // Ignore cleanup errors before retrying the bind.
+      }
+    }
+    throw error;
+  }
+});

@@ -64,7 +64,7 @@ impl NetworkCollector {
                 NetworkMonitorMode::All => allow_iface(row),
                 NetworkMonitorMode::Specified => {
                     let key = row.luid.to_string();
-                    cfg.monitor_interfaces.iter().any(|s| s == &key)
+                    allow_iface(row) && cfg.monitor_interfaces.iter().any(|s| s == &key)
                 }
             }
         };
@@ -124,6 +124,12 @@ impl NetworkCollector {
             total,
             sample_interval_ms: elapsed_ms,
         })
+    }
+}
+
+impl Default for NetworkCollector {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

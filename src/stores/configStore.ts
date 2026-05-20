@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { AppConfig } from "@/bindings";
 import * as configApi from "@/ipc";
 import { listen } from "@tauri-apps/api/event";
+import { createEventBinder } from "@/utils/bindOnce";
 
 interface ConfigState {
   config: AppConfig | null;
@@ -50,13 +51,8 @@ export const useConfigStore = create<ConfigState>((set) => ({
   set: (cfg: AppConfig) => set({ config: cfg }),
 }));
 
-// Subscribe to backend config changes (e.g., changes from another window or
-// from external file edits routed through the backend).
-let unlistener: (() => void) | null = null;
-export async function bindConfigEvents() {
-  if (unlistener) return;
-  const fn = await listen<AppConfig>("config:changed", (e) => {
+export const bindConfigEvents = createEventBinder(() =>
+  listen<AppConfig>("config:changed", (e) => {
     useConfigStore.getState().set(e.payload);
-  });
-  unlistener = fn;
-}
+  }),
+);

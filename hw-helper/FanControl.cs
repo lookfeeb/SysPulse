@@ -54,22 +54,27 @@ public static class FanControl
 
     public static object ResetFans(ComputerHost host)
     {
-        var count = 0;
+        var attempted = 0;
+        var succeeded = 0;
+        var failed = 0;
         foreach (var control in AllControls(host))
         {
+            attempted++;
             try
             {
                 control.SetDefault();
-                count++;
+                succeeded++;
             }
-            catch
+            catch (Exception ex)
             {
+                failed++;
+                Console.Error.WriteLine($"[hw-helper] reset fan control failed: {ex.Message}");
                 // Keep reset_all best-effort. A single bad controller should not
                 // prevent other fans from returning to firmware control.
             }
         }
 
-        return new { resetCount = count };
+        return new { attempted, succeeded, failed };
     }
 
     private static IControl? FindControl(ComputerHost host, string fanId)
@@ -124,11 +129,14 @@ public static class FanControl
     private static IEnumerable<IControl> AllControls(ComputerHost host)
     {
         host.Refresh();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var hw in AllHardware(host))
         {
             foreach (var sensor in hw.Sensors)
             {
-                if (sensor.Control != null) yield return sensor.Control;
+                if (sensor.Control is null) continue;
+                var key = $"{hw.Identifier}:{sensor.Index}:{sensor.Control.MinSoftwareValue:0.###}:{sensor.Control.MaxSoftwareValue:0.###}";
+                if (seen.Add(key)) yield return sensor.Control;
             }
         }
     }

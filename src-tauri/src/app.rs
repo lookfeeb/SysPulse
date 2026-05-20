@@ -2,7 +2,7 @@ use crate::config::ConfigManager;
 use crate::error::Result;
 use crate::hw::{HwClient, HwSamplerHandle, HwSnapshot};
 use crate::ipc::commands::window_cmd::{
-    apply_overlay_config, dock_overlay_now, spawn_taskbar_overlay_z_order_watchdog,
+    apply_overlay_config, spawn_taskbar_overlay_z_order_watchdog,
 };
 use crate::ipc::events::{emit_config_changed, emit_overlay_config_changed, emit_stats};
 use crate::monitor::Snapshot;
@@ -99,14 +99,6 @@ pub fn setup(app: &mut App) -> std::result::Result<(), Box<dyn std::error::Error
                         tracing::warn!(?e, "apply overlay config failed");
                     }
                     emit_overlay_config_changed(&app_handle, &cfg);
-                    // Re-dock after the webview applies new sizing.
-                    let app_clone = app_handle.clone();
-                    tauri::async_runtime::spawn(async move {
-                        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
-                        if let Err(e) = dock_overlay_now(&app_clone) {
-                            tracing::warn!(?e, "redock after config change failed");
-                        }
-                    });
                     prev_overlay = Some(cfg.overlay.clone());
                 }
             }
@@ -197,10 +189,7 @@ pub fn setup(app: &mut App) -> std::result::Result<(), Box<dyn std::error::Error
     Ok(())
 }
 
-fn spawn_retention_cleanup(
-    pool: storage::store::DbPool,
-    config: Arc<ConfigManager>,
-) {
+fn spawn_retention_cleanup(pool: storage::store::DbPool, config: Arc<ConfigManager>) {
     tauri::async_runtime::spawn(async move {
         let mut ticker = tokio::time::interval(std::time::Duration::from_secs(24 * 60 * 60));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -255,22 +244,6 @@ fn apply_initial_window_state(app: &App, _cfg: &crate::config::AppConfig) {
 
         let _ = w.show();
         let _ = w.set_ignore_cursor_events(false);
-
-        // Defer until after the webview reports its settled size.
-        let app_handle = app.handle().clone();
-        tauri::async_runtime::spawn(async move {
-            // Wait for HTML/CSS layout to finish so window outer_size is meaningful.
-            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-            if let Err(e) = dock_overlay_now(&app_handle) {
-                tracing::warn!(?e, "initial dock_overlay failed");
-            }
-            // On cold boot (auto-start) the webview may still be loading; retry
-            // after a longer delay to fix the "squished" layout.
-            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-            if let Err(e) = dock_overlay_now(&app_handle) {
-                tracing::debug!(?e, "second dock_overlay attempt failed");
-            }
-        });
     }
 }
 
@@ -305,10 +278,19 @@ pub async fn quit_gracefully(app: AppHandle) {
         // so a stuck hw-helper doesn't block DB flush or sampler shutdown.
         let _ = tokio::time::timeout(std::time::Duration::from_secs(2), async move {
             tokio::join!(
-                async { crate::hw::fan_control::reset_all_best_effort(&fan_control, &hw_client).await; hw_client.shutdown().await; },
-                async { writer.flush().await; },
-                async { sampler.shutdown().await; },
-                async { hw_sampler.shutdown().await; },
+                async {
+                    crate::hw::fan_control::reset_all_best_effort(&fan_control, &hw_client).await;
+                    hw_client.shutdown().await;
+                },
+                async {
+                    writer.flush().await;
+                },
+                async {
+                    sampler.shutdown().await;
+                },
+                async {
+                    hw_sampler.shutdown().await;
+                },
             );
         })
         .await;

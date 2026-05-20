@@ -1,7 +1,7 @@
 import { App as AntdApp, Radio, Slider, Typography } from "antd";
 import { DashboardOutlined } from "@ant-design/icons";
-import { useMemo, useState } from "react";
-import { resetAllFanControls, setFanManual, setFanCurve } from "@/ipc";
+import { useEffect, useMemo, useState } from "react";
+import { resetFanControl, setFanManual, setFanCurve } from "@/ipc";
 import { useHwStore } from "@/stores/hwStore";
 import type { FanHw, FanCurvePoint } from "@/bindings";
 
@@ -76,6 +76,12 @@ export default function FanPanel({
   const [optimisticMode, setOptimisticMode] = useState<FanMode | null>(null);
   const displayMode: FanMode = optimisticMode ?? currentMode;
 
+  useEffect(() => {
+    if (entry?.mode === "manual" && Number.isFinite(entry.manualPwm)) {
+      setManualPwm(Math.round(entry.manualPwm));
+    }
+  }, [entry?.manualPwm, entry?.mode]);
+
   if (!cpuFan) return null;
 
   const blocked = disabled || !isAdmin;
@@ -89,7 +95,7 @@ export default function FanPanel({
     setSaving(true);
     try {
       if (mode === "bios") {
-        const next = await resetAllFanControls();
+        const next = await resetFanControl(cpuFan.id);
         setFanControl(next);
         void message.success("已交给 BIOS 控制，风扇将在数秒内恢复固件曲线");
       } else if (mode === "curve") {

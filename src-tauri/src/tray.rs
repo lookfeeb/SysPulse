@@ -53,14 +53,12 @@ fn build_menu(app: &AppHandle) -> Result<Menu<tauri::Wry>> {
 }
 
 fn handle_tray_icon_event(app: &AppHandle, event: TrayIconEvent) {
-    match event {
-        TrayIconEvent::DoubleClick {
-            button: MouseButton::Left,
-            ..
-        } => {
-            show_config_window(app);
-        }
-        _ => {}
+    if let TrayIconEvent::DoubleClick {
+        button: MouseButton::Left,
+        ..
+    } = event
+    {
+        show_config_window(app);
     }
 }
 
@@ -123,7 +121,10 @@ fn build_tooltip(snap: &crate::monitor::Snapshot, hw: Option<&crate::hw::HwSnaps
         let mut hw_parts: Vec<String> = Vec::new();
 
         if let Some(cpu) = &h.cpu {
-            let temp = cpu.package_temp_c.map(|t| format!("{:.0}°C", t)).unwrap_or_default();
+            let temp = cpu
+                .package_temp_c
+                .map(|t| format!("{:.0}°C", t))
+                .unwrap_or_default();
             hw_parts.push(format!("CPU {temp} {:.0}%", cpu.total_usage));
         }
 

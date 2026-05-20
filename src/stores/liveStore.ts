@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { Snapshot } from "@/bindings";
 import { subscribeStats, getRealtimeStats } from "@/ipc";
+import { createEventBinder } from "@/utils/bindOnce";
 
 const HISTORY_LIMIT = 60;
 
@@ -29,9 +30,6 @@ export const useLiveStore = create<LiveState>((set, get) => ({
   },
 }));
 
-let unsub: (() => void) | null = null;
-export async function bindLiveEvents() {
-  if (unsub) return;
-  const fn = await subscribeStats((s) => useLiveStore.getState().push(s));
-  unsub = fn;
-}
+export const bindLiveEvents = createEventBinder(() =>
+  subscribeStats((s) => useLiveStore.getState().push(s)),
+);

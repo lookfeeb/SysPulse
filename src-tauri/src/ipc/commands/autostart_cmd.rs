@@ -155,7 +155,7 @@ fn paths_equal(left: &Path, right: &Path) -> bool {
         .eq_ignore_ascii_case(&right.to_string_lossy())
 }
 
-fn extract_xml_tag<'a>(xml: &'a str, tag: &str) -> Option<String> {
+fn extract_xml_tag(xml: &str, tag: &str) -> Option<String> {
     let start_tag = format!("<{tag}>");
     let end_tag = format!("</{tag}>");
     let start = xml.find(&start_tag)? + start_tag.len();

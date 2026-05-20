@@ -25,8 +25,19 @@ pub struct WriterHandle {
 }
 
 impl WriterHandle {
+    pub async fn send_delta(&self, d: TrafficDelta) {
+        if let Err(e) = self.tx.send(WriterMsg::Delta(d)).await {
+            tracing::warn!(?e, "db writer delta dropped because writer is unavailable");
+        }
+    }
+
     pub fn try_send_delta(&self, d: TrafficDelta) {
-        let _ = self.tx.try_send(WriterMsg::Delta(d));
+        if let Err(e) = self.tx.try_send(WriterMsg::Delta(d)) {
+            tracing::warn!(
+                ?e,
+                "db writer delta dropped because channel is full or closed"
+            );
+        }
     }
 
     pub async fn flush(&self) {

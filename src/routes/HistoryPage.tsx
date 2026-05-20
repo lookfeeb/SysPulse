@@ -19,18 +19,34 @@ import { fmtBytes } from "@/utils/format";
 
 const { RangePicker } = DatePicker;
 
-// Module-level cache: survives route switches without re-querying
-let cachedRows: DailyTraffic[] | null = null;
+type HistoryCache = {
+  query: HistoryQuery;
+  rows: DailyTraffic[];
+};
+
+let cachedHistory: HistoryCache | null = null;
+
+function defaultQuery(): HistoryQuery {
+  return {
+    from: dayjs().subtract(30, "day").format("YYYY-MM-DD"),
+    to: dayjs().format("YYYY-MM-DD"),
+    granularity: "day",
+    iface: null,
+  };
+}
 
 export default function HistoryPage() {
   const { t } = useTranslation();
   const { message } = AntdApp.useApp();
+  const initialQuery = cachedHistory?.query ?? defaultQuery();
   const [range, setRange] = useState<[Dayjs, Dayjs]>([
-    dayjs().subtract(30, "day"),
-    dayjs(),
+    dayjs(initialQuery.from),
+    dayjs(initialQuery.to),
   ]);
-  const [granularity, setGranularity] = useState<"day" | "month">("day");
-  const [rows, setRows] = useState<DailyTraffic[]>(cachedRows ?? []);
+  const [granularity, setGranularity] = useState<"day" | "month">(
+    initialQuery.granularity ?? "day",
+  );
+  const [rows, setRows] = useState<DailyTraffic[]>(cachedHistory?.rows ?? []);
   const [loading, setLoading] = useState(false);
 
   const buildQuery = (): HistoryQuery => ({
@@ -43,10 +59,11 @@ export default function HistoryPage() {
   const onQuery = async () => {
     setLoading(true);
     try {
-      const r = await queryTrafficHistory(buildQuery());
+      const query = buildQuery();
+      const r = await queryTrafficHistory(query);
       const sorted = [...r].reverse();
       setRows(sorted);
-      cachedRows = sorted;
+      cachedHistory = { query, rows: sorted };
       void message.success({ content: `查询完成，共 ${r.length} 条`, duration: 1.5, key: "history-query" });
     } catch (e: unknown) {
       void message.error(e instanceof Error ? e.message : String(e));
@@ -57,7 +74,7 @@ export default function HistoryPage() {
 
   // Only auto-query on first mount if no cache exists.
   useEffect(() => {
-    if (!cachedRows) {
+    if (!cachedHistory) {
       void onQuery();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

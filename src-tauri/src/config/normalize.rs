@@ -1,6 +1,4 @@
-use crate::config::schema::{
-    AppConfig, OverlayItem, CURRENT_SCHEMA_VERSION,
-};
+use crate::config::schema::{AppConfig, OverlayItem, CURRENT_SCHEMA_VERSION};
 
 /// Clamp out-of-range fields and fix obvious mistakes in user-edited configs.
 /// Returns true if any value was changed and should be persisted back.
@@ -29,7 +27,7 @@ fn normalize_overlay_item_groups(items: &mut Vec<OverlayItem>) {
 }
 
 fn replace_item(items: &mut Vec<OverlayItem>, old: OverlayItem, new: OverlayItem) {
-    let had_old = items.iter().any(|item| *item == old);
+    let had_old = items.contains(&old);
     items.retain(|item| *item != old);
     if had_old && !items.contains(&new) {
         items.push(new);
@@ -52,8 +50,10 @@ mod tests {
 
     #[test]
     fn normalize_upgrades_schema_and_keeps_overlay_items_only() {
-        let mut cfg = AppConfig::default();
-        cfg.schema_version = 3;
+        let mut cfg = AppConfig {
+            schema_version: 3,
+            ..Default::default()
+        };
         cfg.overlay.items = vec![OverlayItem::Gpu, OverlayItem::DiskWrite];
 
         assert!(normalize(&mut cfg));

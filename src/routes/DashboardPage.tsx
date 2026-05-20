@@ -536,7 +536,7 @@ function NetworkSparkline({
     const x = ((clientX - rect.left) / rect.width) * W;
     const chartX = x - PAD_LEFT;
     const index = Math.max(0, Math.min(maxLen - 1, Math.round(chartX / stepX)));
-    setHoverIndex(index);
+    setHoverIndex((current) => (current === index ? current : index));
   };
 
   return (

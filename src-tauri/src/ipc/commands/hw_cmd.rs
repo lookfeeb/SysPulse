@@ -1,6 +1,7 @@
 use crate::app::AppState;
 use crate::error::{AppError, IpcError};
 use crate::hw::client::HelperStatus;
+use crate::hw::fan_control::{interpolate_curve, max_control_temperature, normalize_curve};
 use crate::hw::{admin, FanControlStatus, FanCurvePoint, HwSnapshot};
 use tauri::{AppHandle, Emitter, State};
 
@@ -66,15 +67,30 @@ pub struct SetFanCurveArgs {
 
 #[tauri::command]
 #[specta::specta]
-pub fn set_fan_curve(
+pub async fn set_fan_curve(
     app: AppHandle,
     state: State<'_, AppState>,
     args: SetFanCurveArgs,
 ) -> Result<FanControlStatus, IpcError> {
     ensure_admin()?;
+    let curve = normalize_curve(args.curve).map_err(AppError::Invalid)?;
+    let target_pwm = state
+        .last_hw_snapshot
+        .read()
+        .as_ref()
+        .and_then(max_control_temperature)
+        .map(|temp| interpolate_curve(&curve, temp))
+        .unwrap_or_else(|| curve[0].pwm);
+    if let Err(e) = state
+        .hw_client
+        .set_fan_manual(args.fan_id.clone(), target_pwm)
+        .await
+    {
+        return Err(AppError::Other(format!("validate fan curve write: {e}")).into());
+    }
     let status = state
         .fan_control
-        .set_curve(args.fan_id, args.curve)
+        .set_curve(args.fan_id, curve)
         .map_err(AppError::Invalid)?;
     let _ = app.emit("fan-control:changed", &status);
     Ok(status)

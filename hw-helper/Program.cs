@@ -22,6 +22,15 @@ var jsonOpts = new JsonSerializerOptions
     WriteIndented = false,
 };
 
+// Standard streams. Use raw Console.OpenStandard* to avoid locale codepage
+// issues with Chinese sensor names from LHM.
+using var stdin = new StreamReader(Console.OpenStandardInput(), System.Text.Encoding.UTF8);
+using var stdout = new StreamWriter(Console.OpenStandardOutput(), new System.Text.UTF8Encoding(false))
+{
+    AutoFlush = true,
+    NewLine = "\n",
+};
+
 using var host = new ComputerHost();
 try
 {
@@ -39,15 +48,6 @@ var wmiCache = new WmiCache();
 wmiCache.Refresh();
 
 EmitEvent("ready", new { lhmHardwareCount = host.Inner.Hardware.Count });
-
-// Standard streams. Use raw Console.OpenStandard* to avoid locale codepage
-// issues with Chinese sensor names from LHM.
-using var stdin = new StreamReader(Console.OpenStandardInput(), System.Text.Encoding.UTF8);
-using var stdout = new StreamWriter(Console.OpenStandardOutput(), new System.Text.UTF8Encoding(false))
-{
-    AutoFlush = true,
-    NewLine = "\n",
-};
 
 // Optional: react to Ctrl+C / parent termination by closing LHM cleanly.
 Console.CancelKeyPress += (_, args) =>
@@ -139,7 +139,7 @@ void EmitEvent(string name, object? data)
 {
     var msg = new EventMessage { Event = name, Data = data };
     var json = JsonSerializer.Serialize(msg, jsonOpts);
-    Console.WriteLine(json);
+    stdout.WriteLine(json);
 }
 
 void EmitFatal(string msg)

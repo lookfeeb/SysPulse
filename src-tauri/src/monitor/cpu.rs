@@ -10,8 +10,9 @@ pub struct CpuCollector {
 
 impl CpuCollector {
     pub fn new() -> Self {
-        let mut sys =
-            System::new_with_specifics(RefreshKind::nothing().with_cpu(CpuRefreshKind::everything()));
+        let mut sys = System::new_with_specifics(
+            RefreshKind::nothing().with_cpu(CpuRefreshKind::everything()),
+        );
         sys.refresh_cpu_all();
         // Sleep briefly then refresh again so the first sample() gets valid usage data.
         // Without this gap, sysinfo returns 0% on the first call.
@@ -44,5 +45,11 @@ impl CpuCollector {
             model: self.model.clone(),
             physical_cores: self.physical_cores,
         })
+    }
+}
+
+impl Default for CpuCollector {
+    fn default() -> Self {
+        Self::new()
     }
 }

@@ -210,47 +210,45 @@ function layoutItems(root: HTMLElement, orderedKeys: string[]) {
 
 let lastFitWidth = 0;
 let lastFitHeight = 0;
-let fitTimer: number | null = null;
+let fitFrame: number | null = null;
 
 function autoFitWindow(root: HTMLElement, options: { allowShrink?: boolean } = {}) {
-  if (fitTimer != null) {
-    window.clearTimeout(fitTimer);
+  if (fitFrame != null) {
+    cancelAnimationFrame(fitFrame);
   }
-  fitTimer = window.setTimeout(() => {
-    requestAnimationFrame(async () => {
-      const previousWidth = root.style.width;
-      const previousMaxWidth = root.style.maxWidth;
-      const previousFlexWrap = root.style.flexWrap;
-      const previousHeight = root.style.height;
-      const previousOverflow = root.style.overflow;
-      // Temporarily remove all constraints so content can expand naturally
-      root.style.width = "max-content";
-      root.style.maxWidth = "none";
-      root.style.flexWrap = "nowrap";
-      root.style.height = "auto";
-      root.style.overflow = "visible";
-      const rect = root.getBoundingClientRect();
-      let w = Math.max(80, Math.ceil(Math.max(rect.width, root.scrollWidth)) + 4);
-      let h = Math.max(24, Math.ceil(Math.max(rect.height, root.scrollHeight)) + 4);
-      if (!options.allowShrink && lastFitWidth > 0) {
-        w = Math.max(w, lastFitWidth);
-        h = Math.max(h, lastFitHeight);
-      }
-      root.style.width = previousWidth;
-      root.style.maxWidth = previousMaxWidth;
-      root.style.flexWrap = previousFlexWrap;
-      root.style.height = previousHeight;
-      root.style.overflow = previousOverflow;
-      if (Math.abs(w - lastFitWidth) < 2 && Math.abs(h - lastFitHeight) < 2) return;
-      lastFitWidth = w;
-      lastFitHeight = h;
-      try {
-        await invoke("resize_overlay", { args: { width: w, height: h } });
-      } catch {
-        /* ignore */
-      }
-    });
-  }, 120);
+  fitFrame = requestAnimationFrame(async () => {
+    fitFrame = null;
+    const previousWidth = root.style.width;
+    const previousMaxWidth = root.style.maxWidth;
+    const previousFlexWrap = root.style.flexWrap;
+    const previousHeight = root.style.height;
+    const previousOverflow = root.style.overflow;
+    root.style.width = "max-content";
+    root.style.maxWidth = "none";
+    root.style.flexWrap = "nowrap";
+    root.style.height = "auto";
+    root.style.overflow = "visible";
+    const rect = root.getBoundingClientRect();
+    let w = Math.max(80, Math.ceil(Math.max(rect.width, root.scrollWidth)) + 4);
+    let h = Math.max(24, Math.ceil(Math.max(rect.height, root.scrollHeight)) + 4);
+    if (!options.allowShrink && lastFitWidth > 0) {
+      w = Math.max(w, lastFitWidth);
+      h = Math.max(h, lastFitHeight);
+    }
+    root.style.width = previousWidth;
+    root.style.maxWidth = previousMaxWidth;
+    root.style.flexWrap = previousFlexWrap;
+    root.style.height = previousHeight;
+    root.style.overflow = previousOverflow;
+    if (Math.abs(w - lastFitWidth) < 2 && Math.abs(h - lastFitHeight) < 2) return;
+    lastFitWidth = w;
+    lastFitHeight = h;
+    try {
+      await invoke("resize_overlay", { args: { width: w, height: h } });
+    } catch {
+      /* ignore */
+    }
+  });
 }
 
 function setText(el: HTMLElement | null, value: string): boolean {
@@ -311,6 +309,11 @@ async function main() {
     autoFitWindow(root, { allowShrink: true });
   }
 
+  const resizeObserver = new ResizeObserver(() => {
+    autoFitWindow(root, { allowShrink: true });
+  });
+  resizeObserver.observe(root);
+
   // Update on stats events
   const valDown = root.querySelector<HTMLElement>('[data-key="net-down"] .val')!;
   const valUp = root.querySelector<HTMLElement>('[data-key="net-up"] .val')!;
@@ -326,45 +329,37 @@ async function main() {
   const valFanRpm = root.querySelector<HTMLElement>('[data-key="fan-rpm"] .val');
   const valMbTemp = root.querySelector<HTMLElement>('[data-key="mb-temp"] .val');
 
-  // On cold boot the webview may not have fully laid out when the first
-  // autoFitWindow fires (the window is shown + docked before CSS grid settles).
-  // We force a re-layout with allowShrink on the first data event to fix the
-  // "squished" appearance after auto-start.
-  let firstDataReceived = false;
-  function onFirstData() {
-    if (firstDataReceived) return;
-    firstDataReceived = true;
-    // Give the grid a moment to settle after the first real values are painted.
-    setTimeout(() => autoFitWindow(root, { allowShrink: true }), 80);
-    // And a second pass slightly later in case fonts/metrics were still loading.
-    setTimeout(() => autoFitWindow(root, { allowShrink: true }), 400);
-  }
-
   await listen<Snapshot>("stats:update", (e) => {
     const s = e.payload;
-    setText(valDown, fmtSpeed(s.network.total.bytesRecvPerSec));
-    setText(valUp, fmtSpeed(s.network.total.bytesSentPerSec));
-    setText(valCpu, `${Math.round(s.cpu.usagePercent)}%`);
-    setText(valMem, `${Math.round(s.memory.usedPercent)}%`);
-    onFirstData();
+    const changed = [
+      setText(valDown, fmtSpeed(s.network.total.bytesRecvPerSec)),
+      setText(valUp, fmtSpeed(s.network.total.bytesSentPerSec)),
+      setText(valCpu, `${Math.round(s.cpu.usagePercent)}%`),
+      setText(valMem, `${Math.round(s.memory.usedPercent)}%`),
+    ].some(Boolean);
+    if (changed) autoFitWindow(root, { allowShrink: true });
   });
 
   await listen<HwSnapshot>("hw:update", (e) => {
     const h = e.payload;
-    setText(valCpuTemp, fmtTemp(h.cpu?.packageTempC));
-    setText(valCpuFreq, fmtFreq(h.cpu?.frequencyMhz));
+    const changed = [
+      setText(valCpuTemp, fmtTemp(h.cpu?.packageTempC)),
+      setText(valCpuFreq, fmtFreq(h.cpu?.frequencyMhz)),
+    ];
     const gpuUsage = maxValid((h.gpus ?? []).map((g) => g.usagePercent));
-    setText(valGpuTemp, fmtTemp(maxValid((h.gpus ?? []).map((g) => g.tempC))));
-    setText(valGpuUsage, fmtPct(gpuUsage));
-    setText(valDiskR, fmtSpeed(sumValid((h.disks ?? []).map((d) => d.readBytesPerSec))));
-    setText(valDiskW, fmtSpeed(sumValid((h.disks ?? []).map((d) => d.writeBytesPerSec))));
-    setText(valDiskTemp, fmtTemp(maxValid((h.disks ?? []).map((d) => d.tempC))));
-    setText(valFanRpm, fmtRpm(maxValid((h.fans ?? []).map((f) => f.rpm))));
+    changed.push(
+      setText(valGpuTemp, fmtTemp(maxValid((h.gpus ?? []).map((g) => g.tempC)))),
+      setText(valGpuUsage, fmtPct(gpuUsage)),
+      setText(valDiskR, fmtSpeed(sumValid((h.disks ?? []).map((d) => d.readBytesPerSec)))),
+      setText(valDiskW, fmtSpeed(sumValid((h.disks ?? []).map((d) => d.writeBytesPerSec)))),
+      setText(valDiskTemp, fmtTemp(maxValid((h.disks ?? []).map((d) => d.tempC)))),
+      setText(valFanRpm, fmtRpm(maxValid((h.fans ?? []).map((f) => f.rpm)))),
+    );
     if (valMbTemp) {
       const mbTemps = (h.motherboard?.temperaturesC ?? []).map((t) => t.value);
-      setText(valMbTemp, fmtTemp(maxValid(mbTemps)));
+      changed.push(setText(valMbTemp, fmtTemp(maxValid(mbTemps))));
     }
-    onFirstData();
+    if (changed.some(Boolean)) autoFitWindow(root, { allowShrink: true });
   });
 
   await listen<OverlayConfig>("overlay:config-changed", (e) => {
