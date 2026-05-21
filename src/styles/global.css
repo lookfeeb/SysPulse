@@ -30,15 +30,25 @@ body,
 
 .cleanup-path-list,
 .cleanup-detail-list {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.15) transparent;
 }
 
 .cleanup-path-list::-webkit-scrollbar,
 .cleanup-detail-list::-webkit-scrollbar {
-  display: none;
-  width: 0;
-  height: 0;
+  width: 6px;
+  height: 6px;
+}
+
+.cleanup-path-list::-webkit-scrollbar-thumb,
+.cleanup-detail-list::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.15);
+  border-radius: 3px;
+}
+
+.cleanup-path-list::-webkit-scrollbar-thumb:hover,
+.cleanup-detail-list::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(0, 0, 0, 0.3);
 }
 
 /* Markdown rendered inside UpdateNotesModal */

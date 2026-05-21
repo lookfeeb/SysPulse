@@ -107,6 +107,7 @@ export default function CleanupPage() {
   const [scanning, setScanning] = useState(false);
   const [cleaning, setCleaning] = useState(false);
   const [detailCat, setDetailCat] = useState<DisplayCategory | null>(null);
+  const [expandedCats, setExpandedCats] = useState<Record<string, boolean>>({});
   const [excludedPaths, setExcludedPaths] = useState<Set<string>>(() => restoreExcludedPaths());
   const [cleanProgress, setCleanProgress] = useState<CleanupProgressEvent | null>(null);
 
@@ -217,10 +218,10 @@ export default function CleanupPage() {
 
   const categoryIcon = (id: string) => {
     const map: Record<string, string> = {
-      "win-temp": "🗑️",
+      "win-temp": "♻️",
       "prefetch": "⚡",
       "win-update": "🔄",
-      "recycle-bin": "♻️",
+      "recycle-bin": "🗑️",
       "rust-target": "🦀",
       "node-cache": "📦",
       "go-cache": "🐹",
@@ -448,7 +449,7 @@ export default function CleanupPage() {
         onCancel={() => setDetailCat(null)}
         footer={null}
         width={720}
-        styles={{ body: { maxHeight: "calc(100vh - 180px)", overflow: "hidden" } }}
+        styles={{ body: { height: 500, display: "flex", flexDirection: "column", padding: "12px 24px" } }}
       >
         {detailCat && (() => {
           const detailCategories = detailCat.childCategories ?? [detailCat];
@@ -458,7 +459,7 @@ export default function CleanupPage() {
           const allPathsChecked = detailPaths.length > 0 && checkedPathCount === detailPaths.length;
 
           return (
-            <div style={{ display: "flex", flexDirection: "column", maxHeight: "calc(100vh - 180px)", minHeight: 0, overflow: "hidden" }}>
+            <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, overflow: "hidden" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#f7f9fc", border: "1px solid #edf0f5", borderRadius: 8, padding: "12px 16px", marginBottom: 16, flexShrink: 0 }}>
                 <div>
                   <Text type="secondary" style={{ fontSize: 12 }}>占用空间</Text>
@@ -489,27 +490,41 @@ export default function CleanupPage() {
               </div>
 
               {detailCat.childCategories ? (
-                <div className="cleanup-detail-list" style={{ display: "grid", gap: 12, overflow: "auto", paddingRight: 2, minHeight: 0, flex: "1 1 auto" }}>
-                  {detailCat.childCategories.map((cat) => {
+                <div className="cleanup-detail-list" style={{ border: "1px solid #edf0f5", borderRadius: 8, overflowY: "auto", paddingRight: 6, minHeight: 0, flex: "0 1 auto" }}>
+                  {detailCat.childCategories.map((cat, idx) => {
                     const checkedCatPaths = checkedPaths(cat.paths, excludedPaths);
                     const activeCatPaths = cleanablePaths(cat, selected, excludedPaths);
+                    const isExpanded = expandedCats[cat.id] !== false;
                     return (
-                      <div key={cat.id} style={{ border: "1px solid #edf0f5", borderRadius: 8, overflow: "hidden" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", background: "#fafcff", borderBottom: "1px solid #edf0f5" }}>
-                          <Checkbox checked={selected.has(cat.id)} onChange={() => toggleCategory(cat)} />
+                      <div key={cat.id} style={{ borderTop: idx > 0 ? "1px solid #edf0f5" : "none" }}>
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 10,
+                            padding: "10px 12px",
+                            cursor: "pointer",
+                            userSelect: "none",
+                          }}
+                          onClick={() => setExpandedCats(prev => ({ ...prev, [cat.id]: !prev[cat.id] }))}
+                        >
+                          <Checkbox checked={selected.has(cat.id)} onClick={(e) => e.stopPropagation()} onChange={() => toggleCategory(cat)} />
                           <span style={{ fontSize: 18 }}>{categoryIcon(cat.id)}</span>
                           <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontWeight: 600 }}>{cat.name}</div>
+                            <div style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+                              <span>{cat.name}</span>
+                              <span style={{ fontSize: 11, color: "#8c8c8c", transition: "transform 0.2s", transform: isExpanded ? "rotate(0deg)" : "rotate(-90deg)" }}>▼</span>
+                            </div>
                             <Text type="secondary" style={{ display: "block", fontSize: 12 }} ellipsis>
                               {cat.description} · {checkedCatPaths.length}/{cat.paths.length} 路径
                             </Text>
                           </div>
-                          <div style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                          <div style={{ textAlign: "right", whiteSpace: "nowrap" }} onClick={(e) => e.stopPropagation()}>
                             <div style={{ fontSize: 13, fontWeight: 700, color: "#cf1322" }}>{fmtBytes(sumPathSize(activeCatPaths))}</div>
                             <Text type="secondary" style={{ fontSize: 11 }}>{sumPathFiles(activeCatPaths).toLocaleString()} 文件</Text>
                           </div>
                         </div>
-                        {renderPathRows(cat.paths)}
+                        {isExpanded && renderPathRows(cat.paths)}
                       </div>
                     );
                   })}

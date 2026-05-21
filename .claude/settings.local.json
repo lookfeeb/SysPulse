@@ -38,7 +38,12 @@
       "Bash(npx tauri *)",
       "Bash(copy *)",
       "Bash(echo \"EXIT=$?\")",
-      "Bash(grep -A 1 \"^name = \\\\\"tauri\\\\\"$\" \"C:\\\\Users\\\\Administrator\\\\Desktop\\\\py\\\\TrafficMonitor/src-tauri/Cargo.lock\")"
+      "Bash(grep -A 1 \"^name = \\\\\"tauri\\\\\"$\" \"C:\\\\Users\\\\Administrator\\\\Desktop\\\\py\\\\TrafficMonitor/src-tauri/Cargo.lock\")",
+      "Bash(grep -E \"\\\\.\\(tsx|jsx|vue\\)$\")",
+      "Bash(cargo generate-lockfile *)",
+      "Bash(pnpm install *)",
+      "Bash(git add *)",
+      "Bash(git commit *)"
     ]
   }
 }
