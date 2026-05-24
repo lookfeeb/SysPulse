@@ -15,7 +15,16 @@ const IF_TYPE_SOFTWARE_LOOPBACK: u32 = 24;
 const IF_TYPE_IEEE80211: u32 = 71;
 const IF_TYPE_TUNNEL: u32 = 131;
 const IF_TYPE_PPP: u32 = 23;
+// Bit layout of MIB_IF_ROW2.InterfaceAndOperStatusFlags (Windows SDK ifdef.h):
+//   bit 0: HardwareInterface
+//   bit 1: FilterInterface     ← shadow row published by an NDIS LWF driver
+//                                 (Npcap, WFP, QoS, etc.). It mirrors the byte
+//                                 counters of the underlying NIC, so summing
+//                                 them double-counts traffic.
+//   bit 2: ConnectorPresent
+//   bit 3..7: not used here
 const IF_ROW_FLAG_HARDWARE_INTERFACE: u8 = 0x01;
+const IF_ROW_FLAG_FILTER_INTERFACE: u8 = 0x02;
 
 #[derive(Debug, Clone)]
 pub struct IfRow {
@@ -53,12 +62,23 @@ pub fn list_interfaces() -> Result<Vec<IfRow>> {
 
         for i in 0..count {
             let row: &MIB_IF_ROW2 = &*rows_ptr.add(i);
+            let flags = row.InterfaceAndOperStatusFlags._bitfield;
+
+            // NDIS Lightweight Filter (LWF) drivers — Npcap, WFP, QoS Packet
+            // Scheduler, etc. — each publish a shadow MIB row for every
+            // adapter they bind to. Those shadow rows duplicate the byte
+            // counters of the underlying NIC and would otherwise be summed
+            // into the network total (causing 2x – 6x inflation depending on
+            // how many LWFs are installed). Skip them entirely.
+            if flags & IF_ROW_FLAG_FILTER_INTERFACE != 0 {
+                continue;
+            }
+
             let alias = utf16_to_string(&row.Alias);
             let desc = utf16_to_string(&row.Description);
             let is_up = row.OperStatus == IfOperStatusUp;
             let is_loopback = row.Type == IF_TYPE_SOFTWARE_LOOPBACK;
-            let is_hardware =
-                row.InterfaceAndOperStatusFlags._bitfield & IF_ROW_FLAG_HARDWARE_INTERFACE != 0;
+            let is_hardware = flags & IF_ROW_FLAG_HARDWARE_INTERFACE != 0;
             let is_physical =
                 is_hardware || row.Type == IF_TYPE_ETHERNET_CSMACD || row.Type == IF_TYPE_IEEE80211;
             let is_tunnel = row.Type == IF_TYPE_TUNNEL || row.Type == IF_TYPE_PPP;
