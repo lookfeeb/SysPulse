@@ -79,10 +79,6 @@ function buildDisplayCategories(categories: CleanupCategory[]): DisplayCategory[
   ];
 }
 
-function displayCategoryIds(category: DisplayCategory): string[] {
-  return category.childCategories?.map((cat) => cat.id) ?? [category.id];
-}
-
 function checkedPaths(paths: PathDetail[], excludedPaths: Set<string>): PathDetail[] {
   return paths.filter((path) => !excludedPaths.has(path.path));
 }
@@ -98,6 +94,58 @@ function sumPathFiles(paths: PathDetail[]): number {
 function cleanablePaths(category: CleanupCategory, selected: Set<string>, excludedPaths: Set<string>): PathDetail[] {
   if (!selected.has(category.id)) return [];
   return checkedPaths(category.paths, excludedPaths);
+}
+
+type SelectionState = {
+  checked: boolean;
+  indeterminate: boolean;
+  checkedPathCount: number;
+  totalPathCount: number;
+  selectedCategoryCount: number;
+  totalCategoryCount: number;
+};
+
+function cleanupCategorySelection(
+  category: CleanupCategory,
+  selected: Set<string>,
+  excludedPaths: Set<string>,
+): SelectionState {
+  const categorySelected = selected.has(category.id);
+  const totalPathCount = category.paths.length;
+  const checkedPathCount = categorySelected
+    ? checkedPaths(category.paths, excludedPaths).length
+    : 0;
+
+  return {
+    checked: categorySelected && (totalPathCount === 0 || checkedPathCount === totalPathCount),
+    indeterminate:
+      categorySelected && checkedPathCount > 0 && checkedPathCount < totalPathCount,
+    checkedPathCount,
+    totalPathCount,
+    selectedCategoryCount: categorySelected ? 1 : 0,
+    totalCategoryCount: 1,
+  };
+}
+
+function displayCategorySelection(
+  category: DisplayCategory,
+  selected: Set<string>,
+  excludedPaths: Set<string>,
+): SelectionState {
+  const childStates = (category.childCategories ?? [category]).map((child) =>
+    cleanupCategorySelection(child, selected, excludedPaths),
+  );
+  const checked = childStates.length > 0 && childStates.every((state) => state.checked);
+  const hasSelection = childStates.some((state) => state.checked || state.indeterminate);
+
+  return {
+    checked,
+    indeterminate: hasSelection && !checked,
+    checkedPathCount: childStates.reduce((sum, state) => sum + state.checkedPathCount, 0),
+    totalPathCount: childStates.reduce((sum, state) => sum + state.totalPathCount, 0),
+    selectedCategoryCount: childStates.reduce((sum, state) => sum + state.selectedCategoryCount, 0),
+    totalCategoryCount: childStates.reduce((sum, state) => sum + state.totalCategoryCount, 0),
+  };
 }
 
 export default function CleanupPage() {
@@ -130,44 +178,65 @@ export default function CleanupPage() {
     .filter((cat) => selected.has(cat.id))
     .reduce((sum, cat) => sum + sumPathSize(cleanablePaths(cat, selected, excludedPaths)), 0);
 
-  const selectedCategoryCount = categories.filter((cat) => selected.has(cat.id)).length;
-  const allSelected = categories.length > 0 && selectedCategoryCount === categories.length;
-  const partiallySelected = selectedCategoryCount > 0 && selectedCategoryCount < categories.length;
+  const selectedPathCount = categories
+    .reduce((sum, cat) => sum + cleanablePaths(cat, selected, excludedPaths).length, 0);
+  const selectionStates = categories.map((cat) => cleanupCategorySelection(cat, selected, excludedPaths));
+  const allSelected = selectionStates.length > 0 && selectionStates.every((state) => state.checked);
+  const partiallySelected = selectionStates.some((state) => state.checked || state.indeterminate) && !allSelected;
 
   const saveSelected = (next: Set<string>) => writeStoredStringList(SELECTED_STORAGE_KEY, next);
   const saveExcludedPaths = (next: Set<string>) => writeStoredStringList(EXCLUDED_PATHS_STORAGE_KEY, next);
 
-  const updateSelected = (updater: (prev: Set<string>) => Set<string>) => {
-    setSelected((prev) => {
-      const next = updater(prev);
-      saveSelected(next);
-      return next;
-    });
+  const commitSelection = (nextSelected: Set<string>, nextExcludedPaths: Set<string>) => {
+    saveSelected(nextSelected);
+    saveExcludedPaths(nextExcludedPaths);
+    setSelected(nextSelected);
+    setExcludedPaths(nextExcludedPaths);
   };
 
-  const updateExcludedPaths = (updater: (prev: Set<string>) => Set<string>) => {
-    setExcludedPaths((prev) => {
-      const next = updater(prev);
-      saveExcludedPaths(next);
-      return next;
+  const setCategoriesChecked = (targetCategories: CleanupCategory[], checked: boolean) => {
+    const nextSelected = new Set(selected);
+    const nextExcludedPaths = new Set(excludedPaths);
+
+    targetCategories.forEach((category) => {
+      if (checked) nextSelected.add(category.id);
+      else nextSelected.delete(category.id);
+
+      category.paths.forEach((path) => {
+        if (checked) nextExcludedPaths.delete(path.path);
+        else nextExcludedPaths.add(path.path);
+      });
     });
+
+    commitSelection(nextSelected, nextExcludedPaths);
   };
 
   const toggleCategory = (category: DisplayCategory) => {
-    const ids = displayCategoryIds(category);
-    const checked = ids.every((id) => selected.has(id));
-    updateSelected((prev) => {
-      const next = new Set(prev);
-      ids.forEach((id) => {
-        if (checked) next.delete(id);
-        else next.add(id);
-      });
-      return next;
-    });
+    const state = displayCategorySelection(category, selected, excludedPaths);
+    setCategoriesChecked(category.childCategories ?? [category], !state.checked);
   };
 
   const toggleAllCategories = () => {
-    updateSelected(() => (allSelected ? new Set() : new Set(categories.map((cat) => cat.id))));
+    setCategoriesChecked(categories, !allSelected);
+  };
+
+  const togglePath = (category: CleanupCategory, path: PathDetail) => {
+    const nextSelected = new Set(selected);
+    const nextExcludedPaths = new Set(excludedPaths);
+    const pathChecked = selected.has(category.id) && !excludedPaths.has(path.path);
+
+    if (pathChecked) {
+      nextExcludedPaths.add(path.path);
+      const hasCheckedPath = category.paths.some((item) =>
+        item.path !== path.path && !nextExcludedPaths.has(item.path),
+      );
+      if (!hasCheckedPath) nextSelected.delete(category.id);
+    } else {
+      nextSelected.add(category.id);
+      nextExcludedPaths.delete(path.path);
+    }
+
+    commitSelection(nextSelected, nextExcludedPaths);
   };
 
   const onScan = async () => {
@@ -187,7 +256,7 @@ export default function CleanupPage() {
   };
 
   const onClean = async () => {
-    if (selected.size === 0) return;
+    if (selectedPathCount === 0) return;
     setCleaning(true);
     setCleanProgress({
       percent: 0,
@@ -239,9 +308,9 @@ export default function CleanupPage() {
     return map[id] ?? "📁";
   };
 
-  const renderPathRows = (paths: PathDetail[]) => (
+  const renderPathRows = (category: CleanupCategory) => (
     <div className="cleanup-path-list" style={{ maxHeight: 320, overflow: "auto", borderRadius: 8, border: "1px solid #edf0f5", background: "#fff" }}>
-      {paths.map((path, index) => (
+      {category.paths.map((path, index) => (
         <div
           key={path.path}
           style={{
@@ -250,17 +319,12 @@ export default function CleanupPage() {
             alignItems: "center",
             gap: 8,
             padding: "10px 12px",
-            borderBottom: index < paths.length - 1 ? "1px solid #f1f3f7" : "none",
+            borderBottom: index < category.paths.length - 1 ? "1px solid #f1f3f7" : "none",
           }}
         >
           <Checkbox
-            checked={!excludedPaths.has(path.path)}
-            onChange={() => updateExcludedPaths((prev) => {
-              const next = new Set(prev);
-              if (next.has(path.path)) next.delete(path.path);
-              else next.add(path.path);
-              return next;
-            })}
+            checked={selected.has(category.id) && !excludedPaths.has(path.path)}
+            onChange={() => togglePath(category, path)}
           />
           <span
             style={{
@@ -334,14 +398,16 @@ export default function CleanupPage() {
         <Popconfirm
           title="确认清理"
           description={`将清理 ${fmtBytes(totalSelected)}，此操作不可撤销`}
-          onConfirm={onClean}
-          disabled={selected.size === 0 || cleaning}
+          onConfirm={() => {
+            void onClean();
+          }}
+          disabled={selectedPathCount === 0 || cleaning}
         >
           <Button
             danger
             icon={<ThunderboltOutlined />}
             loading={cleaning}
-            disabled={selected.size === 0 || cleaning}
+            disabled={selectedPathCount === 0 || cleaning}
           >
             清理选中 ({fmtBytes(totalSelected)})
           </Button>
@@ -377,10 +443,9 @@ export default function CleanupPage() {
       {categories.length > 0 && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
           {displayCategories.map((cat) => {
-            const ids = displayCategoryIds(cat);
-            const checkedCount = ids.filter((id) => selected.has(id)).length;
-            const checked = checkedCount === ids.length;
-            const indeterminate = checkedCount > 0 && checkedCount < ids.length;
+            const selection = displayCategorySelection(cat, selected, excludedPaths);
+            const checked = selection.checked;
+            const indeterminate = selection.indeterminate;
             const visiblePaths = cat.childCategories
               ? cat.childCategories.flatMap((child) => cleanablePaths(child, selected, excludedPaths))
               : cleanablePaths(cat, selected, excludedPaths);
@@ -424,7 +489,9 @@ export default function CleanupPage() {
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 600 }}>{cat.name}</div>
                     <Text type="secondary" style={{ display: "block", fontSize: 12 }} ellipsis>
-                      {cat.childCategories ? `${cat.description} · ${checkedCount}/${ids.length} 已选` : cat.description}
+                      {cat.childCategories
+                        ? `${cat.description} · ${selection.checkedPathCount}/${selection.totalPathCount} 路径`
+                        : cat.description}
                     </Text>
                   </div>
                   <div style={{ textAlign: "right", whiteSpace: "nowrap" }}>
@@ -453,10 +520,9 @@ export default function CleanupPage() {
       >
         {detailCat && (() => {
           const detailCategories = detailCat.childCategories ?? [detailCat];
-          const detailPaths = detailCategories.flatMap((cat) => cat.paths);
           const activePaths = detailCategories.flatMap((cat) => cleanablePaths(cat, selected, excludedPaths));
-          const checkedPathCount = checkedPaths(detailPaths, excludedPaths).length;
-          const allPathsChecked = detailPaths.length > 0 && checkedPathCount === detailPaths.length;
+          const detailSelection = displayCategorySelection(detailCat, selected, excludedPaths);
+          const allPathsChecked = detailSelection.checked;
 
           return (
             <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, overflow: "hidden" }}>
@@ -476,14 +542,7 @@ export default function CleanupPage() {
                 <Button
                   size="small"
                   type="link"
-                  onClick={() => updateExcludedPaths((prev) => {
-                    const next = new Set(prev);
-                    detailPaths.forEach((path) => {
-                      if (allPathsChecked) next.add(path.path);
-                      else next.delete(path.path);
-                    });
-                    return next;
-                  })}
+                  onClick={() => setCategoriesChecked(detailCategories, !allPathsChecked)}
                 >
                   {allPathsChecked ? "取消全选" : "全选"}
                 </Button>
@@ -492,7 +551,7 @@ export default function CleanupPage() {
               {detailCat.childCategories ? (
                 <div className="cleanup-detail-list" style={{ border: "1px solid #edf0f5", borderRadius: 8, overflowY: "auto", paddingRight: 6, minHeight: 0, flex: "0 1 auto" }}>
                   {detailCat.childCategories.map((cat, idx) => {
-                    const checkedCatPaths = checkedPaths(cat.paths, excludedPaths);
+                    const catSelection = cleanupCategorySelection(cat, selected, excludedPaths);
                     const activeCatPaths = cleanablePaths(cat, selected, excludedPaths);
                     const isExpanded = expandedCats[cat.id] !== false;
                     return (
@@ -506,9 +565,14 @@ export default function CleanupPage() {
                             cursor: "pointer",
                             userSelect: "none",
                           }}
-                          onClick={() => setExpandedCats(prev => ({ ...prev, [cat.id]: !prev[cat.id] }))}
+                            onClick={() => setExpandedCats(prev => ({ ...prev, [cat.id]: !prev[cat.id] }))}
                         >
-                          <Checkbox checked={selected.has(cat.id)} onClick={(e) => e.stopPropagation()} onChange={() => toggleCategory(cat)} />
+                          <Checkbox
+                            checked={catSelection.checked}
+                            indeterminate={catSelection.indeterminate}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={() => toggleCategory(cat)}
+                          />
                           <span style={{ fontSize: 18 }}>{categoryIcon(cat.id)}</span>
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
@@ -516,7 +580,7 @@ export default function CleanupPage() {
                               <span style={{ fontSize: 11, color: "#8c8c8c", transition: "transform 0.2s", transform: isExpanded ? "rotate(0deg)" : "rotate(-90deg)" }}>▼</span>
                             </div>
                             <Text type="secondary" style={{ display: "block", fontSize: 12 }} ellipsis>
-                              {cat.description} · {checkedCatPaths.length}/{cat.paths.length} 路径
+                              {cat.description} · {catSelection.checkedPathCount}/{catSelection.totalPathCount} 路径
                             </Text>
                           </div>
                           <div style={{ textAlign: "right", whiteSpace: "nowrap" }} onClick={(e) => e.stopPropagation()}>
@@ -524,13 +588,13 @@ export default function CleanupPage() {
                             <Text type="secondary" style={{ fontSize: 11 }}>{sumPathFiles(activeCatPaths).toLocaleString()} 文件</Text>
                           </div>
                         </div>
-                        {isExpanded && renderPathRows(cat.paths)}
+                        {isExpanded && renderPathRows(cat)}
                       </div>
                     );
                   })}
                 </div>
               ) : (
-                renderPathRows(detailCat.paths)
+                renderPathRows(detailCat)
               )}
             </div>
           );

@@ -49,12 +49,21 @@ export default function HistoryPage() {
   const [rows, setRows] = useState<DailyTraffic[]>(cachedHistory?.rows ?? []);
   const [loading, setLoading] = useState(false);
 
-  const buildQuery = (): HistoryQuery => ({
-    from: range[0].format("YYYY-MM-DD"),
-    to: range[1].format("YYYY-MM-DD"),
-    granularity,
-    iface: null,
-  });
+  const buildQuery = (): HistoryQuery => {
+    const from = granularity === "month"
+      ? range[0].startOf("month").format("YYYY-MM-DD")
+      : range[0].format("YYYY-MM-DD");
+    const to = granularity === "month"
+      ? range[1].endOf("month").format("YYYY-MM-DD")
+      : range[1].format("YYYY-MM-DD");
+
+    return {
+      from,
+      to,
+      granularity,
+      iface: null,
+    };
+  };
 
   const onQuery = async () => {
     setLoading(true);
@@ -82,7 +91,7 @@ export default function HistoryPage() {
 
   const onExport = async () => {
     const path = await save({
-      defaultPath: `traffic-${dayjs().format("YYYYMMDD")}.csv`,
+      defaultPath: `traffic-${granularity}-${dayjs().format("YYYYMMDD")}.csv`,
       filters: [{ name: "CSV", extensions: ["csv"] }],
     });
     if (!path) return;
@@ -117,12 +126,20 @@ export default function HistoryPage() {
     <Card title={t("menu.history")}>
       <Space style={{ marginBottom: 16 }}>
         <RangePicker
+          picker={granularity === "month" ? "month" : "date"}
+          format={granularity === "month" ? "YYYY-MM" : "YYYY-MM-DD"}
           value={range}
           onChange={(v) => v && setRange(v as [Dayjs, Dayjs])}
         />
         <Radio.Group
           value={granularity}
-          onChange={(e) => setGranularity(e.target.value)}
+          onChange={(e) => {
+            const nextGranularity = e.target.value as "day" | "month";
+            setGranularity(nextGranularity);
+            if (nextGranularity === "month") {
+              setRange([range[0].startOf("month"), range[1].startOf("month")]);
+            }
+          }}
         >
           <Radio.Button value="day">{t("history.day")}</Radio.Button>
           <Radio.Button value="month">{t("history.month")}</Radio.Button>
