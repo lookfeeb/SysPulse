@@ -36,6 +36,7 @@ pub fn apply_overlay_config(app: &AppHandle, cfg: &OverlayConfig) -> Result<(), 
         w.set_always_on_top(false).map_err(AppError::Tauri)?;
         w.set_ignore_cursor_events(false).map_err(AppError::Tauri)?;
         w.show().map_err(AppError::Tauri)?;
+        let _ = dock_overlay_now(app);
     }
     Ok(())
 }
@@ -164,31 +165,49 @@ fn overlay_is_taskbar_child(
 
 pub fn spawn_taskbar_overlay_z_order_watchdog(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             interval.tick().await;
-            if let Err(e) = restore_taskbar_overlay_if_config_visible(&app) {
+            if let Err(e) = restore_taskbar_overlay(&app) {
                 tracing::debug!(?e, "taskbar overlay z-order watchdog skipped");
             }
         }
     });
 }
 
-fn restore_taskbar_overlay_if_config_visible(app: &AppHandle) -> Result<(), AppError> {
-    let Some(state) = app.try_state::<AppState>() else {
-        return Ok(());
-    };
-    let cfg = state.config.snapshot().overlay;
-    let _ = cfg;
-
-    if let Some(w) = app.get_webview_window(OVERLAY_LABEL) {
+fn restore_taskbar_overlay(app: &AppHandle) -> Result<(), AppError> {
+    if let Some(w) = get_or_create_overlay_window(app)? {
         w.set_always_on_top(false).ok();
-        let is_window_visible = w.is_visible().unwrap_or(false);
-        if is_window_visible {
-            dock_overlay_now(app)?;
+        w.set_ignore_cursor_events(false).ok();
+        if !w.is_visible().unwrap_or(false) {
+            w.show().map_err(AppError::Tauri)?;
         }
+        dock_overlay_now(app)?;
     }
     Ok(())
+}
+
+fn get_or_create_overlay_window(app: &AppHandle) -> Result<Option<tauri::WebviewWindow>, AppError> {
+    if let Some(w) = app.get_webview_window(OVERLAY_LABEL) {
+        return Ok(Some(w));
+    }
+
+    let Some(config) = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|window| window.label == OVERLAY_LABEL)
+    else {
+        return Ok(None);
+    };
+
+    let w = tauri::WebviewWindowBuilder::from_config(app, config)
+        .map_err(AppError::Tauri)?
+        .build()
+        .map_err(AppError::Tauri)?;
+    Ok(Some(w))
 }
 
 #[cfg(windows)]
