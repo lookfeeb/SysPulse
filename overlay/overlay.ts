@@ -257,6 +257,22 @@ function setText(el: HTMLElement | null, value: string): boolean {
   return true;
 }
 
+let tooltipRegionFrame: number | null = null;
+
+function syncTooltipRegions(root: HTMLElement) {
+  if (tooltipRegionFrame != null) cancelAnimationFrame(tooltipRegionFrame);
+  tooltipRegionFrame = requestAnimationFrame(() => {
+    tooltipRegionFrame = null;
+    const rect = root.getBoundingClientRect();
+    const regions = [
+      { key: "__all__", left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+    ];
+    void invoke("register_overlay_tooltip_regions", { args: { regions } }).catch((e) =>
+      console.warn("register overlay tooltip regions failed", e),
+    );
+  });
+}
+
 async function runMenuAction(action: string) {
   try {
     if (action === "settings") await invoke("show_config_window");
@@ -306,11 +322,13 @@ async function main() {
   }
   if (config) {
     applyConfig(config, root);
+    syncTooltipRegions(root);
     autoFitWindow(root, { allowShrink: true });
   }
 
   const resizeObserver = new ResizeObserver(() => {
     autoFitWindow(root, { allowShrink: true });
+    syncTooltipRegions(root);
   });
   resizeObserver.observe(root);
 
@@ -365,6 +383,7 @@ async function main() {
   await listen<OverlayConfig>("overlay:config-changed", (e) => {
     config = e.payload;
     applyConfig(config, root);
+    syncTooltipRegions(root);
     autoFitWindow(root, { allowShrink: true });
   });
 

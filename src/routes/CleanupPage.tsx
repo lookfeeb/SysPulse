@@ -27,11 +27,11 @@ const { Title, Text } = Typography;
 
 const PROGRAMMING_CATEGORY_ID = "programming-cache";
 const PROGRAMMING_CATEGORY_IDS = new Set(["rust-target", "go-cache", "python-cache", "node-cache"]);
-const DEFAULT_UNSELECTED_CATEGORY_IDS = new Set(["recycle-bin"]);
-const SELECTED_STORAGE_KEY = "syspulse.cleanup.selectedCategories.v2";
+const SELECTED_STORAGE_KEY = "syspulse.cleanup.selectedCategories.v3";
 const EXCLUDED_PATHS_STORAGE_KEY = "syspulse.cleanup.excludedPaths.v1";
 
 let cachedCategories: CleanupCategory[] | null = null;
+let cachedScanId: string | null = null;
 
 type DisplayCategory = CleanupCategory & {
   childCategories?: CleanupCategory[];
@@ -51,8 +51,13 @@ type CleanupProgressEvent = {
 function restoreSelected(categories: CleanupCategory[]): Set<string> {
   const availableIds = new Set(categories.map((c) => c.id));
   const stored = readStoredStringList(SELECTED_STORAGE_KEY);
-  if (stored !== null) return new Set(stored.filter((id) => availableIds.has(id)));
-  return new Set(categories.filter((c) => !DEFAULT_UNSELECTED_CATEGORY_IDS.has(c.id)).map((c) => c.id));
+  if (stored !== null) {
+    const safeDefaultIds = new Set(
+      categories.filter((category) => category.defaultSelected).map((category) => category.id),
+    );
+    return new Set(stored.filter((id) => availableIds.has(id) && safeDefaultIds.has(id)));
+  }
+  return new Set(categories.filter((category) => category.defaultSelected).map((category) => category.id));
 }
 
 function restoreExcludedPaths(): Set<string> {
@@ -74,6 +79,9 @@ function buildDisplayCategories(categories: CleanupCategory[]): DisplayCategory[
       sizeBytes: programmingCategories.reduce((sum, cat) => sum + cat.sizeBytes, 0),
       fileCount: programmingCategories.reduce((sum, cat) => sum + cat.fileCount, 0),
       paths: programmingCategories.flatMap((cat) => cat.paths),
+      riskLevel: "advanced",
+      defaultSelected: false,
+      minAgeDays: null,
       childCategories: programmingCategories,
     },
   ];
@@ -158,6 +166,7 @@ export default function CleanupPage() {
   const [expandedCats, setExpandedCats] = useState<Record<string, boolean>>({});
   const [excludedPaths, setExcludedPaths] = useState<Set<string>>(() => restoreExcludedPaths());
   const [cleanProgress, setCleanProgress] = useState<CleanupProgressEvent | null>(null);
+  const [scanId, setScanId] = useState<string | null>(cachedScanId);
 
   const displayCategories = useMemo(() => buildDisplayCategories(categories), [categories]);
 
@@ -180,7 +189,8 @@ export default function CleanupPage() {
 
   const selectedPathCount = categories
     .reduce((sum, cat) => sum + cleanablePaths(cat, selected, excludedPaths).length, 0);
-  const selectionStates = categories.map((cat) => cleanupCategorySelection(cat, selected, excludedPaths));
+  const safeDefaultCategories = categories.filter((category) => category.defaultSelected);
+  const selectionStates = safeDefaultCategories.map((cat) => cleanupCategorySelection(cat, selected, excludedPaths));
   const allSelected = selectionStates.length > 0 && selectionStates.every((state) => state.checked);
   const partiallySelected = selectionStates.some((state) => state.checked || state.indeterminate) && !allSelected;
 
@@ -217,8 +227,15 @@ export default function CleanupPage() {
   };
 
   const toggleAllCategories = () => {
-    setCategoriesChecked(categories, !allSelected);
+    setCategoriesChecked(safeDefaultCategories, !allSelected);
   };
+
+  const selectedAdvanced = categories.some(
+    (category) => category.riskLevel === "advanced" && selected.has(category.id),
+  );
+  const selectedCaution = categories.some(
+    (category) => category.riskLevel === "caution" && selected.has(category.id),
+  );
 
   const togglePath = (category: CleanupCategory, path: PathDetail) => {
     const nextSelected = new Set(selected);
@@ -246,6 +263,8 @@ export default function CleanupPage() {
       const result = await commands.scanCleanup();
       setCategories(result.categories);
       cachedCategories = result.categories;
+      cachedScanId = result.scanId;
+      setScanId(result.scanId);
       setSelected(restoreSelected(result.categories));
       void message.success({ content: `扫描完成，发现 ${fmtBytes(result.totalSizeBytes)} 可清理`, key: "cleanup-scan", duration: 2 });
     } catch (e: unknown) {
@@ -256,7 +275,7 @@ export default function CleanupPage() {
   };
 
   const onClean = async () => {
-    if (selectedPathCount === 0) return;
+    if (selectedPathCount === 0 || !scanId) return;
     setCleaning(true);
     setCleanProgress({
       percent: 0,
@@ -269,7 +288,13 @@ export default function CleanupPage() {
       done: false,
     });
     try {
-      const result = await commands.cleanCategories({ categoryIds: [...selected], excludedPaths: [...excludedPaths] });
+      const result = await commands.cleanCategories({
+        scanId,
+        categoryIds: [...selected],
+        excludedPaths: [...excludedPaths],
+        confirmCaution: selectedCaution,
+        confirmAdvanced: selectedAdvanced,
+      });
       void message.success({ content: `已释放 ${fmtBytes(result.freedBytes)}，删除 ${result.deletedFiles} 个文件`, key: "cleanup-clean", duration: 3 });
       if (result.errors.length > 0) {
         void message.warning({ content: `${result.errors.length} 个路径清理失败`, duration: 3 });
@@ -277,6 +302,8 @@ export default function CleanupPage() {
       const fresh = await commands.scanCleanup();
       setCategories(fresh.categories);
       cachedCategories = fresh.categories;
+      cachedScanId = fresh.scanId;
+      setScanId(fresh.scanId);
       setSelected(restoreSelected(fresh.categories));
     } catch (e: unknown) {
       void message.error(e instanceof Error ? e.message : String(e));
@@ -306,6 +333,12 @@ export default function CleanupPage() {
       "installer-cache": "📥",
     };
     return map[id] ?? "📁";
+  };
+
+  const riskMeta = (risk: CleanupCategory["riskLevel"]) => {
+    if (risk === "safe") return { label: "安全", color: "#16845b", background: "#e7f8f0" };
+    if (risk === "caution") return { label: "谨慎", color: "#a96b00", background: "#fff3d8" };
+    return { label: "高级", color: "#b42335", background: "#fdecef" };
   };
 
   const renderPathRows = (category: CleanupCategory) => (
@@ -374,16 +407,41 @@ export default function CleanupPage() {
 
   return (
     <div style={{ padding: "0 4px" }}>
-      <Title level={4} style={{ marginBottom: 16 }}>磁盘清理</Title>
+      <Title level={4} style={{ marginBottom: 4 }}>磁盘清理</Title>
+      <Text type="secondary" style={{ display: "block", marginBottom: 16 }}>
+        默认只选择超过保留期的安全垃圾；程序缓存、编译产物和系统维护项均需手动确认
+      </Text>
+
+      {categories.length > 0 && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12, marginBottom: 16 }}>
+          {(["safe", "caution", "advanced"] as const).map((risk) => {
+            const matching = categories.filter((category) => category.riskLevel === risk);
+            const size = matching.reduce((sum, category) => sum + category.sizeBytes, 0);
+            const meta = riskMeta(risk);
+            const title = risk === "safe" ? "安全垃圾" : risk === "caution" ? "可再生成缓存" : "高级维护项";
+            return (
+              <div key={risk} style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, padding: "12px 14px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <Text type="secondary" style={{ fontSize: 12 }}>{title}</Text>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: meta.color, background: meta.background, borderRadius: 10, padding: "2px 8px" }}>{meta.label}</span>
+                </div>
+                <div style={{ fontSize: 22, fontWeight: 700, marginTop: 4 }}>{fmtBytes(size)}</div>
+                <Text type="secondary" style={{ fontSize: 11 }}>{matching.length} 个类别</Text>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       <Space style={{ marginBottom: 16 }} wrap>
         {categories.length > 0 && (
-          <span style={{ display: "inline-flex" }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
             <Checkbox
               checked={allSelected}
               indeterminate={partiallySelected}
               onChange={toggleAllCategories}
             />
+            <Text type="secondary" style={{ fontSize: 12 }}>全选安全项</Text>
           </span>
         )}
         <Button
@@ -397,17 +455,23 @@ export default function CleanupPage() {
         </Button>
         <Popconfirm
           title="确认清理"
-          description={`将清理 ${fmtBytes(totalSelected)}，此操作不可撤销`}
+          description={
+            selectedAdvanced
+              ? `包含高级维护项，将清理 ${fmtBytes(totalSelected)}，请确认已查看路径明细`
+              : selectedCaution
+                ? `包含可再生成缓存，将清理 ${fmtBytes(totalSelected)}；相关程序运行时会自动跳过`
+                : `将安全清理 ${fmtBytes(totalSelected)}，此操作不可撤销`
+          }
           onConfirm={() => {
             void onClean();
           }}
-          disabled={selectedPathCount === 0 || cleaning}
+          disabled={selectedPathCount === 0 || cleaning || !scanId}
         >
           <Button
             danger
             icon={<ThunderboltOutlined />}
             loading={cleaning}
-            disabled={selectedPathCount === 0 || cleaning}
+            disabled={selectedPathCount === 0 || cleaning || !scanId}
           >
             清理选中 ({fmtBytes(totalSelected)})
           </Button>
@@ -441,8 +505,8 @@ export default function CleanupPage() {
       )}
 
       {categories.length > 0 && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
-          {displayCategories.map((cat) => {
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 10 }}>
+          {[...displayCategories].sort((a, b) => ({ safe: 0, caution: 1, advanced: 2 }[a.riskLevel] - { safe: 0, caution: 1, advanced: 2 }[b.riskLevel])).map((cat) => {
             const selection = displayCategorySelection(cat, selected, excludedPaths);
             const checked = selection.checked;
             const indeterminate = selection.indeterminate;
@@ -451,6 +515,7 @@ export default function CleanupPage() {
               : cleanablePaths(cat, selected, excludedPaths);
             const visibleSize = sumPathSize(visiblePaths);
             const visibleFiles = sumPathFiles(visiblePaths);
+            const risk = riskMeta(cat.riskLevel);
 
             return (
               <Card
@@ -460,7 +525,7 @@ export default function CleanupPage() {
                 onClick={() => setDetailCat(cat)}
                 style={{
                   border: checked || indeterminate ? "1px solid #1677ff" : "1px solid #e5e7eb",
-                  background: checked || indeterminate ? "#f0f5ff" : "#fff",
+                  background: checked || indeterminate ? "#f6faff" : "#fff",
                   cursor: "pointer",
                 }}
               >
@@ -487,7 +552,11 @@ export default function CleanupPage() {
                     {cat.id === PROGRAMMING_CATEGORY_ID ? <CodeOutlined /> : categoryIcon(cat.id)}
                   </span>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 600 }}>{cat.name}</div>
+                    <div style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: 8 }}>
+                      <span>{cat.name}</span>
+                      <span style={{ fontSize: 11, fontWeight: 600, color: risk.color, background: risk.background, borderRadius: 10, padding: "1px 7px" }}>{risk.label}</span>
+                      {cat.minAgeDays != null && <span style={{ fontSize: 11, color: "#16845b" }}>仅 {cat.minAgeDays} 天以上</span>}
+                    </div>
                     <Text type="secondary" style={{ display: "block", fontSize: 12 }} ellipsis>
                       {cat.childCategories
                         ? `${cat.description} · ${selection.checkedPathCount}/${selection.totalPathCount} 路径`

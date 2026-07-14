@@ -1,14 +1,22 @@
 use crate::error::IpcError;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use tauri::{AppHandle, Emitter};
 
 static CLEANUP_STATE: AtomicU8 = AtomicU8::new(CleanupTaskKind::Idle as u8);
-static LAST_SCAN: OnceLock<Mutex<Option<ScanResult>>> = OnceLock::new();
+static LAST_SCAN: OnceLock<Mutex<Option<CachedScan>>> = OnceLock::new();
+static NEXT_SCAN_ID: AtomicU64 = AtomicU64::new(1);
 const CLEANUP_PROGRESS_EVENT: &str = "cleanup:progress";
+const SCAN_TTL: Duration = Duration::from_secs(10 * 60);
+
+#[derive(Clone)]
+struct CachedScan {
+    result: ScanResult,
+    created_at: Instant,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CleanupTaskKind {
@@ -58,17 +66,25 @@ fn cleanup_state_name(value: u8) -> &'static str {
     }
 }
 
-fn scan_cache() -> &'static Mutex<Option<ScanResult>> {
+fn scan_cache() -> &'static Mutex<Option<CachedScan>> {
     LAST_SCAN.get_or_init(|| Mutex::new(None))
 }
 
-fn cached_scan() -> Option<ScanResult> {
-    scan_cache().lock().ok().and_then(|guard| guard.clone())
+fn cached_scan(scan_id: &str) -> Option<ScanResult> {
+    scan_cache().lock().ok().and_then(|guard| {
+        guard.as_ref().and_then(|cached| {
+            (cached.result.scan_id == scan_id && cached.created_at.elapsed() <= SCAN_TTL)
+                .then(|| cached.result.clone())
+        })
+    })
 }
 
 fn store_scan(scan: &ScanResult) {
     if let Ok(mut guard) = scan_cache().lock() {
-        *guard = Some(scan.clone());
+        *guard = Some(CachedScan {
+            result: scan.clone(),
+            created_at: Instant::now(),
+        });
     }
 }
 
@@ -89,11 +105,23 @@ pub struct CleanupCategory {
     pub size_bytes: u64,
     pub file_count: u64,
     pub paths: Vec<PathDetail>,
+    pub risk_level: CleanupRisk,
+    pub default_selected: bool,
+    pub min_age_days: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum CleanupRisk {
+    Safe,
+    Caution,
+    Advanced,
 }
 
 #[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanResult {
+    pub scan_id: String,
     pub categories: Vec<CleanupCategory>,
     pub total_size_bytes: u64,
     pub total_file_count: u64,
@@ -137,8 +165,11 @@ pub struct CleanupProgressEvent {
 #[derive(Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CleanArgs {
+    pub scan_id: String,
     pub category_ids: Vec<String>,
     pub excluded_paths: Vec<String>,
+    pub confirm_caution: bool,
+    pub confirm_advanced: bool,
 }
 
 #[derive(Debug, Deserialize, specta::Type)]
@@ -153,9 +184,14 @@ pub struct LargeFileScanArgs {
 #[specta::specta]
 pub async fn scan_cleanup() -> Result<ScanResult, IpcError> {
     let _guard = CleanupTaskGuard::acquire(CleanupTaskKind::Scanning)?;
-    let result = tokio::task::spawn_blocking(do_scan)
+    let mut result = tokio::task::spawn_blocking(do_scan)
         .await
         .map_err(|e| crate::error::AppError::Other(format!("cleanup scan join: {e}")))?;
+    result.scan_id = format!(
+        "{}-{}",
+        chrono::Local::now().timestamp_millis(),
+        NEXT_SCAN_ID.fetch_add(1, Ordering::Relaxed)
+    );
     store_scan(&result);
     Ok(result)
 }
@@ -166,11 +202,40 @@ pub async fn clean_categories(app: AppHandle, args: CleanArgs) -> Result<CleanRe
     let _guard = CleanupTaskGuard::acquire(CleanupTaskKind::Cleaning)?;
     let ids = args.category_ids;
     let excluded = args.excluded_paths;
-    let scan = cached_scan();
+    let scan = cached_scan(&args.scan_id).ok_or_else(|| {
+        crate::error::AppError::Invalid("扫描结果已过期，请重新扫描后再清理".into())
+    })?;
+    let selected_categories: Vec<&CleanupCategory> = scan
+        .categories
+        .iter()
+        .filter(|category| ids.iter().any(|id| id == &category.id))
+        .collect();
+    validate_risk_confirmation(
+        selected_categories
+            .iter()
+            .map(|category| category.risk_level),
+        args.confirm_caution,
+        args.confirm_advanced,
+    )?;
     let result = tokio::task::spawn_blocking(move || do_clean(&app, scan, &ids, &excluded))
         .await
         .map_err(|e| crate::error::AppError::Other(format!("cleanup clean join: {e}")))?;
     Ok(result)
+}
+
+fn validate_risk_confirmation(
+    risks: impl IntoIterator<Item = CleanupRisk>,
+    confirm_caution: bool,
+    confirm_advanced: bool,
+) -> Result<(), IpcError> {
+    let risks: Vec<_> = risks.into_iter().collect();
+    if !confirm_advanced && risks.contains(&CleanupRisk::Advanced) {
+        return Err(crate::error::AppError::Invalid("高级维护项未确认".into()).into());
+    }
+    if !confirm_caution && risks.contains(&CleanupRisk::Caution) {
+        return Err(crate::error::AppError::Invalid("谨慎清理项未确认".into()).into());
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -311,9 +376,43 @@ fn do_scan() -> ScanResult {
     let total_file_count = categories.iter().map(|c| c.file_count).sum();
 
     ScanResult {
+        scan_id: String::new(),
         categories,
         total_size_bytes,
         total_file_count,
+    }
+}
+
+#[derive(Clone, Copy)]
+struct CleanupPolicy {
+    risk: CleanupRisk,
+    default_selected: bool,
+    min_age_days: Option<u32>,
+}
+
+fn cleanup_policy(id: &str) -> CleanupPolicy {
+    match id {
+        "win-temp" => CleanupPolicy {
+            risk: CleanupRisk::Safe,
+            default_selected: true,
+            min_age_days: Some(7),
+        },
+        "installer-cache" => CleanupPolicy {
+            risk: CleanupRisk::Safe,
+            default_selected: true,
+            min_age_days: Some(14),
+        },
+        "browser-cache" | "app-cache" | "notion-cache" | "thumbnails" | "shader-cache"
+        | "wer-cache" => CleanupPolicy {
+            risk: CleanupRisk::Caution,
+            default_selected: false,
+            min_age_days: None,
+        },
+        _ => CleanupPolicy {
+            risk: CleanupRisk::Advanced,
+            default_selected: false,
+            min_age_days: None,
+        },
     }
 }
 
@@ -332,18 +431,23 @@ fn scan_dir_category(
         if !dir.exists() {
             continue;
         }
-        let canonical = dir.to_string_lossy().to_string();
-        if !seen.insert(canonical.clone()) {
+        let policy = cleanup_policy(id);
+        let canonical_dir = match safe_cleanup_root(dir) {
+            Some(path) => path,
+            None => continue,
+        };
+        let canonical = canonical_dir.to_string_lossy().to_lowercase();
+        if !seen.insert(canonical) {
             continue;
         }
-        let (s, c) = dir_size(dir);
+        let (s, c) = dir_size_with_min_age(&canonical_dir, policy.min_age_days);
         if s == 0 {
             continue;
         }
         size += s;
         count += c;
         paths.push(PathDetail {
-            path: canonical,
+            path: canonical_dir.to_string_lossy().to_string(),
             size_bytes: s,
             file_count: c,
         });
@@ -353,6 +457,7 @@ fn scan_dir_category(
         return None;
     }
 
+    let policy = cleanup_policy(id);
     Some(CleanupCategory {
         id: id.to_string(),
         name: name.to_string(),
@@ -360,6 +465,9 @@ fn scan_dir_category(
         size_bytes: size,
         file_count: count,
         paths,
+        risk_level: policy.risk,
+        default_selected: policy.default_selected,
+        min_age_days: policy.min_age_days,
     })
 }
 
@@ -447,6 +555,9 @@ fn scan_rust_targets() -> CleanupCategory {
         size_bytes: size,
         file_count: count,
         paths,
+        risk_level: cleanup_policy("rust-target").risk,
+        default_selected: cleanup_policy("rust-target").default_selected,
+        min_age_days: cleanup_policy("rust-target").min_age_days,
     }
 }
 
@@ -532,6 +643,9 @@ fn scan_node_cache() -> Option<CleanupCategory> {
         size_bytes: size,
         file_count: count,
         paths,
+        risk_level: cleanup_policy("node-cache").risk,
+        default_selected: cleanup_policy("node-cache").default_selected,
+        min_age_days: cleanup_policy("node-cache").min_age_days,
     })
 }
 
@@ -606,6 +720,9 @@ fn scan_python_cache() -> Option<CleanupCategory> {
         size_bytes: size,
         file_count: count,
         paths,
+        risk_level: cleanup_policy("python-cache").risk,
+        default_selected: cleanup_policy("python-cache").default_selected,
+        min_age_days: cleanup_policy("python-cache").min_age_days,
     })
 }
 
@@ -642,6 +759,9 @@ fn scan_go_cache() -> Option<CleanupCategory> {
         size_bytes: size,
         file_count: count,
         paths,
+        risk_level: cleanup_policy("go-cache").risk,
+        default_selected: cleanup_policy("go-cache").default_selected,
+        min_age_days: cleanup_policy("go-cache").min_age_days,
     })
 }
 
@@ -721,6 +841,9 @@ fn scan_browser_cache() -> Option<CleanupCategory> {
         size_bytes: size,
         file_count: count,
         paths,
+        risk_level: cleanup_policy("browser-cache").risk,
+        default_selected: cleanup_policy("browser-cache").default_selected,
+        min_age_days: cleanup_policy("browser-cache").min_age_days,
     })
 }
 
@@ -776,7 +899,7 @@ fn scan_app_cache() -> Option<CleanupCategory> {
 
     for app in ["Code", "Cursor", "VSCodium"] {
         let root = local.join(app);
-        for name in ["Cache", "CachedData", "Code Cache", "GPUCache", "Crashpad"].iter() {
+        for name in ["Cache", "Code Cache", "GPUCache", "Crashpad"].iter() {
             let path = if *name == "Crashpad" {
                 root.join(name).join("reports")
             } else {
@@ -789,7 +912,7 @@ fn scan_app_cache() -> Option<CleanupCategory> {
     if let Some(roaming) = roaming {
         for app in ["Code", "Cursor", "VSCodium", "Slack"] {
             let root = roaming.join(app);
-            for name in ["Cache", "CachedData", "Code Cache", "GPUCache"].iter() {
+            for name in ["Cache", "Code Cache", "GPUCache"].iter() {
                 push_cache_dir(&mut cache_dirs, root.join(name));
             }
         }
@@ -963,11 +1086,10 @@ impl<'a> CleanProgress<'a> {
 
 fn do_clean(
     app: &AppHandle,
-    scan: Option<ScanResult>,
+    scan: ScanResult,
     category_ids: &[String],
     excluded_paths: &[String],
 ) -> CleanResult {
-    let scan = scan.unwrap_or_else(do_scan);
     let mut errors = Vec::new();
     let selected_ids: std::collections::HashSet<&str> =
         category_ids.iter().map(|id| id.as_str()).collect();
@@ -994,6 +1116,22 @@ fn do_clean(
     progress.emit(true, false);
 
     for cat in selected_categories {
+        let blockers = running_process_blockers(&cat.id);
+        if !blockers.is_empty() {
+            errors.push(format!(
+                "{} 已跳过，请先关闭正在使用缓存的程序: {}",
+                cat.name,
+                blockers.join(", ")
+            ));
+            let skipped = cat
+                .paths
+                .iter()
+                .filter(|detail| !excluded_set.contains(detail.path.as_str()))
+                .map(|detail| detail.file_count.max(1))
+                .sum();
+            progress.skip(skipped);
+            continue;
+        }
         match cat.id.as_str() {
             // 回收站：必须走 SHEmptyRecycleBinW，直接遍历删除会破坏 $Recycle.Bin 结构
             "recycle-bin" => match empty_recycle_bin() {
@@ -1013,13 +1151,13 @@ fn do_clean(
                     if excluded_set.contains(detail.path.as_str()) {
                         continue;
                     }
-                    let path = Path::new(&detail.path);
-                    if !path.exists() {
+                    let Some(path) = revalidate_cleanup_root(&detail.path) else {
+                        errors.push(format!("路径安全校验失败: {}", detail.path));
                         progress.skip(detail.file_count.max(1));
                         continue;
-                    }
+                    };
                     progress.set_current(&cat.name, Some(&detail.path));
-                    match remove_thumbnail_files_with_progress(path, &mut progress) {
+                    match remove_thumbnail_files_with_progress(&path, &mut progress) {
                         Ok((_s, _c)) => {}
                         Err(e) => {
                             errors.push(format!("{}: {}", detail.path, e));
@@ -1035,18 +1173,18 @@ fn do_clean(
                     if excluded_set.contains(detail.path.as_str()) {
                         continue;
                     }
-                    let path = Path::new(&detail.path);
-                    if !path.exists() {
+                    let Some(path) = revalidate_cleanup_root(&detail.path) else {
+                        errors.push(format!("路径安全校验失败: {}", detail.path));
                         progress.skip(detail.file_count.max(1));
                         continue;
-                    }
+                    };
                     progress.set_current(&cat.name, Some(&detail.path));
                     let is_conda_pkgs = path.ends_with("pkgs")
                         && path.to_string_lossy().to_lowercase().contains("conda");
                     let result = if is_conda_pkgs {
-                        remove_conda_archives_with_progress(path, &mut progress)
+                        remove_conda_archives_with_progress(&path, &mut progress)
                     } else {
-                        remove_dir_contents_with_progress(path, &mut progress)
+                        remove_dir_contents_with_progress(&path, &mut progress, None)
                     };
                     match result {
                         Ok((_s, _c)) => {}
@@ -1064,13 +1202,14 @@ fn do_clean(
                     if excluded_set.contains(detail.path.as_str()) {
                         continue;
                     }
-                    let path = Path::new(&detail.path);
-                    if !path.exists() {
+                    let Some(path) = revalidate_cleanup_root(&detail.path) else {
+                        errors.push(format!("路径安全校验失败: {}", detail.path));
                         progress.skip(detail.file_count.max(1));
                         continue;
-                    }
+                    };
                     progress.set_current(&cat.name, Some(&detail.path));
-                    match remove_dir_contents_with_progress(path, &mut progress) {
+                    match remove_dir_contents_with_progress(&path, &mut progress, cat.min_age_days)
+                    {
                         Ok((_s, _c)) => {}
                         Err(e) => {
                             errors.push(format!("{}: {}", detail.path, e));
@@ -1090,25 +1229,59 @@ fn do_clean(
     }
 }
 
+fn running_process_blockers(category_id: &str) -> Vec<String> {
+    let watched: &[&str] = match category_id {
+        "browser-cache" => &["chrome", "msedge", "firefox", "brave", "opera"],
+        "webview-cache" => &["msedgewebview2"],
+        "app-cache" => &[
+            "discord", "slack", "teams", "ms-teams", "code", "cursor", "vscodium",
+        ],
+        "notion-cache" => &["notion"],
+        _ => return Vec::new(),
+    };
+    let system = sysinfo::System::new_all();
+    let mut found = std::collections::BTreeSet::new();
+    for process in system.processes().values() {
+        let name = process.name().to_string_lossy().to_lowercase();
+        let stem = name.trim_end_matches(".exe");
+        if watched.iter().any(|candidate| stem == *candidate) {
+            found.insert(name);
+        }
+    }
+    found.into_iter().collect()
+}
+
 fn remove_dir_contents_with_progress(
     dir: &Path,
     progress: &mut CleanProgress<'_>,
+    min_age_days: Option<u32>,
 ) -> std::io::Result<(u64, u64)> {
     let mut freed = 0u64;
     let mut count = 0u64;
 
+    let cutoff = min_age_days.and_then(|days| {
+        SystemTime::now().checked_sub(Duration::from_secs(days as u64 * 24 * 60 * 60))
+    });
     let entries: Vec<_> = std::fs::read_dir(dir)?.flatten().collect();
     for entry in entries {
         let path = entry.path();
-        let meta = match entry.metadata() {
+        let meta = match std::fs::symlink_metadata(&path) {
             Ok(m) => m,
             Err(_) => continue,
         };
+        if metadata_is_reparse_point(&meta) {
+            continue;
+        }
         if meta.is_dir() {
-            let (s, c) = remove_dir_tree_with_progress(&path, progress)?;
+            let (s, c) = remove_dir_tree_with_progress(&path, progress, cutoff, 1, 15)?;
             freed += s;
             count += c;
         } else {
+            if cutoff
+                .is_some_and(|cutoff| meta.modified().map_or(true, |modified| modified > cutoff))
+            {
+                continue;
+            }
             let size = meta.len();
             if std::fs::remove_file(&path).is_ok() {
                 freed += size;
@@ -1126,21 +1299,36 @@ fn remove_dir_contents_with_progress(
 fn remove_dir_tree_with_progress(
     dir: &Path,
     progress: &mut CleanProgress<'_>,
+    cutoff: Option<SystemTime>,
+    depth: u32,
+    max_depth: u32,
 ) -> std::io::Result<(u64, u64)> {
+    if depth > max_depth {
+        return Ok((0, 0));
+    }
     let mut freed = 0u64;
     let mut count = 0u64;
 
     let entries: Vec<_> = std::fs::read_dir(dir)?.flatten().collect();
     for entry in entries {
         let path = entry.path();
-        let Ok(meta) = entry.metadata() else {
+        let Ok(meta) = std::fs::symlink_metadata(&path) else {
             continue;
         };
+        if metadata_is_reparse_point(&meta) {
+            continue;
+        }
         if meta.is_dir() {
-            let (s, c) = remove_dir_tree_with_progress(&path, progress)?;
+            let (s, c) =
+                remove_dir_tree_with_progress(&path, progress, cutoff, depth + 1, max_depth)?;
             freed += s;
             count += c;
         } else {
+            if cutoff
+                .is_some_and(|cutoff| meta.modified().map_or(true, |modified| modified > cutoff))
+            {
+                continue;
+            }
             let size = meta.len();
             if std::fs::remove_file(&path).is_ok() {
                 freed += size;
@@ -1257,13 +1445,27 @@ fn compact_large_file_results(results: &mut Vec<LargeFile>, limit: usize) {
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 fn dir_size(path: &Path) -> (u64, u64) {
+    dir_size_with_min_age(path, None)
+}
+
+fn dir_size_with_min_age(path: &Path, min_age_days: Option<u32>) -> (u64, u64) {
     let mut size = 0u64;
     let mut count = 0u64;
-    dir_size_recursive(path, &mut size, &mut count, 0, 15);
+    let cutoff = min_age_days.and_then(|days| {
+        SystemTime::now().checked_sub(Duration::from_secs(days as u64 * 24 * 60 * 60))
+    });
+    dir_size_recursive(path, &mut size, &mut count, 0, 15, cutoff);
     (size, count)
 }
 
-fn dir_size_recursive(path: &Path, size: &mut u64, count: &mut u64, depth: u32, max_depth: u32) {
+fn dir_size_recursive(
+    path: &Path,
+    size: &mut u64,
+    count: &mut u64,
+    depth: u32,
+    max_depth: u32,
+    cutoff: Option<SystemTime>,
+) {
     if depth > max_depth {
         return;
     }
@@ -1271,15 +1473,51 @@ fn dir_size_recursive(path: &Path, size: &mut u64, count: &mut u64, depth: u32, 
         return;
     };
     for entry in entries.flatten() {
-        let Ok(meta) = entry.metadata() else {
+        let Ok(meta) = std::fs::symlink_metadata(entry.path()) else {
             continue;
         };
+        if metadata_is_reparse_point(&meta) {
+            continue;
+        }
         if meta.is_dir() {
-            dir_size_recursive(&entry.path(), size, count, depth + 1, max_depth);
+            dir_size_recursive(&entry.path(), size, count, depth + 1, max_depth, cutoff);
         } else {
+            if cutoff
+                .is_some_and(|cutoff| meta.modified().map_or(true, |modified| modified > cutoff))
+            {
+                continue;
+            }
             *size += meta.len();
             *count += 1;
         }
+    }
+}
+
+fn safe_cleanup_root(path: &Path) -> Option<PathBuf> {
+    let meta = std::fs::symlink_metadata(path).ok()?;
+    if !meta.is_dir() || metadata_is_reparse_point(&meta) {
+        return None;
+    }
+    std::fs::canonicalize(path).ok()
+}
+
+fn revalidate_cleanup_root(expected: &str) -> Option<PathBuf> {
+    let path = Path::new(expected);
+    let canonical = safe_cleanup_root(path)?;
+    let expected_canonical = std::fs::canonicalize(path).ok()?;
+    (canonical == expected_canonical).then_some(canonical)
+}
+
+fn metadata_is_reparse_point(meta: &std::fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    }
+    #[cfg(not(windows))]
+    {
+        meta.file_type().is_symlink()
     }
 }
 
@@ -1422,6 +1660,9 @@ fn scan_thumbnail_cache(dir: &Path) -> Option<CleanupCategory> {
             size_bytes: size,
             file_count: count,
         }],
+        risk_level: cleanup_policy("thumbnails").risk,
+        default_selected: cleanup_policy("thumbnails").default_selected,
+        min_age_days: cleanup_policy("thumbnails").min_age_days,
     })
 }
 
@@ -1501,5 +1742,74 @@ fn empty_recycle_bin() -> Result<(), String> {
     match result {
         Ok(()) => Ok(()),
         Err(e) => Err(format!("SHEmptyRecycleBinW failed: {}", e)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::{self, File, FileTimes};
+    use std::io::Write;
+
+    fn temp_root(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "syspulse-cleanup-test-{name}-{}-{}",
+            std::process::id(),
+            NEXT_SCAN_ID.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    #[test]
+    fn only_safe_categories_are_selected_by_default() {
+        assert!(cleanup_policy("win-temp").default_selected);
+        assert!(cleanup_policy("installer-cache").default_selected);
+        for id in [
+            "browser-cache",
+            "app-cache",
+            "webview-cache",
+            "rust-target",
+            "shader-cache",
+        ] {
+            assert!(!cleanup_policy(id).default_selected, "{id}");
+        }
+    }
+
+    #[test]
+    fn age_filter_excludes_recent_files() {
+        let root = temp_root("age");
+        fs::create_dir_all(&root).unwrap();
+        let recent = root.join("recent.tmp");
+        let old = root.join("old.tmp");
+        fs::write(&recent, vec![1u8; 11]).unwrap();
+        let mut file = File::create(&old).unwrap();
+        file.write_all(&vec![2u8; 17]).unwrap();
+        file.set_times(
+            FileTimes::new()
+                .set_modified(SystemTime::now() - Duration::from_secs(8 * 24 * 60 * 60)),
+        )
+        .unwrap();
+
+        assert_eq!(dir_size_with_min_age(&root, Some(7)), (17, 1));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cleanup_root_must_be_a_real_directory() {
+        let root = temp_root("root");
+        fs::write(&root, b"not a directory").unwrap();
+        assert!(safe_cleanup_root(&root).is_none());
+        fs::remove_file(root).unwrap();
+    }
+
+    #[test]
+    fn caution_category_requires_explicit_confirmation() {
+        assert!(validate_risk_confirmation([CleanupRisk::Caution], false, false).is_err());
+        assert!(validate_risk_confirmation([CleanupRisk::Caution], true, false).is_ok());
+    }
+
+    #[test]
+    fn advanced_category_requires_explicit_confirmation() {
+        assert!(validate_risk_confirmation([CleanupRisk::Advanced], true, false).is_err());
+        assert!(validate_risk_confirmation([CleanupRisk::Advanced], false, true).is_ok());
     }
 }

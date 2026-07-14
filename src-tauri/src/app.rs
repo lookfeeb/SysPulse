@@ -2,7 +2,7 @@ use crate::config::ConfigManager;
 use crate::error::Result;
 use crate::hw::{HwClient, HwSamplerHandle, HwSnapshot};
 use crate::ipc::commands::window_cmd::{
-    apply_overlay_config, spawn_taskbar_overlay_z_order_watchdog,
+    apply_overlay_config, spawn_overlay_tooltip_watchdog, spawn_taskbar_overlay_z_order_watchdog,
 };
 use crate::ipc::events::{emit_config_changed, emit_overlay_config_changed, emit_stats};
 use crate::monitor::Snapshot;
@@ -174,6 +174,7 @@ pub fn setup(app: &mut App) -> std::result::Result<(), Box<dyn std::error::Error
         apply_initial_window_state(app, &state.config.snapshot());
     }
     spawn_taskbar_overlay_z_order_watchdog(app.handle().clone());
+    spawn_overlay_tooltip_watchdog(app.handle().clone());
 
     #[cfg(windows)]
     {

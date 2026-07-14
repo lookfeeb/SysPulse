@@ -41,11 +41,7 @@ export default function DashboardPage() {
   return (
     <div>
       <div
-        style={{
-          display: "grid",
-          gap: 16,
-          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-        }}
+        className="dashboard-metric-grid"
       >
         <MetricCard
           title="CPU"
@@ -84,17 +80,21 @@ export default function DashboardPage() {
             `频率：${fmtFreq(hw?.memory?.frequencyMhz)}`,
           ]}
         />
+        <GpuCard gpus={gpus} />
         <NetworkCard
           down={net.bytesRecvPerSec}
           up={net.bytesSentPerSec}
           totalDown={net.bytesRecvTotal}
           totalUp={net.bytesSentTotal}
         />
-        <GpuCard gpus={gpus} />
         <DiskCard disks={disks} />
       </div>
 
-      <Card title={t("dashboard.live60s")} style={{ marginTop: 16, borderRadius: 10 }}>
+      <Card
+        className="dashboard-history-card"
+        title={t("dashboard.live60s")}
+        style={{ marginTop: 16, borderRadius: 12 }}
+      >
         <NetworkSparkline history={history} hwHistory={hwHistory} />
       </Card>
     </div>
@@ -118,7 +118,11 @@ function MetricCard({
 }) {
   return (
     <Tooltip title={joinLines(details)}>
-      <Card styles={{ body: { minWidth: 0 } }} style={{ borderRadius: 10 }}>
+      <Card
+        className="dashboard-card dashboard-card--third"
+        styles={{ body: { minWidth: 0 } }}
+        style={{ borderRadius: 10 }}
+      >
         <Statistic title={title} value={value} precision={precision} suffix={suffix} />
         <CardLines lines={lines} />
       </Card>
@@ -146,7 +150,11 @@ function NetworkCard({
         `上行累计：${fmtBytes(totalUp)}`,
       ])}
     >
-      <Card styles={{ body: { minWidth: 0 } }} style={{ borderRadius: 10 }}>
+      <Card
+        className="dashboard-card dashboard-card--half"
+        styles={{ body: { minWidth: 0 } }}
+        style={{ borderRadius: 10 }}
+      >
         <Typography.Text type="secondary">网速</Typography.Text>
         <SpeedRow>
           <SpeedValue label="↓" value={fmtSpeed(down)} color="#3388cc" />
@@ -183,7 +191,11 @@ function GpuCard({ gpus }: { gpus: GpuHw[] }) {
         ...gpus.map((gpu) => gpu.name || `GPU ${gpu.index}`),
       ])}
     >
-      <Card styles={{ body: { minWidth: 0 } }} style={{ borderRadius: 10 }}>
+      <Card
+        className="dashboard-card dashboard-card--third"
+        styles={{ body: { minWidth: 0 } }}
+        style={{ borderRadius: 10 }}
+      >
         <Statistic title="显卡" value={usage ?? 0} precision={1} suffix="%" />
         <CardLines
           lines={[
@@ -235,7 +247,11 @@ function DiskCard({ disks }: { disks: DiskHw[] }) {
         ),
       ])}
     >
-      <Card styles={{ body: { minWidth: 0 } }} style={{ borderRadius: 10 }}>
+      <Card
+        className="dashboard-card dashboard-card--half"
+        styles={{ body: { minWidth: 0 } }}
+        style={{ borderRadius: 10 }}
+      >
         <Typography.Text type="secondary">硬盘</Typography.Text>
         <SpeedRow>
           <SpeedValue label="读" value={fmtSpeed(read)} color="#3388cc" />
@@ -253,18 +269,7 @@ function DiskCard({ disks }: { disks: DiskHw[] }) {
 }
 
 function SpeedRow({ children }: { children: ReactNode }) {
-  return (
-    <div
-      style={{
-        columnGap: 12,
-        display: "grid",
-        gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
-        marginTop: 4,
-      }}
-    >
-      {children}
-    </div>
-  );
+  return <div className="dashboard-speed-row">{children}</div>;
 }
 
 function SpeedValue({
@@ -277,17 +282,14 @@ function SpeedValue({
   color: string;
 }) {
   return (
-    <div style={{ minWidth: 0 }}>
-      <Typography.Text type="secondary">{label}</Typography.Text>
+    <div className="dashboard-speed-value">
+      <Typography.Text className="dashboard-speed-label" type="secondary">
+        {label}
+      </Typography.Text>
       <div
+        className="dashboard-speed-number"
         style={{
           color,
-          fontSize: 22,
-          lineHeight: 1.3,
-          maxWidth: "100%",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
         }}
         title={value}
       >
@@ -327,6 +329,7 @@ type SparklineSeries = {
   values: Array<number | null | undefined>;
   format: (value: number) => string;
   unit: "speed" | "percent" | "temp";
+  axis: "left" | "right";
 };
 
 function latestSeriesValue(
@@ -368,6 +371,11 @@ function niceTickMax(rawMax: number, unit: SparklineSeries["unit"]): number {
   return Math.ceil(rawMax / GB) * GB;
 }
 
+function historyTimeLabel(index: number, maxLen: number) {
+  const secondsAgo = Math.round(((maxLen - 1 - index) / Math.max(1, maxLen - 1)) * 60);
+  return secondsAgo <= 0 ? "现在" : `${secondsAgo} 秒前`;
+}
+
 function NetworkSparkline({
   history,
   hwHistory,
@@ -375,20 +383,7 @@ function NetworkSparkline({
   history: Snapshot[];
   hwHistory: HwSnapshot[];
 }) {
-  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
-  const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(() => new Set());
-
-  // 画布尺寸（逻辑坐标）
-  const W = 800;
-  const H = 180;
-  const PAD_LEFT = 56;  // Y 轴刻度区域（左：网速）
-  const PAD_BOTTOM = 24; // X 轴刻度区域
-  const PAD_TOP = 8;
-  const PAD_RIGHT = 50; // Y 轴刻度区域（右：温度/百分比）
-  const CHART_W = W - PAD_LEFT - PAD_RIGHT;
-  const CHART_H = H - PAD_TOP - PAD_BOTTOM;
-
-  const series: SparklineSeries[] = [
+  const networkSeries: SparklineSeries[] = [
     {
       key: "down",
       label: "下行",
@@ -396,6 +391,7 @@ function NetworkSparkline({
       unit: "speed",
       values: history.map((s) => s.network.total.bytesRecvPerSec),
       format: fmtSpeed,
+      axis: "left",
     },
     {
       key: "up",
@@ -404,7 +400,10 @@ function NetworkSparkline({
       unit: "speed",
       values: history.map((s) => s.network.total.bytesSentPerSec),
       format: fmtSpeed,
+      axis: "left",
     },
+  ];
+  const systemSeries: SparklineSeries[] = [
     {
       key: "cpu-temp",
       label: "CPU 温度",
@@ -412,6 +411,7 @@ function NetworkSparkline({
       unit: "temp",
       values: hwHistory.map((s) => s.cpu?.packageTempC),
       format: fmtTemp,
+      axis: "left",
     },
     {
       key: "gpu-temp",
@@ -420,6 +420,7 @@ function NetworkSparkline({
       unit: "temp",
       values: hwHistory.map((s) => maxValid((s.gpus ?? []).map((gpu) => gpu.tempC))),
       format: fmtTemp,
+      axis: "left",
     },
     {
       key: "mem",
@@ -428,8 +429,49 @@ function NetworkSparkline({
       unit: "percent",
       values: history.map((s) => s.memory.usedPercent),
       format: (value) => `${value.toFixed(0)}%`,
+      axis: "right",
     },
   ];
+
+  return (
+    <div className="dashboard-history-grid">
+      <HistoryChart
+        chartId="network"
+        title="网络流量"
+        subtitle="上下行使用同一速度刻度"
+        series={networkSeries}
+      />
+      <HistoryChart
+        chartId="system"
+        title="系统状态"
+        subtitle="左轴温度 · 右轴内存占用"
+        series={systemSeries}
+      />
+    </div>
+  );
+}
+
+function HistoryChart({
+  chartId,
+  title,
+  subtitle,
+  series,
+}: {
+  chartId: string;
+  title: string;
+  subtitle: string;
+  series: SparklineSeries[];
+}) {
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+  const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(() => new Set());
+  const W = 720;
+  const H = 210;
+  const PAD_LEFT = 58;
+  const PAD_BOTTOM = 26;
+  const PAD_TOP = 12;
+  const PAD_RIGHT = series.some((item) => item.axis === "right") ? 42 : 12;
+  const CHART_W = W - PAD_LEFT - PAD_RIGHT;
+  const CHART_H = H - PAD_TOP - PAD_BOTTOM;
 
   const availableSeries = series.filter((item) =>
     item.values.some((value) => value != null && Number.isFinite(value)),
@@ -439,9 +481,10 @@ function NetworkSparkline({
 
   if (maxLen < 2) {
     return (
-      <Typography.Text type="secondary">
-        样本累积中…(已有 {maxLen} 个采样点)
-      </Typography.Text>
+      <section className="dashboard-history-panel">
+        <div className="dashboard-history-heading"><strong>{title}</strong><span>{subtitle}</span></div>
+        <div className="dashboard-history-empty">样本累积中…（已有 {maxLen} 个采样点）</div>
+      </section>
     );
   }
 
@@ -456,9 +499,16 @@ function NetworkSparkline({
     });
   };
 
-  // 每条曲线独立 Y 轴（归一化到 0~1，再映射到图表高度）
+  const axisMax = (axis: "left" | "right") => {
+    const axisSeries = visibleSeries.filter((item) => item.axis === axis);
+    const unit = axisSeries[0]?.unit ?? "percent";
+    return niceTickMax(Math.max(1, ...axisSeries.map((item) => seriesMax(item.values))), unit);
+  };
+  const leftMax = axisMax("left");
+  const rightMax = axisMax("right");
+
   const toY = (value: number, seriesItem: SparklineSeries) => {
-    const max = niceTickMax(seriesMax(seriesItem.values), seriesItem.unit);
+    const max = seriesItem.axis === "right" ? rightMax : leftMax;
     const ratio = Math.min(1, Math.max(0, value / max));
     return PAD_TOP + CHART_H - ratio * CHART_H;
   };
@@ -477,33 +527,24 @@ function NetworkSparkline({
     return parts.join(" ");
   };
 
-  // Y 轴刻度（基于第一条可见 speed 系列，或 temp，或 percent）
-  const primarySeries = visibleSeries.find((s) => s.unit === "speed")
-    ?? visibleSeries.find((s) => s.unit === "temp")
-    ?? visibleSeries[0];
+  const primarySeries = visibleSeries.find((item) => item.axis === "left");
+  const secondarySeries = visibleSeries.find((item) => item.axis === "right");
 
   const yTicks = primarySeries
     ? (() => {
-        const max = niceTickMax(seriesMax(primarySeries.values), primarySeries.unit);
         const count = 4;
         return Array.from({ length: count + 1 }, (_, i) => {
-          const v = (max * i) / count;
+          const v = (leftMax * i) / count;
           return { value: v, y: PAD_TOP + CHART_H - (i / count) * CHART_H };
         });
       })()
     : [];
 
-  // 右侧 Y 轴刻度（温度或百分比）
-  const secondarySeries = visibleSeries.find((s) => s.unit === "temp")
-    ?? visibleSeries.find((s) => s.unit === "percent");
-  const hasSecondaryAxis = secondarySeries && secondarySeries !== primarySeries;
-
-  const yTicksRight = hasSecondaryAxis
+  const yTicksRight = secondarySeries
     ? (() => {
-        const max = niceTickMax(seriesMax(secondarySeries.values), secondarySeries.unit);
         const count = 4;
         return Array.from({ length: count + 1 }, (_, i) => {
-          const v = (max * i) / count;
+          const v = (rightMax * i) / count;
           return { value: v, y: PAD_TOP + CHART_H - (i / count) * CHART_H };
         });
       })()
@@ -540,70 +581,51 @@ function NetworkSparkline({
   };
 
   return (
-    <div style={{ position: "relative" }}>
-      {/* 图例 */}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px", marginBottom: 8 }}>
+    <section className="dashboard-history-panel">
+      <div className="dashboard-history-heading">
+        <div><strong>{title}</strong><span>{subtitle}</span></div>
+        <span className="dashboard-history-window">60 秒</span>
+      </div>
+      <div className="dashboard-history-legend">
         {availableSeries.map((item) => {
           const hidden = hiddenSeries.has(item.key);
+          const latest = latestSeriesValue(item.values, maxLen - 1, maxLen);
           return (
-            <span
+            <button
+              type="button"
               key={item.key}
               onClick={() => toggleSeries(item.key)}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 4,
-                cursor: "pointer",
-                userSelect: "none",
-                opacity: hidden ? 0.35 : 1,
-              }}
+              className={`dashboard-history-legend-item${hidden ? " is-hidden" : ""}`}
               title={hidden ? "点击显示" : "点击隐藏"}
             >
-              <span
-                style={{
-                  display: "inline-block",
-                  width: 20,
-                  height: 2,
-                  background: item.color,
-                  borderRadius: 1,
-                  verticalAlign: "middle",
-                  textDecoration: hidden ? "line-through" : "none",
-                }}
-              />
-              <Typography.Text
-                style={{
-                  color: item.color,
-                  fontSize: 12,
-                  textDecoration: hidden ? "line-through" : "none",
-                }}
-              >
-                {item.label}
-              </Typography.Text>
-            </span>
+              <span className="dashboard-history-dot" style={{ background: item.color }} />
+              <span>{item.label}</span>
+              <b style={{ color: item.color }}>{latest == null ? "--" : item.format(latest)}</b>
+            </button>
           );
         })}
       </div>
 
       {visibleSeries.length === 0 && (
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          点击上方图例显示曲线
-        </Typography.Text>
+        <div className="dashboard-history-empty">点击上方图例显示曲线</div>
       )}
 
-      <svg
-        viewBox={`0 0 ${W} ${H}`}
-        style={{ width: "100%", height: 220, display: "block" }}
-        onMouseMove={(event) => updateHover(event.clientX, event.currentTarget)}
-        onMouseLeave={() => setHoverIndex(null)}
-      >
+      <div className="dashboard-history-chart">
+        <svg viewBox={`0 0 ${W} ${H}`} onMouseMove={(event) => updateHover(event.clientX, event.currentTarget)} onMouseLeave={() => setHoverIndex(null)}>
+        <defs>
+          <linearGradient id={`${chartId}-surface`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#f8fbff" />
+            <stop offset="100%" stopColor="#f3f7fb" />
+          </linearGradient>
+        </defs>
         {/* 背景 */}
         <rect
           x={PAD_LEFT}
           y={PAD_TOP}
           width={CHART_W}
           height={CHART_H}
-          fill="#f8fafc"
-          rx={4}
+          fill={`url(#${chartId}-surface)`}
+          rx={8}
         />
 
         {/* Y 轴网格线 + 左侧刻度（网速） */}
@@ -640,7 +662,7 @@ function NetworkSparkline({
               y={tick.y + 4}
               textAnchor="start"
               fontSize={9}
-              fill={secondarySeries?.unit === "temp" ? "#d946ef" : "#64748b"}
+              fill="#64748b"
               fontFamily="system-ui, sans-serif"
             >
               {secondarySeries
@@ -681,7 +703,8 @@ function NetworkSparkline({
             d={toPath(item)}
             stroke={item.color}
             fill="none"
-            strokeWidth={1.8}
+            strokeWidth={2.2}
+            vectorEffect="non-scaling-stroke"
             strokeLinecap="round"
             strokeLinejoin="round"
           />
@@ -729,40 +752,20 @@ function NetworkSparkline({
           strokeWidth={1}
           rx={4}
         />
-      </svg>
+        </svg>
 
-      {/* 悬停 Tooltip */}
       {hover && (
-        <div
-          style={{
-            background: "rgba(255,255,255,0.98)",
-            border: "1px solid rgba(15,23,42,0.1)",
-            borderRadius: 8,
-            boxShadow: "0 4px 16px rgba(15,23,42,0.12)",
-            left: `min(calc(${((hover.x) / W) * 100}% + 8px), calc(100% - 160px))`,
-            padding: "8px 10px",
-            pointerEvents: "none",
-            position: "absolute",
-            top: 32,
-            minWidth: 140,
-            zIndex: 1,
-          }}
-        >
-          <Typography.Text strong style={{ display: "block", fontSize: 11, color: "#64748b", marginBottom: 4 }}>
-            最近 60 秒
-          </Typography.Text>
+        <div className="dashboard-history-tooltip" style={{ left: `min(calc(${(hover.x / W) * 100}% + 10px), calc(100% - 178px))` }}>
+          <strong>{historyTimeLabel(hoverIndex!, maxLen)}</strong>
           {hover.lines.map((item) => (
-            <div key={item.key} style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-              <Typography.Text style={{ color: item.color, fontSize: 12 }}>
-                {item.label}
-              </Typography.Text>
-              <Typography.Text style={{ color: item.color, fontSize: 12, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
-                {item.format(item.value)}
-              </Typography.Text>
+            <div key={item.key}>
+              <span><i style={{ background: item.color }} />{item.label}</span>
+              <b style={{ color: item.color }}>{item.format(item.value)}</b>
             </div>
           ))}
         </div>
       )}
-    </div>
+      </div>
+    </section>
   );
 }

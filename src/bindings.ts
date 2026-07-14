@@ -47,6 +47,9 @@ async resizeOverlay(args: ResizeArgs) : Promise<null> {
 async dockOverlayToTaskbar() : Promise<null> {
     return await TAURI_INVOKE("dock_overlay_to_taskbar");
 },
+async registerOverlayTooltipRegions(args: OverlayTooltipRegionsArgs) : Promise<null> {
+    return await TAURI_INVOKE("register_overlay_tooltip_regions", { args });
+},
 async getHwSnapshot() : Promise<HwSnapshot | null> {
     return await TAURI_INVOKE("get_hw_snapshot");
 },
@@ -103,9 +106,10 @@ async scanLargeFiles(args: LargeFileScanArgs) : Promise<LargeFileScanResult> {
 
 export type AppConfig = { schemaVersion: number; general: GeneralConfig; overlay: OverlayConfig; network: NetworkConfig; history: HistoryConfig }
 export type AppInfo = { name: string; version: string; os: string; arch: string; configDir: string; logsDir: string; dbFile: string }
-export type CleanArgs = { categoryIds: string[]; excludedPaths: string[] }
+export type CleanArgs = { scanId: string; categoryIds: string[]; excludedPaths: string[]; confirmCaution: boolean; confirmAdvanced: boolean }
 export type CleanResult = { freedBytes: number; deletedFiles: number; errors: string[] }
-export type CleanupCategory = { id: string; name: string; description: string; sizeBytes: number; fileCount: number; paths: PathDetail[] }
+export type CleanupCategory = { id: string; name: string; description: string; sizeBytes: number; fileCount: number; paths: PathDetail[]; riskLevel: CleanupRisk; defaultSelected: boolean; minAgeDays: number | null }
+export type CleanupRisk = "safe" | "caution" | "advanced"
 export type CpuHw = { name: string; packageTempC: number | null; perCoreTempsC?: (number | null)[]; perCoreUsage?: number[]; totalUsage: number; frequencyMhz: number | null; powerW: number | null }
 export type CpuSnapshot = { usagePercent: number; perCore: number[] | null; model: string; physicalCores: number }
 export type DailyTraffic = { date: string; iface: string | null; bytesRecv: number; bytesSent: number }
@@ -148,10 +152,12 @@ export type NetworkSnapshot = { interfaces: InterfaceStats[]; total: InterfaceSt
 export type OpenPathArgs = { path: string }
 export type OverlayConfig = { items: OverlayItem[] }
 export type OverlayItem = "net-down" | "net-up" | "cpu" | "cpu-freq" | "mem" | "disk-read" | "disk-write" | "gpu" | "cpu-temp" | "gpu-temp" | "gpu-usage" | "disk-temp" | "fan-rpm" | "mb-temp"
+export type OverlayTooltipRegion = { key: string; left: number; top: number; right: number; bottom: number }
+export type OverlayTooltipRegionsArgs = { regions: OverlayTooltipRegion[] }
 export type PathDetail = { path: string; sizeBytes: number; fileCount: number }
 export type ResetFanControlArgs = { fanId: string }
 export type ResizeArgs = { width: number; height: number }
-export type ScanResult = { categories: CleanupCategory[]; totalSizeBytes: number; totalFileCount: number }
+export type ScanResult = { scanId: string; categories: CleanupCategory[]; totalSizeBytes: number; totalFileCount: number }
 export type SetConfigArgs = { patch: JsonValue }
 export type SetFanCurveArgs = { fanId: string; curve: FanCurvePoint[] }
 export type SetFanManualArgs = { fanId: string; pwm: number }
