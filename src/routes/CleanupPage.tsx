@@ -189,8 +189,7 @@ export default function CleanupPage() {
 
   const selectedPathCount = categories
     .reduce((sum, cat) => sum + cleanablePaths(cat, selected, excludedPaths).length, 0);
-  const safeDefaultCategories = categories.filter((category) => category.defaultSelected);
-  const selectionStates = safeDefaultCategories.map((cat) => cleanupCategorySelection(cat, selected, excludedPaths));
+  const selectionStates = categories.map((cat) => cleanupCategorySelection(cat, selected, excludedPaths));
   const allSelected = selectionStates.length > 0 && selectionStates.every((state) => state.checked);
   const partiallySelected = selectionStates.some((state) => state.checked || state.indeterminate) && !allSelected;
 
@@ -227,7 +226,7 @@ export default function CleanupPage() {
   };
 
   const toggleAllCategories = () => {
-    setCategoriesChecked(safeDefaultCategories, !allSelected);
+    setCategoriesChecked(categories, !allSelected);
   };
 
   const selectedAdvanced = categories.some(
@@ -435,14 +434,13 @@ export default function CleanupPage() {
 
       <Space style={{ marginBottom: 16 }} wrap>
         {categories.length > 0 && (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-            <Checkbox
-              checked={allSelected}
-              indeterminate={partiallySelected}
-              onChange={toggleAllCategories}
-            />
-            <Text type="secondary" style={{ fontSize: 12 }}>全选安全项</Text>
-          </span>
+          <Checkbox
+            checked={allSelected}
+            indeterminate={partiallySelected}
+            onChange={toggleAllCategories}
+          >
+            <Text type="secondary" style={{ fontSize: 12 }}>全选当前项目</Text>
+          </Checkbox>
         )}
         <Button
           type="primary"
