@@ -28,8 +28,13 @@ pub fn logs_dir() -> PathBuf {
     data_local_dir().join("logs")
 }
 
+pub fn cleanup_hotspots_file() -> PathBuf {
+    data_local_dir().join("cleanup-hotspots-v1.json")
+}
+
 pub fn ensure_dirs() -> std::io::Result<()> {
     std::fs::create_dir_all(config_dir())?;
+    std::fs::create_dir_all(data_local_dir())?;
     std::fs::create_dir_all(logs_dir())?;
     Ok(())
 }

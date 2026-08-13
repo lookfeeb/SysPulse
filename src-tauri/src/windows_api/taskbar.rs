@@ -96,14 +96,9 @@ fn effective_tray_notify_rect(hwnd: HWND) -> Option<PixelRect> {
         let sys_pager = FindWindowExW(hwnd, HWND::default(), w!("SysPager"), PCWSTR::null())
             .ok()
             .and_then(window_rect);
-        let clock = FindWindowExW(
-            hwnd,
-            HWND::default(),
-            w!("TrayClockWClass"),
-            PCWSTR::null(),
-        )
-        .ok()
-        .and_then(window_rect);
+        let clock = FindWindowExW(hwnd, HWND::default(), w!("TrayClockWClass"), PCWSTR::null())
+            .ok()
+            .and_then(window_rect);
 
         let mut effective = tray;
         if let Some(left) = [sys_pager, clock]

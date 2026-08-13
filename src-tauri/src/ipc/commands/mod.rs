@@ -51,6 +51,8 @@ pub fn builder() -> tauri_specta::Builder<tauri::Wry> {
             autostart_cmd::autostart_enable,
             autostart_cmd::autostart_disable,
             cleanup_cmd::scan_cleanup,
+            cleanup_cmd::cancel_cleanup_scan,
+            cleanup_cmd::export_cleanup_scan,
             cleanup_cmd::clean_categories,
             cleanup_cmd::scan_large_files,
         ])
@@ -86,6 +88,8 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         autostart_cmd::autostart_enable,
         autostart_cmd::autostart_disable,
         cleanup_cmd::scan_cleanup,
+        cleanup_cmd::cancel_cleanup_scan,
+        cleanup_cmd::export_cleanup_scan,
         cleanup_cmd::clean_categories,
         cleanup_cmd::scan_large_files,
     ]

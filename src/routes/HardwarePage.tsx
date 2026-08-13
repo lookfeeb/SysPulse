@@ -40,7 +40,7 @@ export default function HardwarePage() {
         <Alert
           type="error"
           showIcon
-          message="hw-helper 不可用"
+          title="hw-helper 不可用"
           description={
             helperReason ||
             "未找到 hw-helper.exe。请在仓库根运行 scripts/build-helper.ps1，然后重启程序。"
@@ -49,16 +49,16 @@ export default function HardwarePage() {
         />
       )}
       {helperStatus === "restarting" && (
-        <Alert type="warning" showIcon message="hw-helper 正在重启…" style={{ borderRadius: 8 }} />
+        <Alert type="warning" showIcon title="hw-helper 正在重启…" style={{ borderRadius: 8 }} />
       )}
       {helperStatus === "starting" && (
-        <Alert type="info" showIcon message="hw-helper 正在启动…" style={{ borderRadius: 8 }} />
+        <Alert type="info" showIcon title="hw-helper 正在启动…" style={{ borderRadius: 8 }} />
       )}
       {fanControl.fuseHold && (
         <Alert
           type="error"
           showIcon
-          message="风扇控制已熔断"
+          title="风扇控制已熔断"
           description={fanControl.fuseReason || "已恢复 BIOS 控制，温度下降后可重新启用。"}
           action={
             <Typography.Link onClick={() => void resetAllFans()}>

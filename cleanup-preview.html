@@ -1,0 +1,655 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SysPulse · 磁盘清理原型</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #16243a;
+      --muted: #718096;
+      --subtle: #9aa8b9;
+      --line: #e4ebf3;
+      --line-strong: #d5e0ec;
+      --surface: #ffffff;
+      --surface-soft: #f7f9fc;
+      --canvas: #edf2f7;
+      --blue: #2878c8;
+      --blue-deep: #165b9f;
+      --blue-soft: #eaf4ff;
+      --teal: #1b9a86;
+      --teal-soft: #e9f8f4;
+      --amber: #b7791f;
+      --amber-soft: #fff6df;
+      --red: #c94b56;
+      --red-soft: #fff0f1;
+      --shadow-sm: 0 5px 16px rgba(36, 61, 91, .06);
+      --shadow-md: 0 20px 60px rgba(24, 44, 72, .20);
+      --radius: 14px;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--canvas);
+      font-family: "Microsoft YaHei UI", "Segoe UI", system-ui, -apple-system, sans-serif;
+      font-size: 13px;
+      -webkit-font-smoothing: antialiased;
+    }
+    button, input { font: inherit; }
+    button { border: 0; }
+    button:focus-visible, input:focus-visible { outline: 3px solid rgba(40,120,200,.25); outline-offset: 2px; }
+    .icon { width: 17px; height: 17px; display: inline-block; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: 0 0 auto; }
+    .icon.fill { fill: currentColor; stroke: none; }
+
+    .app {
+      display: grid;
+      grid-template-columns: 224px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+    .sidebar {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      padding: 18px 14px;
+      color: #c5d1df;
+      background: #10223a;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      padding: 2px 10px 22px;
+      color: #fff;
+    }
+    .brand-mark {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border-radius: 10px;
+      color: #fff;
+      background: linear-gradient(145deg, #45a5ee, #1c62aa);
+      box-shadow: 0 7px 18px rgba(13, 76, 137, .45);
+    }
+    .brand-mark .icon { width: 20px; height: 20px; }
+    .brand-title { font-size: 15px; font-weight: 700; letter-spacing: .02em; }
+    .brand-caption { margin-top: 2px; color: #8297b0; font-size: 10px; }
+    .nav-label { padding: 10px 12px 7px; color: #6f86a2; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; }
+    .nav { display: grid; gap: 4px; }
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 9px;
+      color: #aebfd1;
+      background: transparent;
+      text-align: left;
+      cursor: pointer;
+      transition: background .16s ease, color .16s ease;
+    }
+    .nav-item:hover { color: #fff; background: rgba(255,255,255,.07); }
+    .nav-item.active { color: #fff; background: #1e568b; box-shadow: inset 3px 0 #65b4f3; }
+    .nav-item .icon { width: 16px; height: 16px; color: #85a7c7; }
+    .nav-item.active .icon { color: #a8d9ff; }
+    .sidebar-footer {
+      margin-top: auto;
+      padding: 13px 12px 4px;
+      border-top: 1px solid rgba(216, 232, 248, .12);
+      color: #8297b0;
+      font-size: 11px;
+      line-height: 1.55;
+    }
+    .sidebar-footer strong { display: block; color: #bdcddd; font-size: 12px; }
+
+    .workspace { min-width: 0; }
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      min-height: 66px;
+      padding: 0 34px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255,255,255,.88);
+      backdrop-filter: blur(16px);
+    }
+    .crumb { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+    .crumb strong { color: var(--ink); font-size: 14px; }
+    .crumb-sep { color: #b3bfcc; }
+    .top-actions { display: flex; align-items: center; gap: 8px; }
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      min-height: 34px;
+      padding: 0 12px;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      color: #4c6077;
+      background: #fff;
+      cursor: pointer;
+      transition: border-color .15s ease, color .15s ease, background .15s ease, transform .15s ease;
+    }
+    .button:hover { border-color: #9dc3e6; color: var(--blue-deep); background: #f8fbff; }
+    .button:active { transform: translateY(1px); }
+    .button.primary { border-color: var(--blue); color: #fff; background: var(--blue); box-shadow: 0 5px 12px rgba(40,120,200,.20); }
+    .button.primary:hover { border-color: var(--blue-deep); background: var(--blue-deep); color: #fff; }
+    .button.danger { border-color: #e3a1a7; color: var(--red); background: #fff8f8; }
+    .button.ghost { border-color: transparent; background: transparent; }
+    .button.small { min-height: 29px; padding: 0 9px; font-size: 12px; }
+    .button[disabled] { opacity: .52; cursor: not-allowed; }
+
+    .main { max-width: 1540px; margin: 0 auto; padding: 26px 34px 44px; }
+    .eyebrow { color: var(--blue); font-size: 11px; font-weight: 700; letter-spacing: .11em; text-transform: uppercase; }
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 28px;
+      align-items: center;
+      min-height: 194px;
+      padding: 28px 32px;
+      border: 1px solid #d7e7f5;
+      border-radius: 18px;
+      color: #fff;
+      background:
+        radial-gradient(circle at 82% 10%, rgba(99, 193, 255, .24), transparent 34%),
+        linear-gradient(122deg, #173a62 0%, #1d527b 56%, #276b91 100%);
+      box-shadow: 0 18px 35px rgba(22, 61, 97, .16);
+    }
+    .hero h1 { margin: 8px 0 8px; font-size: clamp(24px, 3vw, 32px); line-height: 1.18; letter-spacing: -.025em; }
+    .hero p { max-width: 650px; margin: 0; color: #c4d9eb; font-size: 13px; line-height: 1.7; }
+    .hero-note { display: flex; align-items: center; gap: 8px; margin-top: 17px; color: #a9d5ef; font-size: 11px; }
+    .hero-note .dot { width: 7px; height: 7px; border-radius: 50%; background: #68d4b1; box-shadow: 0 0 0 4px rgba(104,212,177,.14); }
+    .gauge { position: relative; width: 128px; height: 128px; display: grid; place-items: center; flex: 0 0 auto; }
+    .gauge::before { content: ""; position: absolute; inset: 0; border-radius: 50%; background: conic-gradient(#70d4b9 0 72%, rgba(255,255,255,.16) 72% 100%); }
+    .gauge::after { content: ""; position: absolute; inset: 9px; border-radius: 50%; background: #1d527b; box-shadow: inset 0 0 0 1px rgba(255,255,255,.10); }
+    .gauge-content { position: relative; z-index: 1; text-align: center; }
+    .gauge-value { display: block; font-size: 23px; font-weight: 750; letter-spacing: -.03em; }
+    .gauge-label { display: block; margin-top: 4px; color: #bed9ea; font-size: 10px; }
+
+    .metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
+    .metric {
+      min-width: 0;
+      padding: 16px 17px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: var(--shadow-sm);
+    }
+    .metric-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 11px; }
+    .metric-icon { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 8px; color: var(--blue); background: var(--blue-soft); }
+    .metric-value { margin-top: 12px; color: var(--ink); font-size: 24px; font-weight: 730; letter-spacing: -.035em; font-variant-numeric: tabular-nums; }
+    .metric-value.red { color: var(--red); }
+    .metric-value.blue { color: var(--blue); }
+    .metric-foot { margin-top: 4px; color: var(--subtle); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    .content-grid { display: grid; grid-template-columns: minmax(0, 1fr) 315px; gap: 16px; align-items: start; margin-top: 16px; }
+    .panel { min-width: 0; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-sm); }
+    .panel-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 17px 19px; border-bottom: 1px solid var(--line); }
+    .panel-title { margin: 0; font-size: 15px; font-weight: 700; }
+    .panel-subtitle { margin-top: 4px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+    .result-heading { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .result-heading-icon { width: 34px; height: 34px; display: grid; place-items: center; flex: 0 0 auto; border: 1px solid #d7e9f7; border-radius: 9px; color: var(--blue); background: #edf6fd; }
+    .result-toolbar { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+    .result-toolbar-group { display: flex; min-height: 36px; align-items: center; gap: 5px; padding: 3px; border: 1px solid #e0e8f0; border-radius: 9px; background: #f6f9fc; }
+    .result-toolbar-group .button { min-height: 28px; border-color: transparent; background: transparent; font-size: 10px; }
+    .result-toolbar-group .button:hover { border-color: #d3e5f3; background: #fff; }
+    .result-toolbar-selection { gap: 9px; padding-left: 10px; background: #fbfdff; }
+    .result-toolbar-selection label { display: flex; align-items: center; gap: 6px; color: #52677b; font-size: 11px; white-space: nowrap; }
+    .result-toolbar-selection .button.danger { min-width: 116px; border-color: #d75a65; color: #fff; background: #d75a65; }
+    .table-head { display: grid; grid-template-columns: minmax(0, 1fr) 100px 88px 88px 30px; align-items: center; gap: 10px; margin: 13px 12px 0; padding: 9px 8px; border: 1px solid #e3eaf1; border-radius: 8px 8px 0 0; color: #314a63; background: #f5f8fb; }
+    .table-head-cell strong, .table-head-cell span { display: block; }
+    .table-head-cell strong { font-size: 11px; line-height: 1.35; }
+    .table-head-cell span { margin-top: 2px; color: #96a4b3; font-size: 8px; }
+    .table-head-cell.right { text-align: right; }
+    @media (max-width: 1120px) {
+      .panel-header { align-items: stretch; flex-direction: column; }
+      .result-toolbar { justify-content: flex-start; flex-wrap: wrap; }
+    }
+    .filter-row { display: flex; align-items: center; gap: 6px; margin-top: 13px; padding: 0 19px; }
+    .filter {
+      padding: 6px 10px;
+      border: 1px solid transparent;
+      border-radius: 7px;
+      color: var(--muted);
+      background: transparent;
+      cursor: pointer;
+      font-size: 11px;
+    }
+    .filter:hover { color: var(--blue-deep); background: #f4f8fc; }
+    .filter.active { border-color: #c4ddf2; color: var(--blue-deep); background: var(--blue-soft); font-weight: 650; }
+    .category-groups { padding: 0 12px 14px; }
+    .group { margin-top: 12px; }
+    .group-heading { display: flex; align-items: center; justify-content: space-between; padding: 0 7px 7px; color: var(--muted); font-size: 11px; font-weight: 700; }
+    .group-heading span:last-child { color: var(--subtle); font-weight: 500; }
+    .category-row {
+      display: grid;
+      grid-template-columns: 20px 36px minmax(0, 1fr) 100px 88px 88px 30px;
+      align-items: center;
+      gap: 10px;
+      min-height: 68px;
+      padding: 10px 8px;
+      border-top: 1px solid #eff3f7;
+      border-radius: 9px;
+      transition: background .15s ease;
+    }
+    .category-row:hover { background: #f8fbfe; }
+    .category-row:first-of-type { border-top: 0; }
+    .check {
+      width: 16px;
+      height: 16px;
+      margin: 0;
+      accent-color: var(--blue);
+      cursor: pointer;
+    }
+    .category-icon { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid #dce9f4; border-radius: 9px; color: var(--blue-deep); background: #f2f8fd; font-size: 12px; font-weight: 750; }
+    .category-copy { min-width: 0; }
+    .category-name { display: flex; align-items: center; gap: 7px; min-width: 0; color: var(--ink); font-weight: 650; }
+    .category-name span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .category-desc { margin-top: 4px; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+    .pill { display: inline-flex; align-items: center; min-height: 18px; padding: 0 6px; border-radius: 999px; font-size: 10px; font-weight: 650; white-space: nowrap; }
+    .pill.safe { color: var(--teal); background: var(--teal-soft); }
+    .pill.caution { color: var(--amber); background: var(--amber-soft); }
+    .pill.advanced { color: var(--red); background: var(--red-soft); }
+    .row-stat { min-width: 0; text-align: right; }
+    .row-stat strong { display: block; color: var(--ink); font-size: 12px; font-variant-numeric: tabular-nums; }
+    .row-stat small { display: block; margin-top: 3px; color: var(--subtle); font-size: 10px; }
+    .row-stat.size strong { color: var(--red); }
+    .row-open { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 7px; color: #8ea0b3; background: transparent; cursor: pointer; }
+    .row-open:hover { color: var(--blue); background: var(--blue-soft); }
+
+    .review-panel { position: sticky; top: 82px; overflow: hidden; }
+    .review-summary { padding: 19px; background: linear-gradient(145deg, #f8fbff, #eef6fd); border-bottom: 1px solid var(--line); }
+    .review-kicker { color: var(--blue); font-size: 10px; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }
+    .review-total { margin-top: 8px; color: var(--blue-deep); font-size: 28px; font-weight: 750; letter-spacing: -.04em; }
+    .review-summary p { margin: 5px 0 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
+    .review-list { padding: 9px 12px; }
+    .review-item { display: flex; align-items: flex-start; gap: 9px; padding: 10px 7px; border-bottom: 1px solid #eff3f7; }
+    .review-item:last-child { border-bottom: 0; }
+    .review-item-icon { width: 27px; height: 27px; display: grid; place-items: center; border-radius: 7px; color: var(--blue); background: var(--blue-soft); font-size: 10px; font-weight: 750; }
+    .review-item-copy { min-width: 0; flex: 1; }
+    .review-item-copy strong { display: block; overflow: hidden; color: var(--ink); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+    .review-item-copy small { display: block; margin-top: 3px; color: var(--subtle); font-size: 10px; }
+    .review-item-size { color: var(--red); font-size: 11px; font-weight: 700; white-space: nowrap; }
+    .review-actions { display: grid; gap: 8px; padding: 14px 17px 17px; border-top: 1px solid var(--line); }
+    .review-actions .button { width: 100%; }
+    .review-note { display: flex; gap: 7px; padding: 0 17px 14px; color: var(--subtle); font-size: 10px; line-height: 1.5; }
+
+    .backdrop { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(16, 34, 58, .44); opacity: 0; pointer-events: none; transition: opacity .2s ease; }
+    .backdrop.open { opacity: 1; pointer-events: auto; }
+    .drawer {
+      display: flex;
+      flex-direction: column;
+      width: min(1100px, 100%);
+      height: min(780px, calc(100vh - 32px));
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,.62);
+      border-radius: 18px;
+      background: #f5f8fb;
+      box-shadow: var(--shadow-md);
+      transform: translateY(12px) scale(.985);
+      transition: transform .22s ease;
+    }
+    .backdrop.open .drawer { transform: translateY(0) scale(1); }
+    .drawer-head { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 18px 22px; border-bottom: 1px solid var(--line); background: #fff; }
+    .drawer-title-wrap { min-width: 0; }
+    .drawer-eyebrow { color: var(--blue); font-size: 10px; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
+    .drawer-title { display: flex; align-items: center; gap: 9px; margin-top: 6px; color: var(--ink); font-size: 18px; font-weight: 750; }
+    .drawer-title .title-mark { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 8px; color: var(--blue-deep); background: var(--blue-soft); }
+    .drawer-subtitle { margin: 5px 0 0 39px; color: var(--muted); font-size: 11px; }
+    .drawer-head-actions { display: flex; align-items: center; gap: 8px; }
+    .close { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 8px; color: #7d8da0; background: transparent; cursor: pointer; }
+    .close:hover { color: var(--ink); background: #f1f5f9; }
+    .drawer-overview { display: grid; grid-template-columns: 1.2fr repeat(3, minmax(0, 1fr)); gap: 1px; padding: 1px; border-bottom: 1px solid var(--line); background: var(--line); }
+    .overview-cell { min-width: 0; padding: 13px 17px; background: #fff; }
+    .overview-cell label { display: block; color: var(--muted); font-size: 10px; }
+    .overview-cell strong { display: block; margin-top: 5px; color: var(--ink); font-size: 16px; font-variant-numeric: tabular-nums; }
+    .overview-cell:first-child strong { color: var(--red); font-size: 20px; }
+    .drawer-body { display: grid; grid-template-columns: 254px minmax(0, 1fr); min-height: 0; flex: 1; }
+    .rail { min-width: 0; overflow: auto; padding: 14px 10px; border-right: 1px solid var(--line); background: #fff; }
+    .rail-heading { display: flex; align-items: center; justify-content: space-between; padding: 0 8px 9px; color: var(--muted); font-size: 10px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+    .rail-item { display: grid; grid-template-columns: 17px 31px minmax(0, 1fr) auto; align-items: center; gap: 8px; width: 100%; min-height: 55px; margin-bottom: 4px; padding: 8px; border: 1px solid transparent; border-radius: 9px; color: var(--ink); background: transparent; text-align: left; cursor: pointer; }
+    .rail-item:hover { border-color: #dce8f3; background: #f8fbfe; }
+    .rail-item.active { border-color: #b9d7ee; background: #edf6fd; box-shadow: inset 3px 0 var(--blue); }
+    .rail-icon { width: 31px; height: 31px; display: grid; place-items: center; border: 1px solid #dbe8f3; border-radius: 8px; color: var(--blue-deep); background: #fff; font-size: 10px; font-weight: 750; }
+    .rail-copy { min-width: 0; }
+    .rail-copy strong { display: block; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+    .rail-copy small { display: block; margin-top: 3px; overflow: hidden; color: var(--subtle); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+    .rail-size { color: var(--red); font-size: 10px; font-weight: 700; white-space: nowrap; }
+    .rail-item.empty .rail-icon { color: #a8b5c2; background: #f8fafc; }
+    .rail-item.empty .rail-size { color: #a6b2bf; font-weight: 500; }
+
+    .path-area { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+    .path-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 15px 18px 12px; border-bottom: 1px solid var(--line); background: #fbfdff; }
+    .path-heading strong { display: block; font-size: 14px; }
+    .path-heading span { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; }
+    .path-tools { display: flex; align-items: center; gap: 7px; }
+    .search { width: 190px; height: 31px; padding: 0 10px 0 31px; border: 1px solid var(--line-strong); border-radius: 7px; color: var(--ink); background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='15' height='15' viewBox='0 0 24 24' fill='none' stroke='%23718096' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-4-4'/%3E%3C/svg%3E") 10px center / 14px no-repeat; font-size: 11px; }
+    .search::placeholder { color: #a4b0bd; }
+    .path-list { min-height: 0; overflow: auto; padding: 10px 14px 16px; }
+    .path-card { display: grid; grid-template-columns: 20px minmax(0, 1fr) 115px 92px; align-items: center; gap: 12px; min-height: 78px; padding: 11px 9px; border-bottom: 1px solid #eaf0f5; }
+    .path-card:last-child { border-bottom: 0; }
+    .path-card:hover { border-radius: 9px; background: #fff; box-shadow: 0 3px 12px rgba(44,75,107,.06); }
+    .path-main { min-width: 0; }
+    .path-line { display: flex; align-items: center; gap: 7px; min-width: 0; }
+    .folder { width: 27px; height: 27px; display: grid; place-items: center; border-radius: 7px; color: var(--blue); background: var(--blue-soft); }
+    .path-text { min-width: 0; overflow: hidden; color: #2b5f91; font-family: Consolas, "JetBrains Mono", monospace; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+    .rule { margin: 5px 0 0 34px; color: var(--muted); font-size: 10px; }
+    .path-source { min-width: 0; }
+    .source-tag { display: inline-flex; max-width: 100%; padding: 3px 7px; border-radius: 5px; color: #54708b; background: #eef4f8; font-size: 10px; white-space: nowrap; }
+    .risk-line { margin-top: 5px; color: var(--teal); font-size: 10px; }
+    .path-size { text-align: right; }
+    .path-size strong { display: block; color: var(--red); font-size: 12px; font-variant-numeric: tabular-nums; }
+    .path-size small { display: block; margin-top: 4px; color: var(--subtle); font-size: 10px; }
+    .empty-state { display: grid; place-items: center; min-height: 220px; color: var(--subtle); text-align: center; }
+    .empty-state strong { display: block; margin-top: 10px; color: #6e8094; font-size: 12px; }
+    .empty-state span { display: block; margin-top: 5px; font-size: 11px; }
+    .drawer-foot { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 18px; border-top: 1px solid var(--line); background: #fff; }
+    .foot-selected { color: var(--muted); font-size: 11px; }
+    .foot-selected strong { color: var(--blue-deep); font-size: 14px; }
+    .foot-actions { display: flex; gap: 8px; }
+
+    .toast { position: fixed; right: 24px; bottom: 24px; z-index: 40; max-width: 330px; padding: 11px 14px; border: 1px solid #c9dced; border-radius: 9px; color: #315b7b; background: #f6fbff; box-shadow: 0 12px 28px rgba(32,60,90,.16); font-size: 12px; opacity: 0; transform: translateY(8px); pointer-events: none; transition: opacity .2s ease, transform .2s ease; }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    .project-modal { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 20px; background: rgba(16,34,58,.36); opacity: 0; pointer-events: none; transition: opacity .18s ease; }
+    .project-modal.open { opacity: 1; pointer-events: auto; }
+    .project-card { width: min(540px, 100%); border: 1px solid var(--line); border-radius: 14px; background: #fff; box-shadow: var(--shadow-md); transform: translateY(8px); transition: transform .18s ease; }
+    .project-modal.open .project-card { transform: translateY(0); }
+    .project-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 18px; border-bottom: 1px solid var(--line); }
+    .project-head strong { font-size: 15px; }
+    .project-body { padding: 15px 18px; }
+    .project-row { display: flex; align-items: center; gap: 9px; padding: 10px 0; border-bottom: 1px solid #eff3f7; }
+    .project-row:last-child { border-bottom: 0; }
+    .project-row .path-text { flex: 1; color: #526a82; }
+    .project-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 13px 18px; border-top: 1px solid var(--line); }
+
+    @media (max-width: 1180px) {
+      .app { grid-template-columns: 192px minmax(0,1fr); }
+      .main { padding-left: 24px; padding-right: 24px; }
+      .topbar { padding: 0 24px; }
+      .content-grid { grid-template-columns: minmax(0,1fr); }
+      .review-panel { position: static; }
+    }
+    @media (max-width: 900px) {
+      .metric-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+      .category-row { grid-template-columns: 20px 34px minmax(0,1fr) 90px 30px; }
+      .category-row .row-stat.path, .category-row .row-stat.selected { display: none; }
+      .drawer-body { grid-template-columns: 210px minmax(0,1fr); }
+      .path-card { grid-template-columns: 20px minmax(0,1fr) 92px; }
+      .path-source { display: none; }
+    }
+    @media (max-width: 700px) {
+      .app { display: block; }
+      .sidebar { position: static; height: auto; padding: 10px 12px; }
+      .brand { padding: 2px 8px 10px; }
+      .nav-label, .sidebar-footer { display: none; }
+      .nav { display: flex; overflow-x: auto; gap: 5px; padding-bottom: 2px; }
+      .nav-item { flex: 0 0 auto; width: auto; padding: 8px 10px; }
+      .nav-item span:last-child { display: none; }
+      .topbar { position: static; min-height: 58px; padding: 0 16px; }
+      .top-actions .button:not(.primary) { display: none; }
+      .main { padding: 16px; }
+      .hero { grid-template-columns: minmax(0,1fr); padding: 22px; }
+      .gauge { width: 104px; height: 104px; margin-top: 2px; }
+      .gauge-value { font-size: 20px; }
+      .metric-grid { gap: 8px; }
+      .metric { padding: 13px; }
+      .metric-value { font-size: 20px; }
+      .panel-header { display: block; }
+      .panel-header .button { margin-top: 10px; }
+      .drawer { height: calc(100vh - 18px); border-radius: 14px; }
+      .drawer-head { padding: 14px; }
+      .drawer-overview { grid-template-columns: repeat(2, minmax(0,1fr)); }
+      .drawer-overview .overview-cell:first-child { grid-column: span 2; }
+      .drawer-body { display: flex; flex-direction: column; }
+      .rail { flex: 0 0 auto; display: flex; gap: 6px; overflow-x: auto; padding: 9px; border-right: 0; border-bottom: 1px solid var(--line); }
+      .rail-heading { display: none; }
+      .rail-item { flex: 0 0 156px; grid-template-columns: 17px 28px minmax(0,1fr); min-height: 48px; margin: 0; padding: 6px; }
+      .rail-item .rail-size { display: none; }
+      .rail-icon { width: 28px; height: 28px; }
+      .path-head { display: block; padding: 12px 14px 10px; }
+      .path-tools { margin-top: 9px; }
+      .search { width: 100%; }
+      .path-list { padding: 7px 10px 12px; }
+      .path-card { grid-template-columns: 20px minmax(0,1fr) 78px; gap: 8px; padding: 10px 5px; }
+      .path-size strong { font-size: 11px; }
+      .drawer-foot { display: block; padding: 11px 14px; }
+      .foot-actions { margin-top: 9px; }
+      .foot-actions .button { flex: 1; }
+    }
+  </style>
+</head>
+<body>
+  <svg aria-hidden="true" width="0" height="0" style="position:absolute">
+    <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12h4l2.2-6 4.1 12 2.2-6H21"/></symbol>
+    <symbol id="i-dashboard" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></symbol>
+    <symbol id="i-hard-drive" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 15h.01M11 15h6M7 9h10"/></symbol>
+    <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5M12 7v5l3 2"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="8" cy="18" r="2"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="m13 2-9 12h7l-1 8 9-12h-7l1-8Z"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6.5A2.5 2.5 0 0 1 5.5 4H10l2 2h6.5A2.5 2.5 0 0 1 21 8.5v8A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5Z"/><path d="M3.5 9h17"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></symbol>
+    <symbol id="i-export" viewBox="0 0 24 24"><path d="M12 3v12M8 7l4-4 4 4M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 10v6M12 7h.01"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.7-4L3 10M3 4v6h6M4 13a8 8 0 0 0 14.7 4L21 14m0 6v-6h-6"/></symbol>
+  </svg>
+
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark"><svg class="icon"><use href="#i-pulse"/></svg></div>
+        <div><div class="brand-title">SysPulse</div><div class="brand-caption">SYSTEM OBSERVER</div></div>
+      </div>
+      <div class="nav-label">Workspace</div>
+      <nav class="nav">
+        <button class="nav-item"><svg class="icon"><use href="#i-dashboard"/></svg><span>仪表盘</span></button>
+        <button class="nav-item"><svg class="icon"><use href="#i-hard-drive"/></svg><span>硬件监控</span></button>
+        <button class="nav-item active"><svg class="icon"><use href="#i-spark"/></svg><span>磁盘清理</span></button>
+        <button class="nav-item"><svg class="icon"><use href="#i-history"/></svg><span>历史记录</span></button>
+        <button class="nav-item"><svg class="icon"><use href="#i-sliders"/></svg><span>设置</span></button>
+      </nav>
+      <div class="sidebar-footer"><strong>只读审核模式</strong>扫描不会修改任何文件。确认后才会执行清理。</div>
+    </aside>
+
+    <div class="workspace">
+      <header class="topbar">
+        <div class="crumb"><span>SysPulse</span><span class="crumb-sep">/</span><strong>磁盘清理</strong></div>
+        <div class="top-actions"><button class="button primary" id="scanBtn"><svg class="icon"><use href="#i-search"/></svg><span>开始扫描</span></button></div>
+      </header>
+
+      <main class="main">
+        <section class="hero">
+          <div>
+            <div class="eyebrow" style="color:#8dd1f6">DISK HYGIENE</div>
+            <h1>先看清楚，再释放空间</h1>
+            <p>深度检查用户目录、固定磁盘和开发工具热点，只展示已验证、可解释的清理路径。扫描结果默认保持只读，清理由你最后确认。</p>
+            <div class="hero-note"><span class="dot"></span><span id="scanState">上次扫描 2 分钟前 · 结果完整</span></div>
+          </div>
+          <div class="gauge"><div class="gauge-content"><span class="gauge-value">7.62 GB</span><span class="gauge-label">可释放空间</span></div></div>
+        </section>
+
+        <section class="metric-grid">
+          <div class="metric"><div class="metric-head"><span>发现可清理</span><span class="metric-icon"><svg class="icon"><use href="#i-spark"/></svg></span></div><div class="metric-value red">7.62 GB</div><div class="metric-foot">24 条已验证路径</div></div>
+          <div class="metric"><div class="metric-head"><span>已选择</span><span class="metric-icon"><svg class="icon"><use href="#i-check"/></svg></span></div><div class="metric-value blue" id="selectedTotal">1.18 GB</div><div class="metric-foot" id="selectedFoot">8 条路径 · 18,420 个文件</div></div>
+          <div class="metric"><div class="metric-head"><span>扫描用时</span><span class="metric-icon"><svg class="icon"><use href="#i-pulse"/></svg></span></div><div class="metric-value">13.7 s</div><div class="metric-foot">检查 86,931 项</div></div>
+          <div class="metric"><div class="metric-head"><span>热点索引</span><span class="metric-icon"><svg class="icon"><use href="#i-refresh"/></svg></span></div><div class="metric-value">4</div><div class="metric-foot">5 侦察线程 · 8 工兵线程</div></div>
+        </section>
+
+        <section class="content-grid">
+          <section class="panel">
+            <div class="panel-header">
+              <div class="result-heading"><span class="result-heading-icon"><svg class="icon"><use href="#i-pulse"/></svg></span><div><h2 class="panel-title">扫描结果</h2><div class="panel-subtitle">9 个类别 · 24 条已验证路径</div></div></div>
+              <div class="result-toolbar">
+                <div class="result-toolbar-group"><button class="button small" id="projectBtn"><svg class="icon"><use href="#i-folder"/></svg>项目目录 <span id="rootCount">3/16</span></button><button class="button small" id="exportBtn"><svg class="icon"><use href="#i-export"/></svg>导出明细</button></div>
+                <div class="result-toolbar-group result-toolbar-selection"><label><input class="check" type="checkbox" id="selectSafeCheck">全选安全项</label><button class="button small danger" id="selectSafeBtn"><svg class="icon"><use href="#i-spark"/></svg>清理 <span id="headerCleanAmount">1.18 GB</span></button></div>
+              </div>
+            </div>
+            <div class="filter-row">
+              <button class="filter active" data-filter="all">全部 <span>9</span></button>
+              <button class="filter" data-filter="safe">安全 <span>4</span></button>
+              <button class="filter" data-filter="caution">可再生成 <span>3</span></button>
+              <button class="filter" data-filter="advanced">高级维护 <span>2</span></button>
+            </div>
+            <div class="table-head"><div class="table-head-cell"><strong>清理项目</strong><span>缓存类别与风险</span></div><div class="table-head-cell right"><strong>路径</strong><span>已选 / 总数</span></div><div class="table-head-cell right"><strong>占用</strong><span>发现总量</span></div><div class="table-head-cell right"><strong>清理队列</strong><span>容量与文件</span></div><div></div></div>
+            <div id="categories" class="category-groups"></div>
+          </section>
+
+          <aside class="panel review-panel">
+            <div class="review-summary"><div class="review-kicker">REVIEW QUEUE</div><div class="review-total" id="reviewTotal">1.18 GB</div><p>当前选择将在确认后清理。开发缓存默认需要手动勾选。</p></div>
+            <div class="review-list" id="reviewList"></div>
+            <div class="review-note"><svg class="icon" style="width:14px;height:14px;color:#7d9ab5"><use href="#i-info"/></svg><span>每条路径都带有来源和命中规则，方便交给 AI 做二次审核。</span></div>
+            <div class="review-actions"><button class="button" id="openCacheBtn">查看编程缓存详情</button><button class="button danger" id="cleanBtn"><svg class="icon"><use href="#i-spark"/></svg>清理选中 <span id="cleanAmount">1.18 GB</span></button></div>
+          </aside>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <div class="backdrop open" id="cacheBackdrop" role="dialog" aria-modal="true" aria-labelledby="drawerTitle">
+    <section class="drawer">
+      <header class="drawer-head">
+        <div class="drawer-title-wrap"><div class="drawer-eyebrow">CACHE REVIEW · READ ONLY</div><div class="drawer-title" id="drawerTitle"><span class="title-mark"><svg class="icon"><use href="#i-spark"/></svg></span>编程缓存</div><div class="drawer-subtitle">Rust / Node.js / Python / Go / C/C++ / .NET / Java · 保留可复用依赖目录</div></div>
+        <div class="drawer-head-actions"><button class="button small" id="drawerSelectAll">全选当前</button><button class="close" id="closeDrawer" aria-label="关闭"><svg class="icon"><use href="#i-close"/></svg></button></div>
+      </header>
+      <div class="drawer-overview"><div class="overview-cell"><label>可审核缓存</label><strong>3.84 GB</strong></div><div class="overview-cell"><label>已发现工具链</label><strong>7 / 7</strong></div><div class="overview-cell"><label>已验证路径</label><strong>16 条</strong></div><div class="overview-cell"><label>最近索引</label><strong>2 分钟前</strong></div></div>
+      <div class="drawer-body">
+        <aside class="rail"><div class="rail-heading"><span>工具链</span><span>大小</span></div><div id="railItems"></div></aside>
+        <section class="path-area"><div class="path-head"><div class="path-heading"><strong id="activeName">Rust 编译缓存</strong><span id="activeDescription">Cargo target、registry 与已验证项目编译产物</span></div><div class="path-tools"><input class="search" id="pathSearch" type="search" placeholder="搜索路径或命中规则" /><button class="button small" id="pathSelectAll">全选路径</button></div></div><div class="path-list" id="pathList"></div></section>
+      </div>
+      <footer class="drawer-foot"><div class="foot-selected">当前已选 <strong id="drawerSelected">1.18 GB</strong> · <span id="drawerFiles">8 条路径</span></div><div class="foot-actions"><button class="button danger" id="drawerClean"><svg class="icon"><use href="#i-spark"/></svg>加入清理队列</button></div></footer>
+    </section>
+  </div>
+
+  <div class="project-modal" id="projectModal"><section class="project-card"><header class="project-head"><strong>项目目录</strong><button class="close" id="closeProject"><svg class="icon"><use href="#i-close"/></svg></button></header><div class="project-body" id="projectBody"></div><footer class="project-foot"><button class="button" id="addProject">添加目录</button><button class="button primary" id="doneProject">完成</button></footer></section></div>
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const toolchains = [
+      { id: 'rust', name: 'Rust 编译缓存', short: 'Rust', icon: 'R', size: 1860, description: 'Cargo target、registry 与已验证项目编译产物', paths: [
+        { path: 'C:\\Users\\Administrator\\.cargo\\registry\\cache', rule: 'Cargo registry 下载缓存 · 超过 30 天', source: '工具全局缓存', size: 924, files: 12480, checked: true },
+        { path: 'D:\\Workspace\\sys-core\\target', rule: 'Cargo target · 项目构建产物', source: '项目发现', size: 612, files: 2840, checked: true },
+        { path: 'C:\\Users\\Administrator\\AppData\\Local\\cargo-target', rule: '显式 target-dir · 超过 14 天', source: '用户目录', size: 324, files: 918, checked: false }
+      ]},
+      { id: 'node', name: 'Node.js 缓存', short: 'Node', icon: 'N', size: 572, description: 'npm、Yarn 与 Bun 下载缓存', paths: [
+        { path: 'C:\\Users\\Administrator\\AppData\\Local\\npm-cache', rule: 'npm 内容缓存 · 可重新下载', source: '工具全局缓存', size: 314, files: 856, checked: false },
+        { path: 'C:\\Users\\Administrator\\.bun\\install\\cache', rule: 'Bun 下载缓存 · 可重新下载', source: '用户目录', size: 258, files: 7932, checked: false }
+      ]},
+      { id: 'python', name: 'Python 缓存', short: 'Python', icon: 'Py', size: 495, description: 'pip、uv、Poetry、PDM 与项目工具缓存', paths: [
+        { path: 'C:\\Users\\Administrator\\AppData\\Local\\pip\\Cache', rule: 'pip wheel / HTTP 缓存 · 超过 30 天', source: '工具全局缓存', size: 495, files: 22723, checked: false }
+      ]},
+      { id: 'go', name: 'Go 缓存', short: 'Go', icon: 'Go', size: 128, description: 'GOCACHE 编译缓存', paths: [
+        { path: 'C:\\Users\\Administrator\\AppData\\Local\\go-build', rule: 'Go build cache · 可重新生成', source: '工具全局缓存', size: 128, files: 641, checked: false }
+      ]},
+      { id: 'cpp', name: 'C/C++ 编译缓存', short: 'C++', icon: 'C++', size: 842, description: 'CMake、MSBuild、ccache、sccache 与 vcpkg', paths: [
+        { path: 'C:\\Users\\Administrator\\AppData\\Local\\Microsoft\\MSBuild', rule: 'MSBuild 临时编译缓存 · 超过 14 天', source: '用户目录', size: 392, files: 1830, checked: false },
+        { path: 'D:\\Workspace\\native-app\\build', rule: 'CMake 构建目录 · 项目构建产物', source: '项目发现', size: 450, files: 2960, checked: false }
+      ]},
+      { id: 'dotnet', name: '.NET / NuGet 缓存', short: '.NET', icon: '.N', size: 246, description: 'NuGet HTTP、插件与临时缓存', paths: [
+        { path: 'C:\\Users\\Administrator\\AppData\\Local\\NuGet\\v3-cache', rule: 'NuGet HTTP 缓存 · 可重新下载', source: '工具全局缓存', size: 246, files: 26, checked: false }
+      ]},
+      { id: 'java', name: 'Java 构建缓存', short: 'Java', icon: 'J', size: 311, description: 'Gradle 与 Maven 可再生成缓存', paths: [
+        { path: 'C:\\Users\\Administrator\\.gradle\\caches', rule: 'Gradle 依赖缓存 · 可重新下载', source: '工具全局缓存', size: 211, files: 3432, checked: false },
+        { path: 'C:\\Users\\Administrator\\.m2\\repository', rule: 'Maven 本地仓库 · 仅清理过期下载', source: '用户目录', size: 100, files: 814, checked: false }
+      ]}
+    ];
+    const categories = [
+      { id:'temp', group:'safe', groupName:'安全清理', name:'Windows 临时文件', icon:'TMP', desc:'系统和应用产生、超过保留期的临时文件', paths:'2 条路径', size:'4.06 MB', files:'16', selected:'4.06 MB' },
+      { id:'update', group:'safe', groupName:'安全清理', name:'更新残留', icon:'UP', desc:'已完成更新留下的安装包与日志', paths:'3 条路径', size:'286 MB', files:'128', selected:'286 MB' },
+      { id:'browser', group:'safe', groupName:'安全清理', name:'浏览器缓存', icon:'WEB', desc:'Chrome / Edge 可重新生成缓存', paths:'4 条路径', size:'1.24 GB', files:'8,420', selected:'0 B' },
+      { id:'thumb', group:'safe', groupName:'安全清理', name:'缩略图缓存', icon:'IMG', desc:'Windows Explorer 生成的图片缩略图', paths:'1 条路径', size:'612 MB', files:'3,120', selected:'0 B' },
+      { id:'programming', group:'caution', groupName:'可再生成缓存', name:'编程缓存', icon:'DEV', desc:'Rust、Node.js、Python、Go、C/C++、.NET、Java', paths:'16 条路径', size:'3.84 GB', files:'55,804', selected:'1.18 GB', programming:true },
+      { id:'shader', group:'caution', groupName:'可再生成缓存', name:'着色器缓存', icon:'GPU', desc:'显卡驱动和图形应用的可再生成缓存', paths:'2 条路径', size:'742 MB', files:'2,118', selected:'0 B' },
+      { id:'installer', group:'caution', groupName:'可再生成缓存', name:'安装包缓存', icon:'PKG', desc:'已安装软件留下的可重新获取安装包', paths:'2 条路径', size:'534 MB', files:'84', selected:'0 B' },
+      { id:'app', group:'advanced', groupName:'高级维护', name:'应用数据缓存', icon:'APP', desc:'第三方应用缓存，清理前建议逐项审核', paths:'5 条路径', size:'1.08 GB', files:'12,840', selected:'0 B' },
+      { id:'wer', group:'advanced', groupName:'高级维护', name:'错误报告', icon:'LOG', desc:'Windows 错误报告转储与诊断日志', paths:'3 条路径', size:'296 MB', files:'402', selected:'0 B' }
+    ];
+    let activeToolchain = 'rust';
+    let activeFilter = 'all';
+    let searchText = '';
+    let toastTimer;
+
+    const $ = (id) => document.getElementById(id);
+    const bytes = (mb) => mb >= 1024 ? (mb / 1024).toFixed(2) + ' GB' : mb >= 1 ? Math.round(mb) + ' MB' : Math.round(mb * 1024) + ' KB';
+    const selectedPaths = () => toolchains.flatMap(t => t.paths).filter(p => p.checked);
+    function selectedMb() { return selectedPaths().reduce((n,p) => n + p.size, 0) + 286 + 4.06 / 1024; }
+    function showToast(message) { const el = $('toast'); el.textContent = message; el.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 2600); }
+    function iconSvg(id) { return `<svg class="icon"><use href="#${id}"/></svg>`; }
+
+    function renderRail() {
+      $('railItems').innerHTML = toolchains.filter(t => t.paths.length > 0).map(t => {
+        const checked = t.paths.filter(p => p.checked).length;
+        return `<button class="rail-item ${t.id === activeToolchain ? 'active' : ''}" data-toolchain="${t.id}">
+          <input class="check" type="checkbox" ${checked === t.paths.length ? 'checked' : ''} aria-label="选择 ${t.name}" data-rail-check="${t.id}">
+          <span class="rail-icon">${t.icon}</span><span class="rail-copy"><strong>${t.name}</strong><small>${checked}/${t.paths.length} 路径</small></span><span class="rail-size">${bytes(t.size)}</span>
+        </button>`;
+      }).join('');
+      document.querySelectorAll('[data-toolchain]').forEach(btn => btn.addEventListener('click', (e) => { if (e.target.matches('[data-rail-check]')) return; activeToolchain = btn.dataset.toolchain; renderRail(); renderPaths(); }));
+      document.querySelectorAll('[data-rail-check]').forEach(box => box.addEventListener('change', (e) => { const t = toolchains.find(x => x.id === e.target.dataset.railCheck); t.paths.forEach(p => p.checked = e.target.checked); renderRail(); renderPaths(); updateTotals(); }));
+    }
+
+    function renderPaths() {
+      const t = toolchains.find(x => x.id === activeToolchain);
+      $('activeName').textContent = t.name;
+      $('activeDescription').textContent = t.description;
+      const paths = t.paths.filter(p => !searchText || `${p.path} ${p.rule} ${p.source}`.toLowerCase().includes(searchText.toLowerCase()));
+      $('pathList').innerHTML = paths.length ? paths.map((p, i) => `<article class="path-card">
+        <input class="check" type="checkbox" ${p.checked ? 'checked' : ''} data-path-index="${t.paths.indexOf(p)}" aria-label="选择 ${p.path}">
+        <div class="path-main"><div class="path-line"><span class="folder">${iconSvg('i-folder')}</span><span class="path-text" title="${p.path}">${p.path}</span></div><div class="rule">命中规则：${p.rule}</div></div>
+        <div class="path-source"><span class="source-tag">${p.source}</span><div class="risk-line">● 安全可再生</div></div>
+        <div class="path-size"><strong>${bytes(p.size)}</strong><small>${p.files.toLocaleString()} 文件</small></div>
+      </article>`).join('') : `<div class="empty-state">${iconSvg('i-search')}<div><strong>没有匹配的路径</strong><span>换一个关键词试试</span></div></div>`;
+      document.querySelectorAll('[data-path-index]').forEach(box => box.addEventListener('change', e => { t.paths[Number(e.target.dataset.pathIndex)].checked = e.target.checked; renderRail(); renderPaths(); updateTotals(); }));
+    }
+
+    function renderCategories() {
+      const visible = categories.filter(c => activeFilter === 'all' || c.group === activeFilter);
+      const groups = [...new Set(visible.map(c => c.group))];
+      $('categories').innerHTML = groups.map(group => { const list = visible.filter(c => c.group === group); const title = list[0].groupName; return `<section class="group"><div class="group-heading"><span>${title}</span><span>${list.length} 项</span></div>${list.map(c => `<article class="category-row" data-category="${c.id}"><input class="check category-check" type="checkbox" ${c.id === 'programming' ? selectedPaths().length > 0 ? 'checked' : '' : c.selected !== '0 B' ? 'checked' : ''} aria-label="选择 ${c.name}"><span class="category-icon">${c.icon}</span><div class="category-copy"><div class="category-name"><span>${c.name}</span><span class="pill ${c.group}">${c.group === 'safe' ? '安全' : c.group === 'caution' ? '可再生成' : '高级'}</span></div><div class="category-desc">${c.desc}</div></div><div class="row-stat path"><strong>${c.paths.split(' ')[0]}</strong><small>已验证</small></div><div class="row-stat size"><strong>${c.size}</strong><small>${c.files} 文件</small></div><div class="row-stat selected"><strong>${c.selected}</strong><small>当前选择</small></div><button class="row-open" aria-label="查看 ${c.name}">${iconSvg('i-arrow')}</button></article>`).join('')}</section>`; }).join('');
+      document.querySelectorAll('.category-row').forEach(row => row.addEventListener('click', e => { if (e.target.matches('.category-check')) return; if (row.dataset.category === 'programming') openDrawer(); else showToast(`${row.querySelector('.category-name span').textContent}：原型详情待接入`); }));
+      document.querySelectorAll('.category-check').forEach(box => box.addEventListener('change', e => { const row = e.target.closest('.category-row'); if (row.dataset.category === 'programming') { toolchains.forEach(t => t.paths.forEach(p => p.checked = e.target.checked)); renderRail(); renderPaths(); updateTotals(); } else { showToast('已更新选择状态（原型演示）'); } }));
+    }
+
+    function updateTotals() {
+      const mb = selectedMb(); const text = mb >= 1024 ? (mb/1024).toFixed(2) + ' GB' : Math.round(mb) + ' MB'; const count = selectedPaths().length + 2;
+      $('selectedTotal').textContent = text; $('selectedFoot').textContent = `${count} 条路径 · ${selectedPaths().reduce((n,p) => n+p.files, 0).toLocaleString()} 个文件`; $('reviewTotal').textContent = text; $('cleanAmount').textContent = text; $('headerCleanAmount').textContent = text; $('drawerSelected').textContent = text; $('drawerFiles').textContent = `${selectedPaths().length} 条路径`;
+      const review = selectedPaths().slice(0,4); $('reviewList').innerHTML = review.length ? review.map(p => `<div class="review-item"><span class="review-item-icon">DEV</span><div class="review-item-copy"><strong title="${p.path}">${p.path.split('\\').slice(-2).join('\\')}</strong><small>${p.source} · ${p.rule.split(' · ')[0]}</small></div><span class="review-item-size">${bytes(p.size)}</span></div>`).join('') : '<div style="padding:18px 7px;color:var(--subtle);font-size:11px">尚未选择编程缓存</div>';
+    }
+
+    function openDrawer() { $('cacheBackdrop').classList.add('open'); renderRail(); renderPaths(); }
+    function closeDrawer() { $('cacheBackdrop').classList.remove('open'); }
+    function exportJson() { const payload = { prototype: true, generatedAt: new Date().toISOString(), total: '7.62 GB', toolchains: toolchains.map(t => ({ name:t.name, paths:t.paths })) }; const blob = new Blob([JSON.stringify(payload,null,2)], {type:'application/json'}); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'syspulse-cleanup-review.json'; a.click(); URL.revokeObjectURL(a.href); showToast('已导出结构化审核清单'); }
+    function renderProjects() { const roots = ['C:\\Users\\Administrator\\Desktop\\Dev\\SysPulse','D:\\Workspace\\sys-core','D:\\Workspace\\native-app']; $('projectBody').innerHTML = roots.map((r,i) => `<div class="project-row"><span class="folder">${iconSvg('i-folder')}</span><span class="path-text" title="${r}">${r}</span><button class="button small ghost" data-remove-project="${i}">移除</button></div>`).join(''); document.querySelectorAll('[data-remove-project]').forEach(b => b.addEventListener('click', () => { b.closest('.project-row').remove(); $('rootCount').textContent = `${document.querySelectorAll('.project-row').length}/16`; showToast('已从原型扫描范围移除'); })); }
+
+    $('cacheBackdrop').addEventListener('click', e => { if (e.target === $('cacheBackdrop')) closeDrawer(); });
+    $('closeDrawer').addEventListener('click', closeDrawer); $('openCacheBtn').addEventListener('click', openDrawer);
+    $('drawerClean').addEventListener('click', () => showToast('原型演示：已加入清理队列，未执行删除'));
+    $('cleanBtn').addEventListener('click', () => showToast('原型演示：清理前仍会要求逐项确认'));
+    $('exportBtn').addEventListener('click', exportJson);
+    $('pathSearch').addEventListener('input', e => { searchText = e.target.value; renderPaths(); });
+    $('pathSelectAll').addEventListener('click', () => { const t = toolchains.find(x => x.id === activeToolchain); const next = !t.paths.every(p => p.checked); t.paths.forEach(p => p.checked = next); renderRail(); renderPaths(); updateTotals(); });
+    $('drawerSelectAll').addEventListener('click', () => { const next = !toolchains.every(t => t.paths.every(p => p.checked)); toolchains.forEach(t => t.paths.forEach(p => p.checked = next)); renderRail(); renderPaths(); updateTotals(); });
+    $('selectSafeBtn').addEventListener('click', () => showToast('原型演示：清理前仍会要求逐项确认'));
+    $('selectSafeCheck').addEventListener('change', e => { categories.filter(c => c.group === 'safe').forEach(c => c.selected = e.target.checked ? c.size : '0 B'); renderCategories(); showToast('已更新安全项选择状态'); });
+    document.querySelectorAll('.filter').forEach(btn => btn.addEventListener('click', () => { activeFilter = btn.dataset.filter; document.querySelectorAll('.filter').forEach(b => b.classList.toggle('active', b === btn)); renderCategories(); }));
+    $('scanBtn').addEventListener('click', () => { const btn = $('scanBtn'); if (btn.dataset.scanning === '1') { btn.dataset.scanning = '0'; btn.innerHTML = `${iconSvg('i-search')}<span>开始扫描</span>`; $('scanState').textContent = '扫描已停止 · 当前结果仅供审核'; showToast('扫描已停止，未修改任何文件'); return; } btn.dataset.scanning = '1'; let percent = 0; btn.innerHTML = `${iconSvg('i-refresh')}<span>扫描中 ${percent}%</span>`; $('scanState').textContent = '正在扫描用户目录、磁盘热点与工具链缓存'; const timer = setInterval(() => { percent += 20; btn.innerHTML = `${iconSvg('i-refresh')}<span>扫描中 ${percent}%</span>`; if (percent >= 100) { clearInterval(timer); btn.dataset.scanning = '0'; btn.innerHTML = `${iconSvg('i-search')}<span>重新扫描</span>`; $('scanState').textContent = '刚刚完成 · 结果完整'; showToast('扫描完成，已更新热点索引'); } }, 360); });
+    $('projectBtn').addEventListener('click', () => { renderProjects(); $('projectModal').classList.add('open'); }); $('closeProject').addEventListener('click', () => $('projectModal').classList.remove('open')); $('doneProject').addEventListener('click', () => { $('projectModal').classList.remove('open'); showToast('项目目录配置已保存（原型演示）'); }); $('addProject').addEventListener('click', () => showToast('原型演示：此处打开目录选择器')); $('projectModal').addEventListener('click', e => { if (e.target === $('projectModal')) $('projectModal').classList.remove('open'); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeDrawer(); $('projectModal').classList.remove('open'); } });
+    renderCategories(); renderRail(); renderPaths(); updateTotals();
+  </script>
+</body>
+</html>

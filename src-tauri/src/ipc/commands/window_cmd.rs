@@ -27,9 +27,8 @@ pub struct OverlayTooltipRegionsArgs {
 }
 
 #[cfg(windows)]
-static OVERLAY_TOOLTIP_REGIONS: std::sync::OnceLock<
-    std::sync::RwLock<Vec<OverlayTooltipRegion>>,
-> = std::sync::OnceLock::new();
+static OVERLAY_TOOLTIP_REGIONS: std::sync::OnceLock<std::sync::RwLock<Vec<OverlayTooltipRegion>>> =
+    std::sync::OnceLock::new();
 
 #[tauri::command]
 #[specta::specta]
@@ -78,11 +77,7 @@ pub fn spawn_overlay_tooltip_watchdog(app: AppHandle) {
             let snapshot = state.last_snapshot.read();
             let hw = state.last_hw_snapshot.read();
             let text = if hit.key == "__all__" {
-                build_overlay_summary(
-                    &config.overlay.items,
-                    snapshot.as_ref(),
-                    hw.as_ref(),
-                )
+                build_overlay_summary(&config.overlay.items, snapshot.as_ref(), hw.as_ref())
             } else {
                 build_overlay_tooltip(&hit.key, snapshot.as_ref(), hw.as_ref())
             };
@@ -195,7 +190,10 @@ fn build_overlay_summary(
             )),
             OverlayItem::CpuTemp => Some(format!(
                 "CPU 温度：{}",
-                format_temp(hw.and_then(|h| h.cpu.as_ref()).and_then(|cpu| cpu.package_temp_c))
+                format_temp(
+                    hw.and_then(|h| h.cpu.as_ref())
+                        .and_then(|cpu| cpu.package_temp_c)
+                )
             )),
             OverlayItem::CpuFreq => Some(format!(
                 "CPU 频率：{}",
@@ -221,15 +219,17 @@ fn build_overlay_summary(
             }
             OverlayItem::Gpu | OverlayItem::GpuUsage => Some(format!(
                 "GPU 占用：{}",
-                format_percent_opt(max_value(hw.into_iter().flat_map(|h| {
-                    h.gpus.iter().filter_map(|gpu| gpu.usage_percent)
-                })))
+                format_percent_opt(max_value(
+                    hw.into_iter()
+                        .flat_map(|h| { h.gpus.iter().filter_map(|gpu| gpu.usage_percent) })
+                ))
             )),
             OverlayItem::GpuTemp => Some(format!(
                 "GPU 温度：{}",
-                format_temp(max_value(hw.into_iter().flat_map(|h| {
-                    h.gpus.iter().filter_map(|gpu| gpu.temp_c)
-                })))
+                format_temp(max_value(
+                    hw.into_iter()
+                        .flat_map(|h| { h.gpus.iter().filter_map(|gpu| gpu.temp_c) })
+                ))
             )),
             OverlayItem::DiskRead | OverlayItem::DiskWrite if groups.insert("disk-io") => {
                 let disks = hw.map(|h| h.disks.as_slice()).unwrap_or_default();
@@ -243,14 +243,18 @@ fn build_overlay_summary(
             }
             OverlayItem::DiskTemp => Some(format!(
                 "硬盘温度：{}",
-                format_temp(max_value(hw.into_iter().flat_map(|h| {
-                    h.disks.iter().filter_map(|disk| disk.temp_c)
-                })))
+                format_temp(max_value(
+                    hw.into_iter()
+                        .flat_map(|h| { h.disks.iter().filter_map(|disk| disk.temp_c) })
+                ))
             )),
             OverlayItem::FanRpm => Some(format!(
                 "风扇：{}",
                 max_value(hw.into_iter().flat_map(|h| {
-                    h.fans.iter().filter_map(|fan| fan.rpm).filter(|rpm| *rpm > 0.0)
+                    h.fans
+                        .iter()
+                        .filter_map(|fan| fan.rpm)
+                        .filter(|rpm| *rpm > 0.0)
                 }))
                 .map(|rpm| format!("{rpm:.0} RPM"))
                 .unwrap_or_else(|| "--".into())

@@ -18,7 +18,7 @@ export default function AdminBanner() {
       type="error"
       banner
       showIcon
-      message={t("admin.notElevatedTitle")}
+      title={t("admin.notElevatedTitle")}
       description={t("admin.notElevatedDesc")}
       style={{ marginBottom: 12 }}
     />

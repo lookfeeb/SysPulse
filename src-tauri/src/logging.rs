@@ -35,8 +35,9 @@ pub fn init() {
 }
 
 pub fn cleanup_old_logs(retain_days: u64) {
-    let cutoff = SystemTime::now()
-        .checked_sub(Duration::from_secs(retain_days.saturating_mul(24 * 60 * 60)));
+    let cutoff = SystemTime::now().checked_sub(Duration::from_secs(
+        retain_days.saturating_mul(24 * 60 * 60),
+    ));
     let Some(cutoff) = cutoff else {
         return;
     };

@@ -16,10 +16,7 @@ pub struct SetConfigArgs {
 
 #[tauri::command]
 #[specta::specta]
-pub fn set_config(
-    state: State<'_, AppState>,
-    args: SetConfigArgs,
-) -> Result<AppConfig, IpcError> {
+pub fn set_config(state: State<'_, AppState>, args: SetConfigArgs) -> Result<AppConfig, IpcError> {
     let new_cfg = state.config.apply_patch(args.patch)?;
     Ok(new_cfg)
 }

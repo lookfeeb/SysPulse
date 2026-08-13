@@ -83,8 +83,14 @@ async autostartEnable() : Promise<null> {
 async autostartDisable() : Promise<null> {
     return await TAURI_INVOKE("autostart_disable");
 },
-async scanCleanup() : Promise<ScanResult> {
-    return await TAURI_INVOKE("scan_cleanup");
+async scanCleanup(args: ScanCleanupArgs | null) : Promise<ScanResult> {
+    return await TAURI_INVOKE("scan_cleanup", { args });
+},
+async cancelCleanupScan() : Promise<boolean> {
+    return await TAURI_INVOKE("cancel_cleanup_scan");
+},
+async exportCleanupScan(args: ExportCleanupArgs) : Promise<ExportCleanupResult> {
+    return await TAURI_INVOKE("export_cleanup_scan", { args });
 },
 async cleanCategories(args: CleanArgs) : Promise<CleanResult> {
     return await TAURI_INVOKE("clean_categories", { args });
@@ -115,6 +121,8 @@ export type CpuSnapshot = { usagePercent: number; perCore: number[] | null; mode
 export type DailyTraffic = { date: string; iface: string | null; bytesRecv: number; bytesSent: number }
 export type DiskHw = { index: number; model: string; bus: string; tempC: number | null; health: string; readBytesPerSec: number | null; writeBytesPerSec: number | null; totalBytes: number; usedBytes: number | null; identifier: string }
 export type ExportArgs = { query: HistoryQuery; path: string }
+export type ExportCleanupArgs = { scanId: string; path: string; selectedCategoryIds: string[]; excludedPaths: string[] }
+export type ExportCleanupResult = { savedTo: string; records: number }
 export type ExportResult = { savedTo: string; rows: number }
 export type FanControlEntry = { fanId: string; mode: FanControlMode; manualPwm: number; curve: FanCurvePoint[]; lastWrittenPwm: number | null; writeFailures: number }
 export type FanControlMode = "bios" | "manual" | "curve"
@@ -154,10 +162,11 @@ export type OverlayConfig = { items: OverlayItem[] }
 export type OverlayItem = "net-down" | "net-up" | "cpu" | "cpu-freq" | "mem" | "disk-read" | "disk-write" | "gpu" | "cpu-temp" | "gpu-temp" | "gpu-usage" | "disk-temp" | "fan-rpm" | "mb-temp"
 export type OverlayTooltipRegion = { key: string; left: number; top: number; right: number; bottom: number }
 export type OverlayTooltipRegionsArgs = { regions: OverlayTooltipRegion[] }
-export type PathDetail = { path: string; sizeBytes: number; fileCount: number }
+export type PathDetail = { path: string; sizeBytes: number; fileCount: number; matchedRule: string; source: string; volumeSerial: number | null; fileId: number | null }
 export type ResetFanControlArgs = { fanId: string }
 export type ResizeArgs = { width: number; height: number }
-export type ScanResult = { scanId: string; categories: CleanupCategory[]; totalSizeBytes: number; totalFileCount: number }
+export type ScanCleanupArgs = { projectRoots: string[] }
+export type ScanResult = { scanId: string; categories: CleanupCategory[]; totalSizeBytes: number; totalFileCount: number; scannedAtMs: number; expiresAtMs: number; durationMs: number; scannedPaths: number; skippedPaths: number; ignoredPaths: number; hotspotCount: number; scoutWorkers: number; engineerWorkers: number; scoutTasks: number; engineerTasks: number; projectRoots: string[]; warnings: string[]; complete: boolean; cancelled: boolean }
 export type SetConfigArgs = { patch: JsonValue }
 export type SetFanCurveArgs = { fanId: string; curve: FanCurvePoint[] }
 export type SetFanManualArgs = { fanId: string; pwm: number }
