@@ -5,6 +5,60 @@
 
 
 export const commands = {
+async aiGetMcpOverview() : Promise<AiMcpOverview> {
+    return await TAURI_INVOKE("ai_get_mcp_overview");
+},
+async aiGetMcpServers(args: AiMcpClientArgs) : Promise<AiMcpServerItem[]> {
+    return await TAURI_INVOKE("ai_get_mcp_servers", { args });
+},
+async aiDiscoverMcpServers(args: AiMcpClientArgs) : Promise<string[]> {
+    return await TAURI_INVOKE("ai_discover_mcp_servers", { args });
+},
+async aiToggleMcpServer(args: AiToggleMcpServerArgs) : Promise<null> {
+    return await TAURI_INVOKE("ai_toggle_mcp_server", { args });
+},
+async aiDeleteMcpServer(args: AiMcpServerArgs) : Promise<null> {
+    return await TAURI_INVOKE("ai_delete_mcp_server", { args });
+},
+async aiCopyMcpServer(args: AiCopyMcpServerArgs) : Promise<null> {
+    return await TAURI_INVOKE("ai_copy_mcp_server", { args });
+},
+async aiMcpOauthStatus(args: AiMcpServerArgs) : Promise<AiMcpOAuthStatus> {
+    return await TAURI_INVOKE("ai_mcp_oauth_status", { args });
+},
+async aiMcpOauthAuthorize(args: AiMcpServerArgs) : Promise<null> {
+    return await TAURI_INVOKE("ai_mcp_oauth_authorize", { args });
+},
+async aiMcpOauthCancel(args: AiMcpServerArgs) : Promise<null> {
+    return await TAURI_INVOKE("ai_mcp_oauth_cancel", { args });
+},
+async aiMcpOauthRefresh(args: AiMcpServerArgs) : Promise<AiMcpOAuthStatus> {
+    return await TAURI_INVOKE("ai_mcp_oauth_refresh", { args });
+},
+async aiMcpOauthRevoke(args: AiMcpServerArgs) : Promise<string> {
+    return await TAURI_INVOKE("ai_mcp_oauth_revoke", { args });
+},
+async aiListSessionTree() : Promise<AiSessionTree> {
+    return await TAURI_INVOKE("ai_list_session_tree");
+},
+async aiLoadSession(args: AiLoadSessionArgs) : Promise<AiSessionPage> {
+    return await TAURI_INVOKE("ai_load_session", { args });
+},
+async aiDeleteSession(args: AiSessionArgs) : Promise<null> {
+    return await TAURI_INVOKE("ai_delete_session", { args });
+},
+async aiDeleteWorkspace(args: AiWorkspaceArgs) : Promise<null> {
+    return await TAURI_INVOKE("ai_delete_workspace", { args });
+},
+async aiExportSession(args: AiExportSessionArgs) : Promise<string> {
+    return await TAURI_INVOKE("ai_export_session", { args });
+},
+async aiRevealSessionFile(args: AiSessionArgs) : Promise<string> {
+    return await TAURI_INVOKE("ai_reveal_session_file", { args });
+},
+async aiRefreshSessionCache() : Promise<null> {
+    return await TAURI_INVOKE("ai_refresh_session_cache");
+},
 async getConfig() : Promise<AppConfig> {
     return await TAURI_INVOKE("get_config");
 },
@@ -110,6 +164,25 @@ async scanLargeFiles(args: LargeFileScanArgs) : Promise<LargeFileScanResult> {
 
 /** user-defined types **/
 
+export type AiContentItem = { type: string; text: string }
+export type AiCopyMcpServerArgs = { fromClient: string; toClient: string; name: string; overwrite: boolean }
+export type AiExportSessionArgs = { workspaceHash: string; sessionId: string; format: string; path: string }
+export type AiHistoryItem = { message: AiMessage }
+export type AiMcpClientArgs = { client: string }
+export type AiMcpClientStats = { client: string; totalServers: number; enabledServers: number }
+export type AiMcpOAuthStatus = { oauthSupported: boolean | null; authorized: boolean; expiresAt: number; expiringSoon: boolean; expired: boolean; refreshFailed: boolean; needsReauth: boolean; message: string | null }
+export type AiMcpOverview = { totalServers: number; enabledServers: number; clients: AiMcpClientStats[] }
+export type AiMcpServerArgs = { client: string; name: string }
+export type AiMcpServerItem = { name: string; client: string; type: string; detail: string; disabled: boolean }
+export type AiMessage = { role: string; content: AiContentItem[]; id: string; isHidden: boolean }
+export type AiSession = { sessionId: string; title: string; sessionType: string; workspaceDirectory: string; history: AiHistoryItem[]; conversationSummary: string | null }
+export type AiSessionPage = { sessionId: string; title: string; sessionType: string; workspaceDirectory: string; history: AiHistoryItem[]; conversationSummary: string | null; totalMessages: number; page: number; pageSize: number }
+export type AiSessionArgs = { workspaceHash: string; sessionId: string }
+export type AiLoadSessionArgs = { workspaceHash: string; sessionId: string; page: number; pageSize: number }
+export type AiSessionSummary = { sessionId: string; title: string; sessionType: string; workspaceDirectory: string; workspaceHash: string; messageCount: number; fileSize: number; createdAt: number | null; modifiedAt: number | null; source: string }
+export type AiSessionTree = { workspaces: string[]; sessionsByWorkspace: Partial<{ [key in string]: AiSessionSummary[] }> }
+export type AiToggleMcpServerArgs = { client: string; name: string; disabled: boolean }
+export type AiWorkspaceArgs = { workspaceHash: string }
 export type AppConfig = { schemaVersion: number; general: GeneralConfig; overlay: OverlayConfig; network: NetworkConfig; history: HistoryConfig }
 export type AppInfo = { name: string; version: string; os: string; arch: string; configDir: string; logsDir: string; dbFile: string }
 export type CleanArgs = { scanId: string; categoryIds: string[]; excludedPaths: string[]; confirmCaution: boolean; confirmAdvanced: boolean }

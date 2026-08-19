@@ -1,3 +1,4 @@
+pub mod ai_cmd;
 pub mod autostart_cmd;
 pub mod cleanup_cmd;
 pub mod config_cmd;
@@ -24,6 +25,24 @@ pub fn builder() -> tauri_specta::Builder<tauri::Wry> {
         .error_handling(tauri_specta::ErrorHandlingMode::Throw)
         .typ::<crate::hw::client::HelperStatusEvent>()
         .commands(tauri_specta::collect_commands![
+            ai_cmd::ai_get_mcp_overview,
+            ai_cmd::ai_get_mcp_servers,
+            ai_cmd::ai_discover_mcp_servers,
+            ai_cmd::ai_toggle_mcp_server,
+            ai_cmd::ai_delete_mcp_server,
+            ai_cmd::ai_copy_mcp_server,
+            ai_cmd::ai_mcp_oauth_status,
+            ai_cmd::ai_mcp_oauth_authorize,
+            ai_cmd::ai_mcp_oauth_cancel,
+            ai_cmd::ai_mcp_oauth_refresh,
+            ai_cmd::ai_mcp_oauth_revoke,
+            ai_cmd::ai_list_session_tree,
+            ai_cmd::ai_load_session,
+            ai_cmd::ai_delete_session,
+            ai_cmd::ai_delete_workspace,
+            ai_cmd::ai_export_session,
+            ai_cmd::ai_reveal_session_file,
+            ai_cmd::ai_refresh_session_cache,
             config_cmd::get_config,
             config_cmd::set_config,
             config_cmd::reset_config,
@@ -61,6 +80,24 @@ pub fn builder() -> tauri_specta::Builder<tauri::Wry> {
 #[cfg(test)]
 pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
+        ai_cmd::ai_get_mcp_overview,
+        ai_cmd::ai_get_mcp_servers,
+        ai_cmd::ai_discover_mcp_servers,
+        ai_cmd::ai_toggle_mcp_server,
+        ai_cmd::ai_delete_mcp_server,
+        ai_cmd::ai_copy_mcp_server,
+        ai_cmd::ai_mcp_oauth_status,
+        ai_cmd::ai_mcp_oauth_authorize,
+        ai_cmd::ai_mcp_oauth_cancel,
+        ai_cmd::ai_mcp_oauth_refresh,
+        ai_cmd::ai_mcp_oauth_revoke,
+        ai_cmd::ai_list_session_tree,
+        ai_cmd::ai_load_session,
+        ai_cmd::ai_delete_session,
+        ai_cmd::ai_delete_workspace,
+        ai_cmd::ai_export_session,
+        ai_cmd::ai_reveal_session_file,
+        ai_cmd::ai_refresh_session_cache,
         config_cmd::get_config,
         config_cmd::set_config,
         config_cmd::reset_config,

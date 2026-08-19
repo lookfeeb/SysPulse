@@ -1,0 +1,1105 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI 会话管理 · 双栏设计稿</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Inter, "Microsoft YaHei UI", "PingFang SC", system-ui, sans-serif;
+      color: #17212b;
+      background: #edf1f4;
+      font-synthesis: none;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      min-width: 760px;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    button {
+      border: 0;
+    }
+
+    .icon {
+      width: 16px;
+      height: 16px;
+      flex: 0 0 16px;
+      stroke: currentColor;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      fill: none;
+    }
+
+    .ai-session-prototype {
+      --session-primary-row-height: 136px;
+      --session-secondary-row-height: 72px;
+
+      display: grid;
+      width: 100%;
+      height: 100vh;
+      grid-template-columns: clamp(308px, 28vw, 372px) minmax(0, 1fr);
+      overflow: hidden;
+      background: #fff;
+    }
+
+    .session-sidebar {
+      display: flex;
+      min-width: 0;
+      min-height: 0;
+      flex-direction: column;
+      border-right: 1px solid #dfe4e8;
+      background: #f7f8fa;
+    }
+
+    .session-sidebar-header {
+      height: var(--session-primary-row-height);
+      min-height: var(--session-primary-row-height);
+      flex: 0 0 var(--session-primary-row-height);
+      padding: 20px 20px 15px;
+      border-bottom: 1px solid #e4e8eb;
+      background: #fff;
+    }
+
+    .session-sidebar-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+    }
+
+    .session-sidebar-title h1 {
+      margin: 0;
+      color: #18232d;
+      font-size: 18px;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+    }
+
+    .session-total {
+      display: inline-flex;
+      min-width: 29px;
+      height: 25px;
+      align-items: center;
+      justify-content: center;
+      padding: 0 8px;
+      border-radius: 7px;
+      color: #486170;
+      background: #eef2f4;
+      font-size: 11px;
+      font-weight: 650;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .session-sidebar-subtitle {
+      margin: 5px 0 0;
+      color: #89949d;
+      font-size: 11px;
+      line-height: 1.5;
+    }
+
+    .global-search {
+      position: relative;
+      display: flex;
+      align-items: center;
+      margin-top: 16px;
+      color: #87939c;
+    }
+
+    .global-search > .icon {
+      position: absolute;
+      left: 11px;
+      pointer-events: none;
+    }
+
+    .global-search input {
+      width: 100%;
+      height: 36px;
+      padding: 0 12px 0 35px;
+      border: 1px solid #dbe1e5;
+      border-radius: 9px;
+      outline: none;
+      color: #25313b;
+      background: #f8fafb;
+      font-size: 11px;
+      transition: border-color 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
+    }
+
+    .global-search input:focus {
+      border-color: #88aebe;
+      background: #fff;
+      box-shadow: 0 0 0 3px rgba(58, 118, 145, 0.1);
+    }
+
+    .global-search input::placeholder {
+      color: #a1aab1;
+    }
+
+    .workspace-selector-row {
+      display: flex;
+      height: var(--session-secondary-row-height);
+      min-height: var(--session-secondary-row-height);
+      flex: 0 0 var(--session-secondary-row-height);
+      align-items: center;
+      padding: 9px 14px 10px;
+      border-bottom: 1px solid #e5e9eb;
+      background: #f8f9fa;
+    }
+
+    .workspace-selector {
+      display: flex;
+      width: 100%;
+      height: 52px;
+      align-items: center;
+      gap: 10px;
+      margin: 0;
+      padding: 9px 11px;
+      border: 1px solid #e0e5e8;
+      border-radius: 9px;
+      color: #344651;
+      background: #fff;
+      cursor: pointer;
+      text-align: left;
+    }
+
+    .workspace-selector:hover {
+      border-color: #c7d3d9;
+      background: #fbfcfd;
+    }
+
+    .workspace-symbol {
+      display: grid;
+      width: 32px;
+      height: 32px;
+      flex: 0 0 32px;
+      place-items: center;
+      border-radius: 8px;
+      color: #315f75;
+      background: #eaf1f4;
+    }
+
+    .workspace-copy {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .workspace-copy small,
+    .workspace-copy strong {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .workspace-copy small {
+      color: #929ca4;
+      font-size: 9px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .workspace-copy strong {
+      margin-top: 2px;
+      color: #273641;
+      font-size: 11px;
+      font-weight: 650;
+    }
+
+    .workspace-count {
+      color: #81909a;
+      font-size: 10px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .session-list-scroll {
+      min-height: 0;
+      flex: 1;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-color: #c8d0d5 transparent;
+      scrollbar-width: thin;
+    }
+
+    .session-group {
+      padding: 7px 8px 2px;
+    }
+
+    .session-group-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 9px 8px 7px;
+      color: #929ca4;
+      font-size: 9px;
+      font-weight: 650;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .session-group-title span:last-child {
+      color: #b0b7bc;
+      font-weight: 500;
+      letter-spacing: 0;
+    }
+
+    .session-item {
+      position: relative;
+      display: grid;
+      width: 100%;
+      grid-template-columns: 32px minmax(0, 1fr) auto;
+      align-items: start;
+      gap: 10px;
+      padding: 11px 10px;
+      border-radius: 8px;
+      outline: none;
+      color: #42515c;
+      background: transparent;
+      cursor: pointer;
+      text-align: left;
+      transition: color 0.14s ease, background 0.14s ease;
+    }
+
+    .session-item:hover {
+      background: #eef2f4;
+    }
+
+    .session-item.is-active {
+      color: #1e3442;
+      background: #e7eff3;
+    }
+
+    .session-item.is-active::before {
+      position: absolute;
+      top: 9px;
+      bottom: 9px;
+      left: 0;
+      width: 3px;
+      border-radius: 0 3px 3px 0;
+      background: #3a7895;
+      content: "";
+    }
+
+    .source-logo {
+      display: grid;
+      width: 32px;
+      height: 32px;
+      place-items: center;
+      border: 1px solid #dce3e6;
+      border-radius: 8px;
+      color: #426679;
+      background: #fff;
+      font-size: 9px;
+      font-weight: 750;
+      letter-spacing: -0.02em;
+    }
+
+    .source-logo.codex {
+      color: #267554;
+      background: #edf8f2;
+    }
+
+    .source-logo.claude {
+      color: #966439;
+      background: #fbf3eb;
+    }
+
+    .source-logo.kiro {
+      color: #5b55a2;
+      background: #f0effb;
+    }
+
+    .session-item-copy {
+      min-width: 0;
+    }
+
+    .session-item-copy strong {
+      display: -webkit-box;
+      overflow: hidden;
+      color: #2c3943;
+      font-size: 11px;
+      font-weight: 600;
+      line-height: 1.42;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+    }
+
+    .session-item.is-active .session-item-copy strong {
+      color: #173246;
+    }
+
+    .session-item-meta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 5px;
+      color: #96a0a7;
+      font-size: 9px;
+    }
+
+    .session-item-meta i {
+      width: 2px;
+      height: 2px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .session-time {
+      padding-top: 1px;
+      color: #9aa4ab;
+      font-size: 9px;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    .session-sidebar-footer {
+      display: flex;
+      min-height: 44px;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 0 18px;
+      border-top: 1px solid #e0e5e8;
+      color: #909aa2;
+      background: #fff;
+      font-size: 9px;
+    }
+
+    .session-sidebar-footer button {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 5px 7px;
+      border-radius: 6px;
+      color: #60737f;
+      background: transparent;
+      cursor: pointer;
+    }
+
+    .session-sidebar-footer button:hover {
+      color: #2e6078;
+      background: #eef3f5;
+    }
+
+    .conversation-panel {
+      display: flex;
+      min-width: 0;
+      min-height: 0;
+      flex-direction: column;
+      background: #fff;
+    }
+
+    .conversation-header {
+      display: flex;
+      height: var(--session-primary-row-height);
+      min-height: var(--session-primary-row-height);
+      flex: 0 0 var(--session-primary-row-height);
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 17px 22px;
+      border-bottom: 1px solid #e1e5e8;
+      background: #fff;
+    }
+
+    .conversation-heading {
+      min-width: 0;
+    }
+
+    .conversation-heading-line {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .conversation-heading h2 {
+      margin: 0;
+      overflow: hidden;
+      color: #17232d;
+      font-size: 17px;
+      font-weight: 650;
+      letter-spacing: -0.015em;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .source-badge {
+      display: inline-flex;
+      height: 20px;
+      align-items: center;
+      padding: 0 7px;
+      border-radius: 5px;
+      color: #267554;
+      background: #eaf6ef;
+      font-size: 9px;
+      font-weight: 650;
+    }
+
+    .conversation-path {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 7px;
+      overflow: hidden;
+      color: #88949c;
+      font-size: 10px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .conversation-path .icon {
+      width: 13px;
+      height: 13px;
+      flex-basis: 13px;
+    }
+
+    .conversation-actions {
+      display: flex;
+      align-items: center;
+      flex: 0 0 auto;
+      gap: 6px;
+    }
+
+    .conversation-actions button {
+      display: inline-flex;
+      height: 33px;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 0 10px;
+      border: 1px solid #dbe1e4;
+      border-radius: 8px;
+      color: #4f626e;
+      background: #fff;
+      cursor: pointer;
+      font-size: 10px;
+    }
+
+    .conversation-actions button:hover {
+      border-color: #b8c8cf;
+      color: #285b72;
+      background: #f8fafb;
+    }
+
+    .conversation-actions .icon-only {
+      width: 33px;
+      padding: 0;
+    }
+
+    .conversation-toolbar {
+      display: grid;
+      height: var(--session-secondary-row-height);
+      min-height: var(--session-secondary-row-height);
+      flex: 0 0 var(--session-secondary-row-height);
+      grid-template-columns: auto minmax(180px, 330px) auto;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 22px;
+      border-bottom: 1px solid #e5e9eb;
+      background: #f8f9fa;
+    }
+
+    .conversation-info {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      color: #76848d;
+      font-size: 9px;
+      white-space: nowrap;
+    }
+
+    .conversation-info span {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .conversation-info strong {
+      color: #344a57;
+      font-size: 10px;
+      font-weight: 650;
+    }
+
+    .message-search {
+      position: relative;
+      display: flex;
+      align-items: center;
+      color: #87949d;
+    }
+
+    .message-search .icon {
+      position: absolute;
+      left: 10px;
+      width: 14px;
+      height: 14px;
+      pointer-events: none;
+    }
+
+    .message-search input {
+      width: 100%;
+      height: 32px;
+      padding: 0 10px 0 32px;
+      border: 1px solid #dbe1e4;
+      border-radius: 7px;
+      outline: none;
+      color: #2a3740;
+      background: #fff;
+      font-size: 10px;
+    }
+
+    .message-search input:focus {
+      border-color: #89aebb;
+      box-shadow: 0 0 0 3px rgba(58, 118, 145, 0.08);
+    }
+
+    .message-result {
+      justify-self: end;
+      color: #8b969d;
+      font-size: 9px;
+      white-space: nowrap;
+    }
+
+    .message-result strong {
+      color: #375c6e;
+      font-size: 10px;
+      font-weight: 650;
+    }
+
+    .conversation-scroll {
+      min-width: 0;
+      min-height: 0;
+      flex: 1;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      background: #fff;
+      scrollbar-color: #c8d0d5 transparent;
+      scrollbar-width: thin;
+    }
+
+    .message-stream {
+      width: min(100%, 940px);
+      margin: 0 auto;
+      padding: 8px 30px 48px;
+    }
+
+    .message-row {
+      display: grid;
+      grid-template-columns: 34px minmax(0, 1fr);
+      gap: 13px;
+      padding: 18px 4px;
+      border-bottom: 1px solid #edf0f2;
+    }
+
+    .message-row.is-user {
+      margin: 0 -14px;
+      padding-right: 18px;
+      padding-left: 18px;
+      background: #f8fafc;
+    }
+
+    .message-avatar {
+      display: grid;
+      width: 32px;
+      height: 32px;
+      place-items: center;
+      border: 1px solid #dce3e6;
+      border-radius: 9px;
+      color: #3e6a7e;
+      background: #eef4f6;
+    }
+
+    .message-row.is-user .message-avatar {
+      color: #315f83;
+      background: #eaf2f8;
+    }
+
+    .message-row.is-system .message-avatar {
+      color: #7c673e;
+      background: #f7f2e8;
+    }
+
+    .message-main {
+      min-width: 0;
+    }
+
+    .message-header {
+      display: flex;
+      min-height: 29px;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 6px;
+    }
+
+    .message-author {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .message-author strong {
+      color: #273742;
+      font-size: 11px;
+      font-weight: 650;
+    }
+
+    .message-author span {
+      color: #9aa3aa;
+      font-size: 9px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .message-copy {
+      display: grid;
+      width: 27px;
+      height: 27px;
+      place-items: center;
+      border-radius: 6px;
+      color: #909ba2;
+      background: transparent;
+      cursor: pointer;
+      opacity: 0;
+      transition: opacity 0.14s ease, color 0.14s ease, background 0.14s ease;
+    }
+
+    .message-row:hover .message-copy,
+    .message-copy:focus-visible {
+      opacity: 1;
+    }
+
+    .message-copy:hover {
+      color: #315f75;
+      background: #edf2f4;
+    }
+
+    .message-content {
+      color: #34434d;
+      font-size: 12px;
+      line-height: 1.72;
+      overflow-wrap: anywhere;
+    }
+
+    .message-content p {
+      margin: 0 0 9px;
+    }
+
+    .message-content p:last-child {
+      margin-bottom: 0;
+    }
+
+    .message-content ul {
+      margin: 8px 0;
+      padding-left: 20px;
+    }
+
+    .message-content li + li {
+      margin-top: 4px;
+    }
+
+    .message-content code {
+      padding: 1px 5px;
+      border-radius: 4px;
+      color: #8f3e58;
+      background: #f1f3f5;
+      font-family: Consolas, "SFMono-Regular", monospace;
+      font-size: 11px;
+    }
+
+    .message-content pre {
+      margin: 10px 0 0;
+      padding: 12px 14px;
+      overflow-x: auto;
+      border: 1px solid #263a46;
+      border-radius: 8px;
+      color: #dce6eb;
+      background: #172a35;
+      font-family: Consolas, "SFMono-Regular", monospace;
+      font-size: 11px;
+      line-height: 1.62;
+    }
+
+    .search-highlight {
+      border-radius: 2px;
+      color: inherit;
+      background: #fff0a8;
+    }
+
+    .empty-result {
+      display: none;
+      padding: 60px 20px;
+      color: #8e9aa2;
+      font-size: 11px;
+      text-align: center;
+    }
+
+    ::-webkit-scrollbar {
+      width: 7px;
+      height: 7px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      border: 2px solid transparent;
+      border-radius: 99px;
+      background: rgba(117, 134, 145, 0.38);
+      background-clip: padding-box;
+    }
+
+    @media (max-width: 980px) {
+      .ai-session-prototype {
+        grid-template-columns: 310px minmax(0, 1fr);
+      }
+
+      .conversation-header {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 11px;
+      }
+
+      .conversation-actions {
+        width: 100%;
+      }
+
+      .conversation-toolbar {
+        grid-template-columns: minmax(0, 1fr) auto;
+      }
+
+      .conversation-info {
+        grid-column: 1 / -1;
+      }
+
+      .message-search {
+        grid-column: 1;
+      }
+
+      .message-result {
+        grid-column: 2;
+      }
+
+      .message-stream {
+        padding-inline: 20px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <svg width="0" height="0" aria-hidden="true" style="position:absolute">
+    <symbol id="icon-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.2-3.2"></path></symbol>
+    <symbol id="icon-folder" viewBox="0 0 24 24"><path d="M3 7.5h6l2-2h10v13H3z"></path></symbol>
+    <symbol id="icon-chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"></path></symbol>
+    <symbol id="icon-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5"></path><path d="M4 17v-5h5"></path><path d="M6.1 8.2A7 7 0 0 1 18.4 7L20 12"></path><path d="M17.9 15.8A7 7 0 0 1 5.6 17L4 12"></path></symbol>
+    <symbol id="icon-pin" viewBox="0 0 24 24"><path d="m14 4 6 6-3 1-4 4-1 5-2-2-2-2 5-1 4-4z"></path></symbol>
+    <symbol id="icon-download" viewBox="0 0 24 24"><path d="M12 3v12"></path><path d="m8 11 4 4 4-4"></path><path d="M5 20h14"></path></symbol>
+    <symbol id="icon-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"></circle><circle cx="12" cy="12" r="1"></circle><circle cx="19" cy="12" r="1"></circle></symbol>
+    <symbol id="icon-message" viewBox="0 0 24 24"><path d="M4 5h16v11H8l-4 4z"></path></symbol>
+    <symbol id="icon-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"></ellipse><path d="M4 5v7c0 1.7 3.6 3 8 3s8-1.3 8-3V5"></path><path d="M4 12v7c0 1.7 3.6 3 8 3s8-1.3 8-3v-7"></path></symbol>
+    <symbol id="icon-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"></circle><path d="M4.5 21a7.5 7.5 0 0 1 15 0"></path></symbol>
+    <symbol id="icon-bot" viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="12" rx="3"></rect><path d="M12 3v4"></path><circle cx="9" cy="13" r="1"></circle><circle cx="15" cy="13" r="1"></circle><path d="M9 16h6"></path></symbol>
+    <symbol id="icon-system" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.6v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z"></path></symbol>
+    <symbol id="icon-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></symbol>
+  </svg>
+
+  <main class="ai-session-prototype">
+    <aside class="session-sidebar">
+      <header class="session-sidebar-header">
+        <div class="session-sidebar-title">
+          <h1>AI 会话</h1>
+          <span class="session-total">17</span>
+        </div>
+        <p class="session-sidebar-subtitle">本机全部项目与 AI 客户端记录</p>
+        <label class="global-search">
+          <svg class="icon"><use href="#icon-search"></use></svg>
+          <input id="session-search" type="search" placeholder="搜索会话、项目或来源" autocomplete="off" />
+        </label>
+      </header>
+
+      <div class="workspace-selector-row">
+        <button class="workspace-selector" type="button">
+          <span class="workspace-symbol"><svg class="icon"><use href="#icon-folder"></use></svg></span>
+          <span class="workspace-copy">
+            <small>当前项目</small>
+            <strong>SysPulse</strong>
+          </span>
+          <span class="workspace-count">1 / 9</span>
+          <svg class="icon"><use href="#icon-chevron"></use></svg>
+        </button>
+      </div>
+
+      <div class="session-list-scroll" id="session-list">
+        <section class="session-group" data-group>
+          <div class="session-group-title"><span>今天</span><span>4 条</span></div>
+          <button class="session-item is-active" type="button" data-title="彻底重新设计 AI 会话管理页面" data-source="Codex" data-path="C:\Users\Administrator\Desktop\Dev\SysPulse" data-count="82" data-size="13.1 MB">
+            <span class="source-logo codex">CX</span>
+            <span class="session-item-copy">
+              <strong>彻底重新设计 AI 会话管理页面</strong>
+              <span class="session-item-meta"><span>Codex</span><i></i><span>82 条消息</span></span>
+            </span>
+            <span class="session-time">20:49</span>
+          </button>
+          <button class="session-item" type="button" data-title="修复 Codex 历史索引与孤立会话" data-source="Codex" data-path="C:\Users\Administrator\Desktop\Dev\SysPulse" data-count="46" data-size="8.4 MB">
+            <span class="source-logo codex">CX</span>
+            <span class="session-item-copy">
+              <strong>修复 Codex 历史索引与孤立会话</strong>
+              <span class="session-item-meta"><span>Codex</span><i></i><span>46 条消息</span></span>
+            </span>
+            <span class="session-time">18:26</span>
+          </button>
+          <button class="session-item" type="button" data-title="MCP OAuth Token 持久化与自动续期" data-source="Claude" data-path="C:\Users\Administrator\Desktop\Dev\SysPulse" data-count="31" data-size="4.7 MB">
+            <span class="source-logo claude">CL</span>
+            <span class="session-item-copy">
+              <strong>MCP OAuth Token 持久化与自动续期</strong>
+              <span class="session-item-meta"><span>Claude</span><i></i><span>31 条消息</span></span>
+            </span>
+            <span class="session-time">15:08</span>
+          </button>
+          <button class="session-item" type="button" data-title="Windows LNK1120 编译链路排查" data-source="Kiro" data-path="C:\Users\Administrator\Desktop\Dev\SysPulse" data-count="19" data-size="2.2 MB">
+            <span class="source-logo kiro">KR</span>
+            <span class="session-item-copy">
+              <strong>Windows LNK1120 编译链路排查</strong>
+              <span class="session-item-meta"><span>Kiro</span><i></i><span>19 条消息</span></span>
+            </span>
+            <span class="session-time">11:42</span>
+          </button>
+        </section>
+
+        <section class="session-group" data-group>
+          <div class="session-group-title"><span>昨天</span><span>3 条</span></div>
+          <button class="session-item" type="button" data-title="迁移 KiroHub 会话解析服务" data-source="Codex" data-path="C:\Users\Administrator\Desktop\Dev\KiroHub" data-count="68" data-size="10.6 MB">
+            <span class="source-logo codex">CX</span>
+            <span class="session-item-copy">
+              <strong>迁移 KiroHub 会话解析服务</strong>
+              <span class="session-item-meta"><span>Codex</span><i></i><span>68 条消息</span></span>
+            </span>
+            <span class="session-time">22:17</span>
+          </button>
+          <button class="session-item" type="button" data-title="清理扫描性能优化" data-source="Claude" data-path="C:\Users\Administrator\Desktop\Dev\SysPulse" data-count="27" data-size="3.9 MB">
+            <span class="source-logo claude">CL</span>
+            <span class="session-item-copy">
+              <strong>清理扫描性能优化</strong>
+              <span class="session-item-meta"><span>Claude</span><i></i><span>27 条消息</span></span>
+            </span>
+            <span class="session-time">17:35</span>
+          </button>
+          <button class="session-item" type="button" data-title="硬件监控页面交互调整" data-source="Kiro" data-path="C:\Users\Administrator\Desktop\Dev\SysPulse" data-count="14" data-size="1.6 MB">
+            <span class="source-logo kiro">KR</span>
+            <span class="session-item-copy">
+              <strong>硬件监控页面交互调整</strong>
+              <span class="session-item-meta"><span>Kiro</span><i></i><span>14 条消息</span></span>
+            </span>
+            <span class="session-time">09:12</span>
+          </button>
+        </section>
+      </div>
+
+      <footer class="session-sidebar-footer">
+        <span>索引更新于 20:49</span>
+        <button type="button"><svg class="icon"><use href="#icon-refresh"></use></svg>重新扫描</button>
+      </footer>
+    </aside>
+
+    <section class="conversation-panel">
+      <header class="conversation-header">
+        <div class="conversation-heading">
+          <div class="conversation-heading-line">
+            <h2 id="conversation-title">彻底重新设计 AI 会话管理页面</h2>
+            <span class="source-badge" id="conversation-source">Codex</span>
+          </div>
+          <div class="conversation-path">
+            <svg class="icon"><use href="#icon-folder"></use></svg>
+            <span id="conversation-path">C:\Users\Administrator\Desktop\Dev\SysPulse</span>
+          </div>
+        </div>
+        <div class="conversation-actions">
+          <button type="button"><svg class="icon"><use href="#icon-pin"></use></svg>定位文件</button>
+          <button type="button"><svg class="icon"><use href="#icon-download"></use></svg>导出</button>
+          <button class="icon-only" type="button" aria-label="更多操作"><svg class="icon"><use href="#icon-more"></use></svg></button>
+        </div>
+      </header>
+
+      <div class="conversation-toolbar">
+        <div class="conversation-info">
+          <span><svg class="icon"><use href="#icon-message"></use></svg><strong id="message-total">82</strong> 条消息</span>
+          <span><svg class="icon"><use href="#icon-database"></use></svg><strong id="file-size">13.1 MB</strong></span>
+          <span>更新于 08/17 20:49</span>
+        </div>
+        <label class="message-search">
+          <svg class="icon"><use href="#icon-search"></use></svg>
+          <input id="message-search" type="search" placeholder="搜索当前对话" autocomplete="off" />
+        </label>
+        <span class="message-result">显示 <strong id="visible-message-count">6</strong> 条</span>
+      </div>
+
+      <div class="conversation-scroll">
+        <div class="message-stream" id="message-stream">
+          <article class="message-row is-user" data-message>
+            <div class="message-avatar"><svg class="icon"><use href="#icon-user"></use></svg></div>
+            <div class="message-main">
+              <header class="message-header">
+                <div class="message-author"><strong>用户</strong><span>消息 01</span></div>
+                <button class="message-copy" type="button" aria-label="复制消息"><svg class="icon"><use href="#icon-copy"></use></svg></button>
+              </header>
+              <div class="message-content"><p>会话管理这里不要再做三栏，也不要堆一堆统计卡片。我要最直接的两栏：左边找会话，右边读对话。</p></div>
+            </div>
+          </article>
+
+          <article class="message-row" data-message>
+            <div class="message-avatar"><svg class="icon"><use href="#icon-bot"></use></svg></div>
+            <div class="message-main">
+              <header class="message-header">
+                <div class="message-author"><strong>助手</strong><span>消息 02</span></div>
+                <button class="message-copy" type="button" aria-label="复制消息"><svg class="icon"><use href="#icon-copy"></use></svg></button>
+              </header>
+              <div class="message-content">
+                <p>明白。新版只保留两个工作区：</p>
+                <ul>
+                  <li>左侧集中处理项目切换、搜索和会话选择。</li>
+                  <li>右侧集中呈现标题、操作与完整消息记录。</li>
+                </ul>
+                <p>所有辅助信息收进对应栏位，不再新增第三层导航。</p>
+              </div>
+            </div>
+          </article>
+
+          <article class="message-row is-system" data-message>
+            <div class="message-avatar"><svg class="icon"><use href="#icon-system"></use></svg></div>
+            <div class="message-main">
+              <header class="message-header">
+                <div class="message-author"><strong>系统</strong><span>消息 03</span></div>
+                <button class="message-copy" type="button" aria-label="复制消息"><svg class="icon"><use href="#icon-copy"></use></svg></button>
+              </header>
+              <div class="message-content"><p>当前会话来自 Codex 本地历史索引。正文文件、SQLite 索引和历史记录均已关联。</p></div>
+            </div>
+          </article>
+
+          <article class="message-row is-user" data-message>
+            <div class="message-avatar"><svg class="icon"><use href="#icon-user"></use></svg></div>
+            <div class="message-main">
+              <header class="message-header">
+                <div class="message-author"><strong>用户</strong><span>消息 04</span></div>
+                <button class="message-copy" type="button" aria-label="复制消息"><svg class="icon"><use href="#icon-copy"></use></svg></button>
+              </header>
+              <div class="message-content"><p>消息不要做聊天气泡，长代码和长段落要能舒服地阅读，搜索也要固定在上面。</p></div>
+            </div>
+          </article>
+
+          <article class="message-row" data-message>
+            <div class="message-avatar"><svg class="icon"><use href="#icon-bot"></use></svg></div>
+            <div class="message-main">
+              <header class="message-header">
+                <div class="message-author"><strong>助手</strong><span>消息 05</span></div>
+                <button class="message-copy" type="button" aria-label="复制消息"><svg class="icon"><use href="#icon-copy"></use></svg></button>
+              </header>
+              <div class="message-content">
+                <p>消息已改成统一宽度的文档流，只用浅色背景区分用户消息。代码块维持独立阅读区域：</p>
+                <pre><code>const sessions = await commands.aiListSessionTree();
+const active = sessions.workspaces.find(item =&gt; item.hash === selectedHash);</code></pre>
+              </div>
+            </div>
+          </article>
+
+          <article class="message-row" data-message>
+            <div class="message-avatar"><svg class="icon"><use href="#icon-bot"></use></svg></div>
+            <div class="message-main">
+              <header class="message-header">
+                <div class="message-author"><strong>助手</strong><span>消息 06</span></div>
+                <button class="message-copy" type="button" aria-label="复制消息"><svg class="icon"><use href="#icon-copy"></use></svg></button>
+              </header>
+              <div class="message-content"><p>左侧选择会话后，右侧只更新当前对话，不跳页、不打开抽屉。搜索、导出、定位都留在当前上下文内。</p></div>
+            </div>
+          </article>
+
+          <div class="empty-result" id="empty-result">没有匹配的消息</div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const sessionSearch = document.getElementById("session-search");
+    const sessionItems = Array.from(document.querySelectorAll(".session-item"));
+    const sessionGroups = Array.from(document.querySelectorAll("[data-group]"));
+    const conversationTitle = document.getElementById("conversation-title");
+    const conversationSource = document.getElementById("conversation-source");
+    const conversationPath = document.getElementById("conversation-path");
+    const messageTotal = document.getElementById("message-total");
+    const fileSize = document.getElementById("file-size");
+    const messageSearch = document.getElementById("message-search");
+    const messageRows = Array.from(document.querySelectorAll("[data-message]"));
+    const visibleMessageCount = document.getElementById("visible-message-count");
+    const emptyResult = document.getElementById("empty-result");
+
+    sessionItems.forEach((item) => {
+      item.addEventListener("click", () => {
+        sessionItems.forEach((candidate) => candidate.classList.remove("is-active"));
+        item.classList.add("is-active");
+        conversationTitle.textContent = item.dataset.title || "未命名会话";
+        conversationSource.textContent = item.dataset.source || "未知来源";
+        conversationPath.textContent = item.dataset.path || "目录未知";
+        messageTotal.textContent = item.dataset.count || "0";
+        fileSize.textContent = item.dataset.size || "0 B";
+        document.querySelector(".conversation-scroll").scrollTop = 0;
+      });
+    });
+
+    sessionSearch.addEventListener("input", () => {
+      const query = sessionSearch.value.trim().toLocaleLowerCase("zh-CN");
+      sessionItems.forEach((item) => {
+        const haystack = [item.dataset.title, item.dataset.source, item.dataset.path, item.textContent]
+          .join(" ")
+          .toLocaleLowerCase("zh-CN");
+        item.hidden = Boolean(query) && !haystack.includes(query);
+      });
+      sessionGroups.forEach((group) => {
+        group.hidden = Array.from(group.querySelectorAll(".session-item")).every((item) => item.hidden);
+      });
+    });
+
+    messageSearch.addEventListener("input", () => {
+      const query = messageSearch.value.trim().toLocaleLowerCase("zh-CN");
+      let visible = 0;
+      messageRows.forEach((row) => {
+        const matches = !query || row.textContent.toLocaleLowerCase("zh-CN").includes(query);
+        row.hidden = !matches;
+        if (matches) visible += 1;
+      });
+      visibleMessageCount.textContent = String(visible);
+      emptyResult.style.display = visible === 0 ? "block" : "none";
+    });
+
+    document.querySelectorAll(".message-copy").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const text = button.closest(".message-row").querySelector(".message-content").innerText;
+        try {
+          await navigator.clipboard.writeText(text);
+          const original = button.innerHTML;
+          button.textContent = "✓";
+          button.style.opacity = "1";
+          window.setTimeout(() => {
+            button.innerHTML = original;
+            button.style.opacity = "";
+          }, 1000);
+        } catch {
+          button.style.opacity = "1";
+        }
+      });
+    });
+  </script>
+</body>
+</html>

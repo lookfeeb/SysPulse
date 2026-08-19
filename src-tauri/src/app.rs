@@ -8,7 +8,7 @@ use crate::ipc::events::{emit_config_changed, emit_overlay_config_changed, emit_
 use crate::monitor::Snapshot;
 use crate::sampler::SamplerHandle;
 use crate::storage::{spawn_writer, TrafficStore, WriterHandle};
-use crate::{hw, logging, paths, sampler, storage, tray};
+use crate::{ai, hw, logging, paths, sampler, storage, tray};
 use parking_lot::RwLock;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -40,6 +40,8 @@ pub fn setup(app: &mut App) -> std::result::Result<(), Box<dyn std::error::Error
     if let Err(e) = paths::ensure_dirs() {
         tracing::warn!(?e, "ensure_dirs failed");
     }
+
+    ai::setup(app)?;
 
     // 1. Config
     let config = ConfigManager::load(paths::config_file())?;

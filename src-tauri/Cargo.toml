@@ -1,6 +1,6 @@
 [package]
 name = "syspulse"
-version = "0.1.25"
+version = "0.1.26"
 description = "Lightweight Windows network/system monitor"
 authors = ["SysPulse"]
 edition = "2021"
@@ -21,35 +21,56 @@ name = "syspulse_lib"
 crate-type = ["rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2.6", features = [] }
-embed-manifest = "1.5"
+tauri-build = { version = "=2.6.2", features = [] }
+embed-manifest = "=1.4.0"
+# Tauri 的宽松 Windows 资源依赖已漂移到 edition 2024 的 TOML 1.x。
+# 将资源链固定在仍支持本项目 MSRV Rust 1.78 的最后一组兼容版本。
+tauri-winres = "=0.3.1"
+embed-resource = "=3.0.4"
 
 [dependencies]
-tauri = { version = "2.11", features = ["tray-icon", "image-png", "image-ico"] }
-tauri-plugin-single-instance = "2.4"
-tauri-plugin-dialog = "2.7"
-tauri-plugin-opener = "2.5"
-tauri-plugin-updater = "2.10"
+tauri = { version = "=2.11.2", features = ["tray-icon", "image-png", "image-ico"] }
+tauri-plugin-single-instance = "=2.4.2"
+tauri-plugin-dialog = "=2.7.1"
+tauri-plugin-opener = "=2.5.4"
+tauri-plugin-updater = "=2.10.1"
 
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-toml = "0.9"
+toml = "=0.9.8"
+toml_edit = "=0.22.27"
 
 sysinfo = "0.33"
 chrono = { version = "0.4", features = ["serde"] }
+base64 = "0.22"
+url = "2.5"
+urlencoding = "2.1"
+# uuid 1.23+ 的 fast-rng 依赖链会解析到需要 edition 2024 的
+# cpufeatures 0.3；固定在仍支持项目 MSRV Rust 1.78 的版本。
+uuid = { version = "=1.20.0", features = ["v4"] }
 
-rusqlite = { version = "0.37", features = ["bundled", "chrono"] }
+rusqlite = { version = "=0.32.1", features = ["bundled", "chrono"] }
 r2d2 = "0.8"
-r2d2_sqlite = "0.31"
+r2d2_sqlite = "=0.25.0"
 
 dirs = "6"
 parking_lot = "0.12"
 winreg = "0.56"
+# open 5.3.5+ 在 Windows 路径使用 Rust 1.79 才稳定的
+# std::path::absolute；5.3.3 保持同一 API 且兼容 Rust 1.78。
+open = "=5.3.3"
+rand = "0.8"
+sha2 = "0.10"
+tiny_http = "0.12"
 
 thiserror = "2"
 anyhow = "1"
+axum = "0.8"
+futures-util = "0.3"
+log = "0.4"
+reqwest = { version = "0.12", features = ["json", "cookies", "stream", "rustls-tls-native-roots"], default-features = false }
 
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
@@ -68,6 +89,7 @@ windows = { version = "0.58", features = [
     "Win32_System_Threading",
     "Win32_Storage_FileSystem",
     "Win32_Security",
+    "Win32_Security_Cryptography",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Controls",
     "Win32_Graphics_Gdi",
@@ -87,3 +109,7 @@ strip = "symbols"
 
 [profile.dev]
 opt-level = 1
+# Windows MSVC 的优化增量编译在频繁修改 Serde 派生类型后可能复用失配的
+# LLVM 匿名符号对象，最终表现为随机 LNK2019 / LNK1120。关闭增量编译让
+# 每次本项目代码变更都重新生成一致的 codegen 单元；依赖缓存仍会复用。
+incremental = false

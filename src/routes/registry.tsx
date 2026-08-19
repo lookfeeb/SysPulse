@@ -5,6 +5,7 @@ import {
   FireOutlined,
   HistoryOutlined,
   InfoCircleOutlined,
+  RobotOutlined,
   SettingOutlined,
 } from "@ant-design/icons";
 
@@ -13,6 +14,7 @@ import GeneralPage from "@/routes/GeneralPage";
 import HardwarePage from "@/routes/HardwarePage";
 import HistoryPage from "@/routes/HistoryPage";
 import CleanupPage from "@/routes/CleanupPage";
+import AiManagementPage from "@/routes/AiManagementPage";
 import AboutPage from "@/routes/AboutPage";
 
 export interface PageDef {
@@ -28,6 +30,7 @@ export const PAGES: PageDef[] = [
   { path: "hardware", labelKey: "menu.hardware", icon: <FireOutlined />, element: <HardwarePage /> },
   { path: "history", labelKey: "menu.history", icon: <HistoryOutlined />, element: <HistoryPage /> },
   { path: "cleanup", labelKey: "menu.cleanup", icon: <ClearOutlined />, element: <CleanupPage /> },
+  { path: "ai-management", labelKey: "menu.aiManagement", icon: <RobotOutlined />, element: <AiManagementPage /> },
   { path: "about", labelKey: "menu.about", icon: <InfoCircleOutlined />, element: <AboutPage /> },
 ];
 
