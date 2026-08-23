@@ -9,9 +9,7 @@ import {
   Popconfirm,
   Select,
   Spin,
-  Tag,
   Tooltip,
-  Typography,
 } from "antd";
 import {
   CheckOutlined,
@@ -65,6 +63,9 @@ const SOURCE_META: Record<string, { label: string; color: string }> = {
   "antigravity-ide": { label: "AG IDE", color: "processing" },
   gemini: { label: "Gemini CLI", color: "magenta" },
 };
+
+// Windows 文件名保留字符；控制字符另行按码点过滤，避免源码里出现裸控制字节。
+const RESERVED_FILENAME_CHARS = /[<>:"/\\|?*]/g;
 
 function errorMessage(error: unknown): string {
   if (error && typeof error === "object" && "message" in error) {
@@ -147,7 +148,11 @@ function historyText(item: AiHistoryItem): string {
 }
 
 function safeFileName(value: string): string {
-  const clean = cleanTitle(value).replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").trim();
+  const clean = Array.from(cleanTitle(value))
+    .map((char) => (char.charCodeAt(0) < 32 ? "_" : char))
+    .join("")
+    .replace(RESERVED_FILENAME_CHARS, "_")
+    .trim();
   return (clean || "ai-session").slice(0, 80);
 }
 
@@ -223,8 +228,6 @@ export default function SessionManager() {
   const copyTimer = useRef<number | null>(null);
   const sessionListScrollRef = useRef<HTMLDivElement | null>(null);
   const conversationScrollRef = useRef<HTMLDivElement | null>(null);
-  const sessionSidebarHeaderRef = useRef<HTMLElement | null>(null);
-  const conversationHeaderRef = useRef<HTMLElement | null>(null);
   const sessionSidebarRef = useRef<HTMLElement | null>(null);
   const conversationPanelRef = useRef<HTMLElement | null>(null);
 
@@ -233,6 +236,7 @@ export default function SessionManager() {
   }, []);
 
   useEffect(() => {
+    // 侧栏与会话面板整体接管滚轮，指针停在标题、筛选或分页上时也滚动对应列表。
     const cleanups: Array<() => void> = [];
     if (sessionSidebarRef.current && sessionListScrollRef.current) {
       cleanups.push(bindPanelWheelRouting(
@@ -240,21 +244,9 @@ export default function SessionManager() {
         sessionListScrollRef.current,
       ));
     }
-    if (sessionSidebarHeaderRef.current && sessionListScrollRef.current) {
-      cleanups.push(bindPanelWheelRouting(
-        sessionSidebarHeaderRef.current,
-        sessionListScrollRef.current,
-      ));
-    }
     if (conversationPanelRef.current && conversationScrollRef.current) {
       cleanups.push(bindPanelWheelRouting(
         conversationPanelRef.current,
-        conversationScrollRef.current,
-      ));
-    }
-    if (conversationHeaderRef.current && conversationScrollRef.current) {
-      cleanups.push(bindPanelWheelRouting(
-        conversationHeaderRef.current,
         conversationScrollRef.current,
       ));
     }
@@ -546,75 +538,72 @@ export default function SessionManager() {
     ? workspaceForDelete.sessions.every((summary) => !isReadOnlySession(summary))
     : false;
   const hasMutation = mutatingKey !== null;
+  const totalPages = session ? Math.ceil(session.totalMessages / session.pageSize) : 1;
 
   return (
-    <div className="ai-session-library">
-      <header className="session-sidebar-header" ref={sessionSidebarHeaderRef}>
-        <div className="session-sidebar-title">
-          <h2 id="session-library-title">AI 会话</h2>
-          <span className="session-total">{totalSessions}</span>
-        </div>
-        <p>本机全部项目与 AI 客户端记录</p>
-      </header>
-
+    <div className="aim-sessions">
       <aside
-        className="session-sidebar"
+        className="aim-card aim-ses-side"
         ref={sessionSidebarRef}
-        aria-labelledby="session-library-title"
+        aria-labelledby="aim-workspace-title"
       >
-        <div className="session-workspace-row">
-          <Dropdown
-            trigger={["click"]}
-            classNames={{ root: "session-workspace-dropdown" }}
-            menu={{
-              items: workspaces.map((workspace) => ({
-                key: workspace.hash,
-                label: (
-                  <div className="session-workspace-menu-item">
-                    <span><FolderOutlined /></span>
-                    <div>
-                      <strong>{workspace.name}</strong>
-                      <small title={workspace.path}>{workspace.path}</small>
-                    </div>
-                    <b>{workspace.sessions.length}</b>
+        <Dropdown
+          trigger={["click"]}
+          classNames={{ root: "aim-menu aim-ws-menu" }}
+          menu={{
+            selectedKeys: activeWorkspace ? [activeWorkspace.hash] : [],
+            items: workspaces.map((workspace) => ({
+              key: workspace.hash,
+              label: (
+                <div className="aim-ws-option">
+                  <FolderOutlined />
+                  <div>
+                    <strong>{workspace.name}</strong>
+                    <small title={workspace.path}>{workspace.path}</small>
                   </div>
-                ),
-              })),
-              onClick: ({ key }) => {
-                const workspace = workspaces.find((item) => item.hash === key);
-                if (workspace) openWorkspace(workspace);
-              },
-            }}
+                  <b>{workspace.sessions.length}</b>
+                </div>
+              ),
+            })),
+            onClick: ({ key }) => {
+              const workspace = workspaces.find((item) => item.hash === key);
+              if (workspace) openWorkspace(workspace);
+            },
+          }}
+        >
+          <button
+            type="button"
+            className="aim-ws"
+            disabled={workspaces.length === 0 || hasMutation}
+            aria-label="切换项目工作区"
           >
-            <button
-              type="button"
-              className="session-workspace-selector"
-              disabled={workspaces.length === 0 || hasMutation}
-              aria-label="切换项目工作区"
+            <span className="aim-ws-icon"><FolderOutlined /></span>
+            <span className="aim-ws-copy">
+              <small>当前项目</small>
+              <strong id="aim-workspace-title">{activeWorkspace?.name ?? "暂无项目"}</strong>
+            </span>
+            <span
+              className="aim-ws-count"
+              title={"本机共 " + workspaces.length + " 个项目、" + totalSessions + " 条会话"}
             >
-              <span className="session-workspace-symbol"><FolderOutlined /></span>
-              <span className="session-workspace-copy">
-                <small>当前项目</small>
-                <strong>{activeWorkspace?.name ?? "暂无项目"}</strong>
-              </span>
-              <span className="session-workspace-count">
-                {workspaces.length}
-              </span>
-              <DownOutlined />
-            </button>
-          </Dropdown>
-        </div>
+              {workspaces.length}
+            </span>
+            <DownOutlined />
+          </button>
+        </Dropdown>
 
-        <div className="session-list-toolbar">
+        <div className="aim-ses-tools">
           <Input
             allowClear
-            size="small"
+            className="aim-input aim-input--sm"
             value={sessionQuery}
             prefix={<SearchOutlined />}
             placeholder="搜索会话"
             onChange={(event) => setSessionQuery(event.target.value)}
           />
           <Select
+            className="aim-ses-source"
+            classNames={{ popup: { root: "aim-select-popup" } }}
             size="small"
             value={sourceFilter}
             options={sourceOptions}
@@ -623,10 +612,10 @@ export default function SessionManager() {
           />
         </div>
 
-        <div className="session-list-scroll" ref={sessionListScrollRef}>
+        <div className="aim-ses-scroll" ref={sessionListScrollRef}>
           <Spin spinning={treeLoading}>
             {!activeWorkspace || visibleSessions.length === 0 ? (
-              <div className="session-list-empty">
+              <div className="aim-empty">
                 <Empty
                   image={Empty.PRESENTED_IMAGE_SIMPLE}
                   description={activeWorkspace?.sessions.length
@@ -635,10 +624,11 @@ export default function SessionManager() {
                 />
               </div>
             ) : groupedSessions.map((group) => (
-              <section className="session-group" key={group.key}>
-                <div className="session-group-title">
+              <section className="aim-ses-group" key={group.key}>
+                <div className="aim-ses-group-hd">
                   <span>{group.label}</span>
-                  <span>{group.sessions.length} 条</span>
+                  <i aria-hidden="true" />
+                  <b>{group.sessions.length}</b>
                 </div>
                 {group.sessions.map((summary) => {
                   const active = sameSession(selectedSummary, summary);
@@ -650,18 +640,18 @@ export default function SessionManager() {
                   return (
                     <article
                       key={summary.workspaceHash + ":" + summary.sessionId}
-                      className={"session-sidebar-item" + (active ? " is-active" : "")}
+                      className={"aim-ses-item" + (active ? " is-active" : "")}
                     >
                       <button
                         type="button"
-                        className="session-sidebar-item__select"
+                        className="aim-ses-select"
                         aria-current={active ? "true" : undefined}
                         onClick={() => void selectSession(summary)}
                       >
-                        <span className={"session-source-logo source-" + sourceClass}>
+                        <span className="aim-ses-logo" data-source={sourceClass}>
                           {sourceMonogram(summary.source)}
                         </span>
-                        <span className="session-sidebar-item__copy">
+                        <span className="aim-ses-tx">
                           <strong>{cleanTitle(summary.title)}</strong>
                           <span>
                             {sourceMeta(summary.source).label}
@@ -670,7 +660,7 @@ export default function SessionManager() {
                             {indexOnly && <em>仅索引</em>}
                           </span>
                         </span>
-                        <span className="session-sidebar-item__time">
+                        <span className="aim-ses-time">
                           {formatClock(summary.modifiedAt)}
                         </span>
                       </button>
@@ -680,7 +670,7 @@ export default function SessionManager() {
                           ? "备份会话保持只读，避免破坏恢复数据"
                           : "该来源目前只提供只读索引"}
                         >
-                          <LockOutlined className="session-sidebar-item__readonly" />
+                          <span className="aim-ses-lock"><LockOutlined /></span>
                         </Tooltip>
                       ) : (
                         <Popconfirm
@@ -694,8 +684,7 @@ export default function SessionManager() {
                           onConfirm={() => deleteSession(summary)}
                         >
                           <Button
-                            className={"session-sidebar-item__delete"
-                              + (indexOnly ? " is-index-cleanup" : "")}
+                            className="aim-ses-del"
                             type="text"
                             size="small"
                             danger
@@ -714,187 +703,189 @@ export default function SessionManager() {
           </Spin>
         </div>
 
-        <footer className="session-sidebar-footer">
-          <span>
-            {activeWorkspace
-              ? (visibleSessions.length === activeWorkspace.sessions.length
-                  ? activeWorkspace.sessions.length + " 条项目会话"
-                  : visibleSessions.length + " / " + activeWorkspace.sessions.length + " 条会话")
-              : "未选择项目"}
-          </span>
-          <div>
-            {workspaceForDelete && (
-              <Tooltip
-                title={canDeleteWorkspace
-                  ? "删除当前项目的全部会话"
-                  : "项目包含只读索引或备份会话，不能整组删除"}
-              >
-                <span>
-                  <Popconfirm
-                    title="删除项目会话"
-                    description={"确定删除 “" + workspaceForDelete.name + "” 下的全部会话？此操作不可恢复。"}
-                    okText="全部删除"
-                    cancelText="取消"
-                    okButtonProps={{ danger: true }}
-                    disabled={!canDeleteWorkspace || hasMutation}
-                    onConfirm={() => deleteWorkspace(workspaceForDelete)}
-                  >
-                    <Button
-                      type="text"
-                      size="small"
-                      danger
-                      disabled={!canDeleteWorkspace || (hasMutation
-                        && mutatingKey !== "workspace:" + workspaceForDelete.hash)}
-                      loading={mutatingKey === "workspace:" + workspaceForDelete.hash}
-                      icon={<DeleteOutlined />}
-                    >
-                      删除项目
-                    </Button>
-                  </Popconfirm>
-                </span>
-              </Tooltip>
-            )}
-            <Button
-              type="text"
-              size="small"
-              icon={<ReloadOutlined />}
-              loading={treeLoading}
-              disabled={hasMutation}
-              onClick={() => void refreshTree()}
+        <footer className="aim-ses-foot">
+          {workspaceForDelete && (
+            <Tooltip
+              title={canDeleteWorkspace
+                ? "删除当前项目的全部会话"
+                : "项目包含只读索引或备份会话，不能整组删除"}
             >
-              重新扫描
-            </Button>
-          </div>
+              <span>
+                <Popconfirm
+                  title="删除项目会话"
+                  description={"确定删除 “" + workspaceForDelete.name + "” 下的全部会话？此操作不可恢复。"}
+                  okText="全部删除"
+                  cancelText="取消"
+                  okButtonProps={{ danger: true }}
+                  disabled={!canDeleteWorkspace || hasMutation}
+                  onConfirm={() => deleteWorkspace(workspaceForDelete)}
+                >
+                  <Button
+                    className="aim-act aim-act--sm aim-act--ghost aim-act--danger"
+                    danger
+                    disabled={!canDeleteWorkspace || (hasMutation
+                      && mutatingKey !== "workspace:" + workspaceForDelete.hash)}
+                    loading={mutatingKey === "workspace:" + workspaceForDelete.hash}
+                    icon={<DeleteOutlined />}
+                  >
+                    删除项目
+                  </Button>
+                </Popconfirm>
+              </span>
+            </Tooltip>
+          )}
+          <Button
+            className="aim-act aim-act--sm aim-act--ghost"
+            icon={<ReloadOutlined />}
+            loading={treeLoading}
+            disabled={hasMutation}
+            onClick={() => void refreshTree()}
+          >
+            重新扫描
+          </Button>
         </footer>
       </aside>
 
-      <header className="conversation-header" ref={conversationHeaderRef}>
-        <div className="conversation-heading">
-          <div className="conversation-heading-line">
-            <h2 id="conversation-title">
+      <section
+        className="aim-card aim-conv"
+        ref={conversationPanelRef}
+        aria-labelledby="aim-conv-title"
+      >
+        <header className="aim-conv-hd">
+          <div className="aim-conv-l1">
+            <h2 id="aim-conv-title">
               {selectedSummary ? cleanTitle(selectedSummary.title) : "选择一条会话"}
             </h2>
             {selectedSummary && (
-              <div className="conversation-controls">
-                <span className="conversation-source-badge">
-                  {sourceMeta(selectedSummary.source).label}
-                </span>
-                {readonlySelected && <span className="conversation-state-badge"><LockOutlined />只读</span>}
-                {indexOnlySelected && <span className="conversation-state-badge"><DatabaseOutlined />仅索引</span>}
-                <div className="conversation-info">
-                  <span><MessageOutlined /><strong>{totalMessageCount}</strong> 条消息</span>
-                  <span><DatabaseOutlined /><strong>{formatFileSize(selectedSummary.fileSize)}</strong></span>
-                  <span>更新于 {formatTime(selectedSummary.modifiedAt)}</span>
-                </div>
-                <div className="conversation-actions">
-                  <Tooltip
-                    title={!canRevealSelected
-                      ? (indexOnlySelected
-                          ? "正文文件已不存在，只能查看恢复内容或清理残留索引"
-                          : "该索引会话没有独立正文文件")
-                      : "在资源管理器中定位会话文件"}
+              <>
+                <Tooltip
+                  title={!canRevealSelected
+                    ? (indexOnlySelected
+                        ? "正文文件已不存在，只能查看恢复内容或清理残留索引"
+                        : "该索引会话没有独立正文文件")
+                    : "在资源管理器中定位会话文件"}
+                >
+                  <span>
+                    <Button
+                      className="aim-act aim-act--sm"
+                      aria-label="定位文件"
+                      icon={<FolderOpenOutlined />}
+                      disabled={!canRevealSelected || (hasMutation && mutatingKey !== "reveal")}
+                      loading={mutatingKey === "reveal"}
+                      onClick={() => void revealSession()}
+                    >
+                      定位文件
+                    </Button>
+                  </span>
+                </Tooltip>
+                <Dropdown
+                  trigger={["click"]}
+                  classNames={{ root: "aim-menu" }}
+                  menu={{
+                    items: [
+                      {
+                        key: "markdown",
+                        icon: <FileMarkdownOutlined />,
+                        label: "导出 Markdown",
+                        disabled: hasMutation,
+                        onClick: () => void exportSession("markdown"),
+                      },
+                      {
+                        key: "json",
+                        icon: <DownloadOutlined />,
+                        label: "导出 JSON",
+                        disabled: hasMutation,
+                        onClick: () => void exportSession("json"),
+                      },
+                    ],
+                  }}
+                >
+                  <Button
+                    className="aim-act aim-act--sm"
+                    aria-label="导出会话"
+                    icon={<DownloadOutlined />}
+                    loading={mutatingKey === "export"}
+                    disabled={hasMutation && mutatingKey !== "export"}
                   >
-                    <span>
-                      <Button
-                        aria-label="定位文件"
-                        icon={<FolderOpenOutlined />}
-                        disabled={!canRevealSelected || (hasMutation && mutatingKey !== "reveal")}
-                        loading={mutatingKey === "reveal"}
-                        onClick={() => void revealSession()}
-                      >
-                        定位文件
-                      </Button>
-                    </span>
-                  </Tooltip>
-                  <Dropdown
-                    trigger={["click"]}
-                    menu={{
-                      items: [
-                        {
-                          key: "markdown",
-                          icon: <FileMarkdownOutlined />,
-                          label: "导出 Markdown",
-                          disabled: hasMutation,
-                          onClick: () => void exportSession("markdown"),
-                        },
-                        {
-                          key: "json",
-                          icon: <DownloadOutlined />,
-                          label: "导出 JSON",
-                          disabled: hasMutation,
-                          onClick: () => void exportSession("json"),
-                        },
-                      ],
-                    }}
+                    导出
+                  </Button>
+                </Dropdown>
+                {!readonlySelected && (
+                  <Popconfirm
+                    title={indexOnlySelected ? "清理残留索引" : "删除会话"}
+                    description={indexOnlySelected
+                      ? "正文文件已经不存在。将清理 Codex 中残留的索引和数据库记录，此操作不可恢复。"
+                      : "确定删除当前会话？此操作不可恢复。"}
+                    okText={indexOnlySelected ? "清理索引" : "删除"}
+                    cancelText="取消"
+                    okButtonProps={{ danger: true }}
+                    disabled={hasMutation}
+                    onConfirm={() => deleteSession(selectedSummary)}
                   >
                     <Button
-                      aria-label="导出会话"
-                      icon={<DownloadOutlined />}
-                      loading={mutatingKey === "export"}
-                      disabled={hasMutation && mutatingKey !== "export"}
-                    >
-                      导出
-                    </Button>
-                  </Dropdown>
-                  {!readonlySelected && (
-                    <Popconfirm
-                      title={indexOnlySelected ? "清理残留索引" : "删除会话"}
-                      description={indexOnlySelected
-                        ? "正文文件已经不存在。将清理 Codex 中残留的索引和数据库记录，此操作不可恢复。"
-                        : "确定删除当前会话？此操作不可恢复。"}
-                      okText={indexOnlySelected ? "清理索引" : "删除"}
-                      cancelText="取消"
-                      okButtonProps={{ danger: true }}
+                      className="aim-act aim-act--sm aim-act--icon aim-act--danger"
+                      danger
                       disabled={hasMutation}
-                      onConfirm={() => deleteSession(selectedSummary)}
-                    >
-                      <Button
-                        className="conversation-danger-action"
-                        danger
-                        disabled={hasMutation}
-                        aria-label={indexOnlySelected ? "清理残留索引" : "删除当前会话"}
-                        icon={<DeleteOutlined />}
-                      />
-                    </Popconfirm>
-                  )}
-                </div>
-              </div>
+                      aria-label={indexOnlySelected ? "清理残留索引" : "删除当前会话"}
+                      icon={<DeleteOutlined />}
+                    />
+                  </Popconfirm>
+                )}
+              </>
             )}
           </div>
-        </div>
-      </header>
 
-      <section
-        className="conversation-panel"
-        ref={conversationPanelRef}
-        aria-labelledby="conversation-title"
-      >
-        <div className="conversation-scroll" ref={conversationScrollRef}>
+          {selectedSummary && (
+            <div className="aim-conv-l2">
+              <span className="aim-chip aim-chip--teal">
+                {sourceMeta(selectedSummary.source).label}
+              </span>
+              {readonlySelected && (
+                <span className="aim-chip aim-chip--mute"><LockOutlined />只读</span>
+              )}
+              {indexOnlySelected && (
+                <span className="aim-chip aim-chip--warn"><DatabaseOutlined />仅索引</span>
+              )}
+              <span className="aim-conv-meta">
+                <MessageOutlined /><b>{totalMessageCount}</b> 条消息
+              </span>
+              <i className="aim-conv-dot" aria-hidden="true" />
+              <span className="aim-conv-meta">
+                <DatabaseOutlined /><b>{formatFileSize(selectedSummary.fileSize)}</b>
+              </span>
+              <i className="aim-conv-dot" aria-hidden="true" />
+              <span className="aim-conv-meta">更新于 {formatTime(selectedSummary.modifiedAt)}</span>
+            </div>
+          )}
+        </header>
+
+        <div className="aim-conv-scroll" ref={conversationScrollRef}>
           {!selectedSummary ? (
-            <div className="conversation-empty">
+            <div className="aim-empty">
               <Empty
                 image={Empty.PRESENTED_IMAGE_SIMPLE}
                 description="从左侧选择一条会话"
               />
             </div>
           ) : sessionLoading ? (
-            <div className="conversation-empty">
+            <div className="aim-empty">
               <Spin size="large" description="正在解析会话内容…" />
             </div>
           ) : !session ? (
-            <div className="conversation-empty">
+            <div className="aim-empty">
               <Empty description="会话内容加载失败，请刷新后重试" />
             </div>
           ) : (
-            <div className="message-stream">
+            <div className="aim-msg-stream">
               {session.conversationSummary?.trim() && (
-                <article className="conversation-message is-summary">
-                  <div className="conversation-message__avatar"><FileSearchOutlined /></div>
-                  <div className="conversation-message__main">
-                    <header className="conversation-message__header">
-                      <div><strong>上下文摘要</strong><span>会话持续记忆</span></div>
-                    </header>
-                    <div className="conversation-message__content">
+                <article className="aim-msg is-summary">
+                  <div className="aim-msg-av"><FileSearchOutlined /></div>
+                  <div className="aim-msg-bd">
+                    <div className="aim-msg-hd">
+                      <strong>上下文摘要</strong>
+                      <span>会话持续记忆</span>
+                    </div>
+                    <div className="aim-bubble">
                       <MarkdownContent text={session.conversationSummary} />
                     </div>
                   </div>
@@ -902,53 +893,49 @@ export default function SessionManager() {
               )}
 
               {pagedMessages.length === 0 ? (
-                <div className="conversation-empty is-inline">
+                <div className="aim-empty">
                   <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无消息" />
                 </div>
               ) : pagedMessages.map(({ item, index }) => {
                 const role = item.message.role || "system";
                 const key = (item.message.id || "message") + ":" + index;
+                const copied = copiedMessageKey === key;
                 return (
-                  <article
-                    key={key}
-                    className={"conversation-message role-" + role
-                      + (role === "user" ? " is-user" : "")}
-                  >
-                    <div className="conversation-message__avatar">
+                  <article key={key} className={"aim-msg is-" + role}>
+                    <div className="aim-msg-av">
                       {role === "user"
                         ? <UserOutlined />
                         : role === "assistant"
                           ? <RobotOutlined />
                           : <FileSearchOutlined />}
                     </div>
-                    <div className="conversation-message__main">
-                      <header className="conversation-message__header">
-                        <div>
-                          <strong>{roleLabel(role)}</strong>
-                          <span>消息 {String(index + 1).padStart(2, "0")}</span>
-                          {item.message.isHidden && <Tag>隐藏消息</Tag>}
-                        </div>
-                        <Tooltip title={copiedMessageKey === key ? "已复制" : "复制此条消息"}>
+                    <div className="aim-msg-bd">
+                      <div className="aim-msg-hd">
+                        <strong>{roleLabel(role)}</strong>
+                        <span>消息 {String(index + 1).padStart(2, "0")}</span>
+                        {item.message.isHidden && (
+                          <span className="aim-chip aim-chip--mute">隐藏消息</span>
+                        )}
+                        <Tooltip title={copied ? "已复制" : "复制此条消息"}>
                           <Button
-                            className={"conversation-message__copy"
-                              + (copiedMessageKey === key ? " is-copied" : "")}
+                            className={"aim-msg-copy" + (copied ? " is-copied" : "")}
                             type="text"
                             size="small"
-                            icon={copiedMessageKey === key ? <CheckOutlined /> : <CopyOutlined />}
+                            icon={copied ? <CheckOutlined /> : <CopyOutlined />}
                             aria-label="复制此条消息"
                             onClick={() => void copyMessage(item, key)}
                           />
                         </Tooltip>
-                      </header>
-                      <div className="conversation-message__content">
+                      </div>
+                      <div className="aim-bubble">
                         {item.message.content.length === 0 ? (
-                          <Typography.Text type="secondary">空消息</Typography.Text>
+                          <span className="aim-msg-void">空消息</span>
                         ) : item.message.content.map((content, contentIndex) => (
                           <div key={key + ":" + contentIndex}>
                             {content.type && content.type !== "text" && (
-                              <Tag className="conversation-message__type" variant="filled">
+                              <span className="aim-chip aim-chip--violet aim-msg-type">
                                 {content.type}
-                              </Tag>
+                              </span>
                             )}
                             <MarkdownContent text={content.text} />
                           </div>
@@ -958,26 +945,24 @@ export default function SessionManager() {
                   </article>
                 );
               })}
-
-              {session.totalMessages > session.pageSize && (
-                <footer className="conversation-pagination">
-                  <span>
-                    第 {messagePage} / {Math.ceil(session.totalMessages / session.pageSize)} 页
-                  </span>
-                  <Pagination
-                    size="small"
-                    current={messagePage}
-                    pageSize={session.pageSize}
-                    total={session.totalMessages}
-                    showSizeChanger={false}
-                    disabled={sessionLoading || hasMutation}
-                    onChange={(page) => void changeMessagePage(page)}
-                  />
-                </footer>
-              )}
             </div>
           )}
         </div>
+
+        {session && session.totalMessages > session.pageSize && (
+          <footer className="aim-conv-page">
+            <span>第 {messagePage} / {totalPages} 页 · 共 {session.totalMessages} 条消息</span>
+            <Pagination
+              size="small"
+              current={messagePage}
+              pageSize={session.pageSize}
+              total={session.totalMessages}
+              showSizeChanger={false}
+              disabled={sessionLoading || hasMutation}
+              onChange={(page) => void changeMessagePage(page)}
+            />
+          </footer>
+        )}
       </section>
     </div>
   );

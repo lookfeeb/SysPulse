@@ -1,0 +1,901 @@
+/* ==========================================================================
+   AI 管理中心 —— 外壳 / 共用控件 / MCP 控制台
+   画布：窗口 1000x680（最小 800x560），左侧菜单 176px，内容区 padding 20/24
+   ========================================================================== */
+
+/* 令牌必须挂在 :root：Dropdown / Select 等弹层通过 portal 渲染到 body，
+   放在 .ai-management-page 上会导致弹层内的 var() 全部取不到值。 */
+:root {
+  --aim-panel: #ffffff;
+  --aim-panel-sub: #f7f9fc;
+  --aim-panel-sunk: #f2f5fa;
+  --aim-line: #e4eaf2;
+  --aim-line-soft: #edf1f7;
+
+  --aim-ink: #12233a;
+  --aim-ink-2: #46596f;
+  --aim-ink-3: #7b8ba0;
+  --aim-ink-4: #a3b0c1;
+
+  --aim-brand: #2f81cf;
+  --aim-brand-deep: #1b5f9e;
+  --aim-brand-soft: #e9f2fb;
+  --aim-brand-line: #c6dff5;
+
+  --aim-teal: #0e9aa4;
+  --aim-teal-soft: #e4f6f6;
+  --aim-amber: #bd7d15;
+  --aim-amber-soft: #fdf3e0;
+  --aim-green: #12a15c;
+  --aim-green-soft: #e6f6ec;
+  --aim-red: #d9534f;
+  --aim-red-soft: #fdecec;
+  --aim-violet: #6a5ce0;
+
+  --aim-mono: "Cascadia Mono", Consolas, "SFMono-Regular", monospace;
+  --aim-sh-1: 0 1px 2px rgba(16, 42, 72, 0.05);
+  --aim-sh-pop: 0 14px 40px -10px rgba(16, 42, 72, 0.3);
+}
+
+.ai-management-page {
+  display: flex;
+  height: calc(100vh - 40px);
+  min-height: 460px;
+  min-width: 0;
+  flex-direction: column;
+  gap: 12px;
+  color: var(--aim-ink);
+}
+
+.ai-management-page *,
+.ai-management-page *::before,
+.ai-management-page *::after {
+  box-sizing: border-box;
+}
+
+/* ---------- 顶部条 ---------- */
+.aim-top {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 14px;
+  padding: 9px 12px 9px 10px;
+  border: 1px solid var(--aim-line);
+  border-radius: 13px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0)), var(--aim-panel);
+  box-shadow: var(--aim-sh-1);
+}
+
+.aim-mark {
+  position: relative;
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  place-items: center;
+  border-radius: 11px;
+  color: #fff;
+  background: linear-gradient(145deg, #4a9ee6 0%, #2f81cf 45%, #1d6bb4 100%);
+  box-shadow: 0 6px 14px -6px rgba(31, 107, 176, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  font-size: 19px;
+}
+
+.aim-mark::after {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--aim-green);
+  box-shadow: 0 0 0 2px var(--aim-panel);
+  content: "";
+}
+
+.aim-title {
+  min-width: 0;
+  margin-right: auto;
+}
+
+.aim-title h1 {
+  margin: 0;
+  color: var(--aim-ink);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  line-height: 1.3;
+}
+
+.aim-title p {
+  margin: 1px 0 0;
+  overflow: hidden;
+  color: var(--aim-ink-3);
+  font-size: 11.5px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 分段导航 */
+.aim-tabs {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  padding: 3px;
+  border-radius: 11px;
+  background: var(--aim-panel-sunk);
+  box-shadow: inset 0 0 0 1px var(--aim-line-soft);
+}
+
+.aim-tabs-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: calc(50% - 3px);
+  height: 30px;
+  border-radius: 8px;
+  background: var(--aim-panel);
+  box-shadow: 0 2px 6px -1px rgba(16, 42, 72, 0.18), 0 0 0 1px var(--aim-brand-line);
+  transition: transform 0.26s cubic-bezier(0.4, 0.9, 0.3, 1);
+  pointer-events: none;
+}
+
+.aim-tabs[data-active="sessions"] .aim-tabs-thumb {
+  transform: translateX(100%);
+}
+
+.aim-tabs button {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  min-width: 104px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 13px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--aim-ink-3);
+  background: transparent;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.16s ease;
+}
+
+.aim-tabs button.is-active {
+  color: var(--aim-brand-deep);
+}
+
+.aim-tabs button:focus-visible {
+  outline: 2px solid var(--aim-brand);
+  outline-offset: 1px;
+}
+
+.aim-trust {
+  display: flex;
+  height: 26px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  padding: 0 9px;
+  border-radius: 8px;
+  color: var(--aim-green);
+  background: var(--aim-green-soft);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ---------- 工作区 ---------- */
+.aim-workbench {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+}
+
+.aim-view {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+}
+
+.aim-view[hidden] {
+  display: none;
+}
+
+/* ---------- 共用：面板 ---------- */
+.aim-card {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  border: 1px solid var(--aim-line);
+  border-radius: 13px;
+  background: var(--aim-panel);
+  box-shadow: var(--aim-sh-1);
+}
+
+.aim-card-hd {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 8px;
+  padding: 10px 13px;
+  border-bottom: 1px solid var(--aim-line-soft);
+}
+
+.aim-card-hd-text {
+  min-width: 0;
+  margin-right: auto;
+}
+
+.aim-card-hd-text strong {
+  display: block;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aim-card-hd-text span {
+  display: block;
+  margin-top: 1px;
+  overflow: hidden;
+  color: var(--aim-ink-3);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- 共用：按钮（覆盖 antd） ---------- */
+.aim-act.ant-btn {
+  display: inline-flex;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--aim-line);
+  border-radius: 9px;
+  color: var(--aim-ink-2);
+  background: var(--aim-panel);
+  box-shadow: none;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.aim-act.ant-btn > .ant-btn-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.aim-act.ant-btn:not(:disabled):hover {
+  border-color: var(--aim-brand-line);
+  color: var(--aim-brand-deep);
+  background: var(--aim-brand-soft);
+}
+
+.aim-act.ant-btn:disabled {
+  color: var(--aim-ink-4);
+  background: var(--aim-panel-sub);
+}
+
+.aim-act--primary.ant-btn {
+  border-color: transparent;
+  color: #fff;
+  background: linear-gradient(160deg, #3d93dd, #2470b8);
+  box-shadow: 0 5px 12px -6px rgba(31, 107, 176, 0.9);
+}
+
+.aim-act--primary.ant-btn:not(:disabled):hover {
+  border-color: transparent;
+  color: #fff;
+  background: linear-gradient(160deg, #4c9fe6, #2b7cc4);
+}
+
+.aim-act--ghost.ant-btn {
+  border-color: transparent;
+  background: transparent;
+}
+
+.aim-act--ghost.ant-btn:not(:disabled):hover {
+  border-color: transparent;
+  background: var(--aim-panel-sunk);
+}
+
+.aim-act--danger.ant-btn:not(:disabled):hover {
+  border-color: #f0c2c2;
+  color: var(--aim-red);
+  background: var(--aim-red-soft);
+}
+
+.aim-act--icon.ant-btn {
+  width: 28px;
+  padding: 0;
+}
+
+.aim-act--sm.ant-btn {
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 8px;
+  font-size: 11.5px;
+}
+
+.aim-act--sm.aim-act--icon.ant-btn {
+  width: 24px;
+  padding: 0;
+}
+
+/* ---------- 共用：芯片 ---------- */
+.aim-chip {
+  display: inline-flex;
+  height: 19px;
+  align-items: center;
+  gap: 4px;
+  padding: 0 7px;
+  border-radius: 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.aim-chip .anticon {
+  font-size: 11px;
+}
+
+.aim-chip--type {
+  color: var(--aim-ink-3);
+  background: var(--aim-panel-sunk);
+  font-family: var(--aim-mono);
+  letter-spacing: 0.06em;
+}
+
+.aim-chip--ok { color: var(--aim-green); background: var(--aim-green-soft); }
+.aim-chip--warn { color: var(--aim-amber); background: var(--aim-amber-soft); }
+.aim-chip--err { color: var(--aim-red); background: var(--aim-red-soft); }
+.aim-chip--info { color: var(--aim-brand-deep); background: var(--aim-brand-soft); }
+.aim-chip--mute { color: var(--aim-ink-4); background: var(--aim-panel-sunk); }
+.aim-chip--teal { color: var(--aim-teal); background: var(--aim-teal-soft); }
+.aim-chip--violet { color: var(--aim-violet); background: #eeecfd; }
+
+/* ---------- 共用：输入 / 筛选（覆盖 antd） ---------- */
+.aim-input.ant-input-affix-wrapper {
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--aim-line);
+  border-radius: 9px;
+  background: var(--aim-panel-sub);
+  box-shadow: none;
+}
+
+.aim-input.ant-input-affix-wrapper:focus-within {
+  border-color: var(--aim-brand-line);
+  background: var(--aim-panel);
+  box-shadow: 0 0 0 3px rgba(47, 129, 207, 0.1);
+}
+
+.aim-input.ant-input-affix-wrapper .ant-input-prefix {
+  margin-inline-end: 7px;
+  color: var(--aim-ink-4);
+}
+
+.aim-input.ant-input-affix-wrapper .ant-input {
+  background: transparent;
+  font-size: 12px;
+}
+
+.aim-input--sm.ant-input-affix-wrapper {
+  height: 28px;
+}
+
+.aim-seg {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 9px;
+  background: var(--aim-panel-sunk);
+}
+
+.aim-seg button {
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  color: var(--aim-ink-3);
+  background: transparent;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.aim-seg button:hover {
+  color: var(--aim-ink-2);
+}
+
+.aim-seg button.is-active {
+  color: var(--aim-brand-deep);
+  background: var(--aim-panel);
+  box-shadow: 0 1px 3px rgba(16, 42, 72, 0.14);
+}
+
+.aim-seg button:disabled {
+  color: var(--aim-ink-4);
+  cursor: not-allowed;
+}
+
+/* ---------- 共用：开关（覆盖 antd） ---------- */
+.aim-switch.ant-switch {
+  min-width: 34px;
+  height: 19px;
+  line-height: 19px;
+  background: #ccd6e2;
+}
+
+.aim-switch.ant-switch .ant-switch-handle {
+  width: 15px;
+  height: 15px;
+  top: 2px;
+  inset-inline-start: 2px;
+}
+
+.aim-switch.ant-switch.ant-switch-checked {
+  background: linear-gradient(150deg, #48a0e6, #2a78c2);
+}
+
+.aim-switch.ant-switch.ant-switch-checked .ant-switch-handle {
+  inset-inline-start: calc(100% - 17px);
+}
+
+/* ---------- 共用：空态 ---------- */
+.aim-empty {
+  display: grid;
+  min-height: 160px;
+  flex: 1;
+  place-items: center;
+  padding: 24px;
+}
+
+/* ---------- 共用：下拉菜单 ---------- */
+.aim-menu .ant-dropdown-menu {
+  padding: 5px;
+  border-radius: 11px;
+  box-shadow: var(--aim-sh-pop), 0 0 0 1px rgba(16, 42, 72, 0.05);
+}
+
+.aim-menu .ant-dropdown-menu-item {
+  height: 30px;
+  padding: 0 9px;
+  border-radius: 7px;
+  color: var(--aim-ink-2);
+  font-size: 12px;
+}
+
+.aim-menu .ant-dropdown-menu-item-group-title {
+  padding: 6px 9px 4px;
+  color: var(--aim-ink-4);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.aim-select-popup.ant-select-dropdown {
+  padding: 5px;
+  border-radius: 11px;
+  box-shadow: var(--aim-sh-pop), 0 0 0 1px rgba(16, 42, 72, 0.05);
+}
+
+.aim-select-popup .ant-select-item {
+  min-height: 28px;
+  padding: 4px 9px;
+  border-radius: 7px;
+  color: var(--aim-ink-2);
+  font-size: 11.5px;
+}
+
+.aim-select-popup .ant-select-item-option-selected {
+  color: var(--aim-brand-deep);
+  background: var(--aim-brand-soft);
+  font-weight: 600;
+}
+
+/* ==========================================================================
+   视图 A：MCP 控制台
+   ========================================================================== */
+.aim-mcp {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  align-items: stretch;
+  gap: 12px;
+  grid-template-columns: 196px minmax(0, 1fr);
+}
+
+/* 左：客户端矩阵 */
+.aim-mcp-rail {
+  align-self: start;
+  padding: 11px;
+}
+
+.aim-rail-hd {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 0 2px 6px;
+}
+
+.aim-rail-hd strong {
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.aim-rail-hd span {
+  margin-left: auto;
+  color: var(--aim-ink-4);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.aim-client {
+  display: grid;
+  width: 100%;
+  padding: 9px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  background: transparent;
+  column-gap: 9px;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  row-gap: 2px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.16s ease, border-color 0.16s ease;
+}
+
+.aim-client + .aim-client {
+  margin-top: 3px;
+}
+
+.aim-client:hover:not(:disabled) {
+  background: var(--aim-panel-sub);
+}
+
+.aim-client.is-active {
+  border-color: var(--aim-brand-line);
+  background: var(--aim-brand-soft);
+  box-shadow: 0 4px 12px -8px rgba(31, 107, 176, 0.9);
+}
+
+.aim-client:disabled {
+  cursor: not-allowed;
+}
+
+.aim-client:focus-visible {
+  outline: 2px solid var(--aim-brand);
+  outline-offset: 1px;
+}
+
+.aim-client-mono {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 9px;
+  grid-area: 1 / 1 / 3 / 2;
+  color: #fff;
+  background: linear-gradient(150deg, #8fa4bd, #6d829c);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.aim-client[data-client="codex"] .aim-client-mono {
+  background: linear-gradient(150deg, #4bb3a4, #12897f);
+}
+
+.aim-client[data-client="kiro"] .aim-client-mono {
+  background: linear-gradient(150deg, #7d7ae8, #5548c8);
+}
+
+.aim-client[data-client="claude-cli"] .aim-client-mono {
+  background: linear-gradient(150deg, #e59355, #cf6d2c);
+}
+
+.aim-client-name {
+  min-width: 0;
+  align-self: end;
+  overflow: hidden;
+  grid-area: 1 / 2 / 2 / 3;
+  color: var(--aim-ink);
+  font-size: 12.5px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aim-client-desc {
+  min-width: 0;
+  overflow: hidden;
+  grid-area: 2 / 2 / 3 / 3;
+  color: var(--aim-ink-3);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aim-client-ratio {
+  align-self: center;
+  grid-area: 1 / 3 / 3 / 4;
+  color: var(--aim-ink-3);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.aim-client-ratio b {
+  color: var(--aim-ink);
+}
+
+.aim-client.is-active .aim-client-ratio b {
+  color: var(--aim-brand-deep);
+}
+
+.aim-rail-split {
+  height: 1px;
+  margin: 9px 2px;
+  background: var(--aim-line-soft);
+}
+
+.aim-rail-stats {
+  display: grid;
+  gap: 7px;
+  grid-template-columns: 1fr 1fr;
+}
+
+.aim-rail-stat {
+  padding: 8px 9px;
+  border-radius: 10px;
+  background: var(--aim-panel-sunk);
+}
+
+.aim-rail-stat span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--aim-ink-3);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.aim-rail-stat span .anticon {
+  font-size: 11px;
+}
+
+.aim-rail-stat b {
+  display: block;
+  margin-top: 2px;
+  font-size: 17px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.aim-rail-stat--accent {
+  background: var(--aim-green-soft);
+}
+
+.aim-rail-stat--accent b,
+.aim-rail-stat--accent span {
+  color: var(--aim-green);
+}
+
+/* 右：服务器工作区 */
+.aim-mcp-work {
+  min-width: 0;
+  min-height: 0;
+}
+
+.aim-mcp-alert.ant-alert {
+  margin: 11px 13px 0;
+  border-radius: 10px;
+}
+
+.aim-mcp-tools {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 8px;
+  padding: 9px 13px;
+  border-bottom: 1px solid var(--aim-line-soft);
+  background: var(--aim-panel-sub);
+}
+
+.aim-mcp-tools .aim-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.aim-mcp-count {
+  color: var(--aim-ink-4);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.aim-srv-scroll {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: auto;
+}
+
+.aim-srv-scroll > .ant-spin-nested-loading,
+.aim-srv-scroll > .ant-spin-nested-loading > .ant-spin-container {
+  display: flex;
+  min-height: 100%;
+  flex: 1;
+  flex-direction: column;
+}
+
+.aim-srv {
+  position: relative;
+  display: grid;
+  align-items: center;
+  padding: 11px 13px;
+  column-gap: 11px;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  transition: background 0.14s ease;
+}
+
+.aim-srv + .aim-srv {
+  box-shadow: inset 0 1px 0 var(--aim-line-soft);
+}
+
+.aim-srv:hover {
+  background: var(--aim-panel-sub);
+}
+
+.aim-srv::before {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 0;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: transparent;
+  content: "";
+  transition: background 0.16s ease;
+}
+
+.aim-srv:hover::before {
+  background: var(--aim-brand-line);
+}
+
+.aim-srv.is-disabled {
+  background: repeating-linear-gradient(135deg, transparent 0 8px, rgba(120, 140, 165, 0.035) 8px 16px);
+}
+
+.aim-srv.is-disabled .aim-srv-name > strong {
+  color: var(--aim-ink-3);
+}
+
+.aim-srv-icon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 10px;
+  font-size: 16px;
+}
+
+.aim-srv-icon.is-remote {
+  color: var(--aim-teal);
+  background: var(--aim-teal-soft);
+}
+
+.aim-srv-icon.is-local {
+  color: var(--aim-amber);
+  background: var(--aim-amber-soft);
+}
+
+.aim-srv.is-disabled .aim-srv-icon {
+  color: var(--aim-ink-4);
+  background: var(--aim-panel-sunk);
+}
+
+.aim-srv-body {
+  min-width: 0;
+}
+
+.aim-srv-name {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.aim-srv-name > strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12.5px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aim-srv-endpoint {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  margin-top: 3px;
+  color: var(--aim-ink-3);
+}
+
+.aim-srv-endpoint .anticon {
+  flex: 0 0 auto;
+  font-size: 11px;
+  opacity: 0.75;
+}
+
+.aim-srv-endpoint code {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--aim-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aim-srv-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.aim-srv-more.ant-btn {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.aim-srv:hover .aim-srv-more.ant-btn,
+.aim-srv-more.ant-btn:focus-visible,
+.aim-srv-more.ant-dropdown-open.ant-btn {
+  opacity: 1;
+}
+
+/* ---------- 窄窗自适应 ---------- */
+@media (max-width: 900px) {
+  .aim-mcp {
+    grid-template-columns: 168px minmax(0, 1fr);
+  }
+
+  .aim-title p,
+  .aim-trust {
+    display: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .aim-mcp {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .aim-mcp-rail {
+    align-self: stretch;
+  }
+}

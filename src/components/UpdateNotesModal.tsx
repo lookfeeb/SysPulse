@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Modal, Skeleton, Tag, Typography, Divider } from "antd";
+import { Modal, Skeleton } from "antd";
 import {
   CloudDownloadOutlined,
   FileTextOutlined,
@@ -8,8 +8,7 @@ import {
 } from "@ant-design/icons";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
-
-const { Text } = Typography;
+import "./UpdateNotesModal.css";
 
 marked.setOptions({
   gfm: true,
@@ -24,6 +23,14 @@ interface Props {
   loading?: boolean;
   publishDate?: string;
   onClose: () => void;
+}
+
+/**
+ * 发行说明按 `【分类】` 独占一行的约定分组书写，但 Markdown 里它只是普通段落。
+ * 先提升成三级标题，正文才能拿到真正的分节层级（顺带去掉方括号）。
+ */
+function promoteGroupHeadings(source: string): string {
+  return source.replace(/^[ \t]*【[ \t]*(.+?)[ \t]*】[ \t]*$/gm, "### $1");
 }
 
 export default function UpdateNotesModal({
@@ -48,7 +55,9 @@ export default function UpdateNotesModal({
     setHtml(null);
     (async () => {
       try {
-        const raw = await marked.parse(trimmed || "_暂无更新说明_");
+        const raw = await marked.parse(
+          trimmed ? promoteGroupHeadings(trimmed) : "_暂无更新说明_",
+        );
         if (cancelled) return;
         const clean = DOMPurify.sanitize(raw, {
           FORBID_TAGS: ["script", "style", "iframe", "object", "embed", "form"],
@@ -71,6 +80,7 @@ export default function UpdateNotesModal({
 
   return (
     <Modal
+      className="unm-modal"
       open={open}
       onCancel={onClose}
       onOk={onClose}
@@ -79,92 +89,54 @@ export default function UpdateNotesModal({
       footer={null}
       styles={{
         body: { padding: 0 },
-        container: { borderRadius: 12, overflow: "hidden" },
+        container: { borderRadius: 14, overflow: "hidden" },
       }}
       destroyOnHidden
     >
-      {/* Header */}
-      <div
-        style={{
-          background: isCurrent
-            ? "linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)"
-            : "linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)",
-          padding: "20px 24px 16px",
-          borderBottom: "1px solid #e5e7eb",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div
-            style={{
-              width: 36,
-              height: 36,
-              borderRadius: 10,
-              background: isCurrent ? "#3388cc" : "#22c55e",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              flexShrink: 0,
-            }}
-          >
-            {isCurrent ? (
-              <FileTextOutlined style={{ fontSize: 16, color: "#fff" }} />
-            ) : (
-              <CloudDownloadOutlined style={{ fontSize: 16, color: "#fff" }} />
-            )}
+      <header className="unm-head" data-variant={isCurrent ? "current" : "update"}>
+        <div className="unm-head-row">
+          <div className="unm-mark">
+            {isCurrent ? <FileTextOutlined /> : <CloudDownloadOutlined />}
           </div>
-          <div>
-            <Text style={{ fontSize: 16, fontWeight: 700, display: "block", color: "#111827" }}>
+          <div className="unm-head-text">
+            <h2 className="unm-title">
               {isCurrent ? "当前版本更新日志" : "发现新版本"}
-            </Text>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
-              <Tag
-                icon={<TagOutlined />}
-                color={isCurrent ? "blue" : "green"}
-                style={{ margin: 0, fontWeight: 600 }}
-              >
+            </h2>
+            <div className="unm-meta">
+              <span className="unm-ver">
+                <TagOutlined />
                 v{version}
-              </Tag>
+              </span>
               {!isCurrent && (
-                <Tag color="default" style={{ margin: 0 }}>
-                  当前 v{currentVersion}
-                </Tag>
+                <span className="unm-ver unm-ver--old">当前 v{currentVersion}</span>
               )}
               {publishDate && (
-                <Text type="secondary" style={{ fontSize: 11 }}>
-                  <ClockCircleOutlined style={{ marginRight: 3 }} />
+                <span className="unm-time">
+                  <ClockCircleOutlined />
                   {publishDate}
-                </Text>
+                </span>
               )}
             </div>
           </div>
         </div>
-      </div>
+      </header>
 
-      {/* Content */}
-      <div style={{ padding: "16px 24px 24px" }}>
+      <div className="unm-body">
         {html === null ? (
           <Skeleton active paragraph={{ rows: 5 }} title={false} />
-        ) : (
+        ) : trimmed ? (
           <>
-            {trimmed && (
-              <Divider
-                titlePlacement="start"
-                style={{ margin: "0 0 12px", fontSize: 12, color: "#6b7280" }}
-                styles={{ content: { margin: 0 } }}
-              >
-                更新内容
-              </Divider>
-            )}
+            <div className="unm-label">
+              更新内容
+              <i aria-hidden="true" />
+            </div>
             <div
               className="update-notes"
               dangerouslySetInnerHTML={{ __html: html }}
             />
           </>
-        )}
-        {!trimmed && html !== null && (
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            此版本发行说明为空。
-          </Text>
+        ) : (
+          <span className="unm-void">此版本发行说明为空。</span>
         )}
       </div>
     </Modal>

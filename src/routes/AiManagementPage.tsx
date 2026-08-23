@@ -1,6 +1,5 @@
 import { useState } from "react";
 import {
-  ApiOutlined,
   CloudServerOutlined,
   MessageOutlined,
   RobotOutlined,
@@ -8,27 +7,17 @@ import {
 } from "@ant-design/icons";
 import McpManager from "@/components/AiManagement/McpManager";
 import SessionManager from "@/components/AiManagement/SessionManager";
+import "@/components/AiManagement/AiManagement.css";
 
 type AiWorkspaceView = "mcp" | "sessions";
 
 const VIEWS: ReadonlyArray<{
   key: AiWorkspaceView;
   title: string;
-  description: string;
   icon: React.ReactNode;
 }> = [
-  {
-    key: "mcp",
-    title: "MCP 控制台",
-    description: "管理客户端工具与授权",
-    icon: <CloudServerOutlined />,
-  },
-  {
-    key: "sessions",
-    title: "会话资料库",
-    description: "检索、阅读与导出记录",
-    icon: <MessageOutlined />,
-  },
+  { key: "mcp", title: "MCP 控制台", icon: <CloudServerOutlined /> },
+  { key: "sessions", title: "会话资料库", icon: <MessageOutlined /> },
 ];
 
 export default function AiManagementPage() {
@@ -49,29 +38,15 @@ export default function AiManagementPage() {
 
   return (
     <main className="ai-management-page">
-      <header className="ai-command-header">
-        <div className="ai-command-glow" aria-hidden="true" />
-        <div className="ai-command-intro">
-          <div className="ai-command-mark"><RobotOutlined /></div>
-          <div>
-            <span className="ai-command-eyebrow">LOCAL AI OPERATIONS</span>
-            <h1>AI 管理中心</h1>
-            <p>集中编排本机 AI 客户端的 MCP 能力，并管理跨工具历史会话。</p>
-          </div>
+      <header className="aim-top">
+        <div className="aim-mark"><RobotOutlined /></div>
+        <div className="aim-title">
+          <h1>AI 管理中心</h1>
+          <p>本机 AI 客户端的 MCP 能力与历史会话，统一编排</p>
         </div>
 
-        <div className="ai-command-status" aria-label="AI 管理能力概览">
-          <div>
-            <ApiOutlined />
-            <span><b>3</b> 个 MCP 客户端</span>
-          </div>
-          <div>
-            <SafetyCertificateOutlined />
-            <span><b>本地</b> 数据处理</span>
-          </div>
-        </div>
-
-        <nav className="ai-view-switcher" aria-label="AI 管理功能">
+        <nav className="aim-tabs" data-active={activeView} aria-label="AI 管理功能">
+          <span className="aim-tabs-thumb" aria-hidden="true" />
           {VIEWS.map((view) => (
             <button
               key={view.key}
@@ -80,24 +55,26 @@ export default function AiManagementPage() {
               aria-current={activeView === view.key ? "page" : undefined}
               onClick={() => activateView(view.key)}
             >
-              <span className="ai-view-switcher-icon">{view.icon}</span>
-              <span>
-                <strong>{view.title}</strong>
-                <small>{view.description}</small>
-              </span>
+              {view.icon}
+              {view.title}
             </button>
           ))}
         </nav>
+
+        <span className="aim-trust" title="所有配置与会话都在本机处理，不上传云端">
+          <SafetyCertificateOutlined />
+          全本地
+        </span>
       </header>
 
-      <section className="ai-workbench" aria-live="polite">
+      <section className="aim-workbench" aria-live="polite">
         {mountedViews.has("mcp") && (
-          <div className="ai-workbench-view" hidden={activeView !== "mcp"}>
+          <div className="aim-view" hidden={activeView !== "mcp"}>
             <McpManager />
           </div>
         )}
         {mountedViews.has("sessions") && (
-          <div className="ai-workbench-view" hidden={activeView !== "sessions"}>
+          <div className="aim-view" hidden={activeView !== "sessions"}>
             <SessionManager />
           </div>
         )}

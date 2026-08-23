@@ -1,0 +1,355 @@
+/* ==========================================================================
+   更新日志弹窗（当前版本 / 发现新版本）
+   ========================================================================== */
+
+.unm-modal .ant-modal-close {
+  top: 14px;
+  inset-inline-end: 14px;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  color: #7b8ba0;
+}
+
+.unm-modal .ant-modal-close:hover {
+  color: #12233a;
+  background: rgba(18, 35, 58, 0.06);
+}
+
+/* ---------- 头部 ---------- */
+.unm-head {
+  position: relative;
+  overflow: hidden;
+  padding: 18px 22px 15px;
+  border-bottom: 1px solid #e6ecf4;
+  background:
+    radial-gradient(circle at 86% -46%, rgba(47, 129, 207, 0.18), transparent 58%),
+    linear-gradient(180deg, #f4f9fe, #ffffff);
+}
+
+.unm-head[data-variant="update"] {
+  background:
+    radial-gradient(circle at 86% -46%, rgba(18, 161, 92, 0.18), transparent 58%),
+    linear-gradient(180deg, #f2fbf5, #ffffff);
+}
+
+/* 右上角的点阵装饰 */
+.unm-head::after {
+  position: absolute;
+  top: 12px;
+  right: 54px;
+  width: 130px;
+  height: 62px;
+  background-image: radial-gradient(rgba(47, 129, 207, 0.42) 1px, transparent 1px);
+  background-size: 10px 10px;
+  mask-image: linear-gradient(105deg, transparent, #000);
+  opacity: 0.5;
+  content: "";
+  pointer-events: none;
+}
+
+.unm-head[data-variant="update"]::after {
+  background-image: radial-gradient(rgba(18, 161, 92, 0.42) 1px, transparent 1px);
+}
+
+.unm-head-row {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.unm-mark {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  place-items: center;
+  border-radius: 12px;
+  color: #fff;
+  background: linear-gradient(145deg, #4a9ee6, #2470b8);
+  box-shadow: 0 8px 18px -8px rgba(31, 107, 176, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  font-size: 18px;
+}
+
+.unm-head[data-variant="update"] .unm-mark {
+  background: linear-gradient(145deg, #35c377, #109355);
+  box-shadow: 0 8px 18px -8px rgba(16, 147, 85, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+
+.unm-head-text {
+  min-width: 0;
+}
+
+.unm-title {
+  margin: 0;
+  color: #12233a;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  line-height: 1.3;
+}
+
+.unm-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.unm-ver {
+  display: inline-flex;
+  height: 21px;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  border-radius: 7px;
+  color: #1b5f9e;
+  background: #e4f0fb;
+  font-family: "Cascadia Mono", Consolas, "SFMono-Regular", monospace;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.unm-head[data-variant="update"] .unm-ver {
+  color: #0e7a45;
+  background: #e0f5e9;
+}
+
+.unm-ver .anticon {
+  font-size: 11px;
+}
+
+.unm-ver--old {
+  color: #7b8ba0;
+  background: #f1f4f9;
+}
+
+.unm-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #8b99ab;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.unm-time .anticon {
+  font-size: 11px;
+}
+
+/* ---------- 正文 ---------- */
+.unm-body {
+  padding: 14px 22px 20px;
+}
+
+.unm-label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 10px;
+  color: #8b99ab;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.unm-label i {
+  flex: 1;
+  height: 1px;
+  background: #eaeff6;
+}
+
+.unm-void {
+  color: #8b99ab;
+  font-size: 12px;
+}
+
+/* ---------- Markdown 正文 ---------- */
+.update-notes {
+  max-height: min(58vh, 430px);
+  padding-right: 6px;
+  overflow-y: auto;
+  color: #46596f;
+  font-size: 12.5px;
+  line-height: 1.75;
+  word-break: break-word;
+}
+
+.update-notes > :first-child { margin-top: 0; }
+.update-notes > :last-child { margin-bottom: 0; }
+
+/* 分组标题：正文里的 【分类】 会先被转成 h3 */
+.update-notes h1,
+.update-notes h2,
+.update-notes h3,
+.update-notes h4 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 18px 0 8px;
+  color: #12233a;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.update-notes h1::before,
+.update-notes h2::before,
+.update-notes h3::before,
+.update-notes h4::before {
+  width: 3px;
+  height: 1em;
+  flex: 0 0 3px;
+  border-radius: 2px;
+  background: linear-gradient(#4a9ee6, #2470b8);
+  content: "";
+}
+
+.update-notes h1 { font-size: 15px; }
+.update-notes h2 { font-size: 14px; }
+.update-notes h3 { font-size: 13px; }
+.update-notes h4 { font-size: 12.5px; }
+
+.update-notes p {
+  margin: 8px 0;
+}
+
+/* 无序列表换成自绘圆点，缩进更紧凑 */
+.update-notes ul {
+  margin: 0 0 14px;
+  padding-left: 2px;
+  list-style: none;
+}
+
+.update-notes ul > li {
+  position: relative;
+  margin: 0 0 5px;
+  padding-left: 17px;
+}
+
+.update-notes ul > li::before {
+  position: absolute;
+  top: 0.62em;
+  left: 5px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #a9bccf;
+  content: "";
+}
+
+.update-notes ol {
+  margin: 0 0 14px;
+  padding-left: 22px;
+}
+
+.update-notes ol > li {
+  margin: 0 0 5px;
+  padding-left: 2px;
+}
+
+.update-notes li > ul,
+.update-notes li > ol {
+  margin: 5px 0 0;
+}
+
+.update-notes strong {
+  color: #12233a;
+}
+
+.update-notes a {
+  color: #1b5f9e;
+  text-decoration: none;
+}
+
+.update-notes a:hover {
+  text-decoration: underline;
+}
+
+.update-notes code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  color: #1b5f9e;
+  background: #f1f5fa;
+  font-family: "Cascadia Mono", Consolas, "SFMono-Regular", monospace;
+  font-size: 11.5px;
+}
+
+.update-notes pre {
+  max-width: 100%;
+  max-height: 260px;
+  margin: 8px 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border-radius: 10px;
+  color: #cfe0f2;
+  background: #10192a;
+  font-family: "Cascadia Mono", Consolas, "SFMono-Regular", monospace;
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+.update-notes pre code {
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  font-size: inherit;
+}
+
+.update-notes blockquote {
+  margin: 8px 0;
+  padding: 6px 12px;
+  border-left: 3px solid #c6dff5;
+  border-radius: 0 8px 8px 0;
+  color: #64768c;
+  background: #f7fafd;
+}
+
+.update-notes hr {
+  margin: 14px 0;
+  border: 0;
+  border-top: 1px solid #eaeff6;
+}
+
+.update-notes table {
+  display: block;
+  max-width: 100%;
+  margin: 8px 0;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.update-notes th,
+.update-notes td {
+  padding: 5px 9px;
+  border: 1px solid #e4eaf2;
+  font-size: 12px;
+}
+
+.update-notes th {
+  background: #f4f7fb;
+}
+
+.update-notes img {
+  max-width: 100%;
+}
+
+/* ---------- 滚动条 ---------- */
+.update-notes::-webkit-scrollbar {
+  width: 9px;
+}
+
+.update-notes::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 8px;
+  background: rgba(120, 140, 165, 0.34);
+  background-clip: content-box;
+}
+
+.update-notes::-webkit-scrollbar-thumb:hover {
+  background: rgba(120, 140, 165, 0.55);
+  background-clip: content-box;
+}
