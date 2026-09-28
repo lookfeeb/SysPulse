@@ -1,16 +1,5 @@
 // ===== 列表 =====
 
-/// 收集所有外部来源的 workspace 标识（codex:/claude: 按 cwd，antigravity 单组）
-pub fn list_workspaces() -> Vec<String> {
-    let mut out = Vec::new();
-    for s in collect_all() {
-        if !out.contains(&s.workspace_hash) {
-            out.push(s.workspace_hash.clone());
-        }
-    }
-    out
-}
-
 /// 列出某 workspace 下的会话
 pub fn list_sessions(hash: &str) -> Vec<SessionSummary> {
     collect_all()
@@ -25,6 +14,8 @@ pub fn list_all_sessions() -> Vec<SessionSummary> {
 
 /// 扫描已注册的外部来源，产出全部会话摘要
 fn collect_all() -> Vec<SessionSummary> {
+    // 合并并发刷新，避免每个调用各自启动所有来源的扫描线程。
+    let _scan = SCAN_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Ok(cache) = CACHE.lock() {
         if let Some((t, v)) = cache.as_ref() {
             if t.elapsed() < CACHE_TTL {
@@ -32,9 +23,12 @@ fn collect_all() -> Vec<SessionSummary> {
             }
         }
     }
+    let generation = CACHE_GENERATION.load(std::sync::atomic::Ordering::SeqCst);
     let fresh = scan_all();
     if let Ok(mut cache) = CACHE.lock() {
-        *cache = Some((Instant::now(), fresh.clone()));
+        if generation == CACHE_GENERATION.load(std::sync::atomic::Ordering::SeqCst) {
+            *cache = Some((Instant::now(), fresh.clone()));
+        }
     }
     fresh
 }
@@ -62,6 +56,7 @@ fn collect_source(d: &SourceDef) -> Vec<SessionSummary> {
         return Vec::new();
     };
     let root_available = root.is_dir()
+        || (matches!(d.source, "codex" | "claude") && root.parent().is_some_and(Path::is_dir))
         || (d.source == "codex"
             && codex_archive_root(&root).is_some_and(|path| path.is_dir()));
     if !root_available {

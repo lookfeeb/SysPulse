@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { lazy, type ReactNode } from "react";
 import {
   AppstoreOutlined,
   ClearOutlined,
@@ -9,13 +9,13 @@ import {
   SettingOutlined,
 } from "@ant-design/icons";
 
-import DashboardPage from "@/routes/DashboardPage";
-import GeneralPage from "@/routes/GeneralPage";
-import HardwarePage from "@/routes/HardwarePage";
-import HistoryPage from "@/routes/HistoryPage";
-import CleanupPage from "@/routes/CleanupPage";
-import AiManagementPage from "@/routes/AiManagementPage";
-import AboutPage from "@/routes/AboutPage";
+const DashboardPage = lazy(() => import("@/routes/DashboardPage"));
+const GeneralPage = lazy(() => import("@/routes/GeneralPage"));
+const HardwarePage = lazy(() => import("@/routes/HardwarePage"));
+const HistoryPage = lazy(() => import("@/routes/HistoryPage"));
+const CleanupPage = lazy(() => import("@/routes/CleanupPage"));
+const AiManagementPage = lazy(() => import("@/routes/AiManagementPage"));
+const AboutPage = lazy(() => import("@/routes/AboutPage"));
 
 export interface PageDef {
   path: string;

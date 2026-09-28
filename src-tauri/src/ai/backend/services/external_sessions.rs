@@ -17,11 +17,23 @@ use crate::ai::backend::models::ide_session::{
 use base64::{engine::general_purpose, Engine as _};
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 
+#[path = "external_sessions/file_cache.rs"]
+mod file_cache;
+use file_cache::*;
+#[path = "external_sessions/codex_pages.rs"]
+mod codex_pages;
+use codex_pages::load_codex_file_page;
+#[path = "external_sessions/codex_metadata_cache.rs"]
+mod codex_metadata_cache;
+use codex_metadata_cache::*;
+
 const MAX_TITLE_CHARS: usize = 72;
 const CACHE_TTL: Duration = Duration::from_secs(5);
 
 /// 进程内短期缓存：避免一次刷新中 list_workspaces + N×list_sessions 重复全量扫描
 static CACHE: Mutex<Option<(Instant, Vec<SessionSummary>)>> = Mutex::new(None);
+static SCAN_LOCK: Mutex<()> = Mutex::new(());
+static CACHE_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static SESSION_MUTATION_LOCK: Mutex<()> = Mutex::new(());
 
 pub(crate) fn lock_session_mutations() -> anyhow::Result<std::sync::MutexGuard<'static, ()>> {
@@ -32,7 +44,9 @@ pub(crate) fn lock_session_mutations() -> anyhow::Result<std::sync::MutexGuard<'
 
 /// 失效缓存（刷新按钮强制重扫）
 pub fn invalidate_cache() {
+    clear_codex_metadata_cache();
     if let Ok(mut cache) = CACHE.lock() {
+        CACHE_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         *cache = None;
     }
 }
@@ -271,9 +285,66 @@ struct AntigravityIdeIndexEntry {
 }
 
 include!("external_sessions/common.rs");
-include!("external_sessions/antigravity.rs");
-include!("external_sessions/codex.rs");
-include!("external_sessions/claude.rs");
+#[path = "external_sessions/antigravity/protobuf.rs"]
+mod antigravity_protobuf;
+use antigravity_protobuf::*;
+#[path = "external_sessions/antigravity/metadata.rs"]
+mod antigravity_metadata;
+use antigravity_metadata::*;
+#[path = "external_sessions/antigravity/catalog.rs"]
+mod antigravity_catalog;
+use antigravity_catalog::*;
+#[path = "external_sessions/antigravity/loading.rs"]
+mod antigravity_loading;
+use antigravity_loading::*;
+#[path = "external_sessions/antigravity/deletion.rs"]
+mod antigravity_deletion;
+use antigravity_deletion::*;
+#[path = "external_sessions/antigravity/parsing.rs"]
+mod antigravity_parsing;
+use antigravity_parsing::*;
+#[cfg(test)]
+#[path = "external_sessions/antigravity/tests.rs"]
+mod antigravity_tests;
+#[path = "external_sessions/codex/parsing.rs"]
+mod codex_parsing;
+use codex_parsing::*;
+#[path = "external_sessions/codex/metadata.rs"]
+mod codex_metadata;
+use codex_metadata::*;
+#[path = "external_sessions/codex/catalog.rs"]
+mod codex_catalog;
+use codex_catalog::*;
+#[path = "external_sessions/codex/loading.rs"]
+mod codex_loading;
+use codex_loading::*;
+#[path = "external_sessions/codex/deletion.rs"]
+mod codex_deletion;
+use codex_deletion::*;
+#[path = "external_sessions/claude/parsing.rs"]
+mod claude_parsing;
+#[cfg(test)]
+#[path = "external_sessions/codex/tests.rs"]
+mod codex_delete_tests;
+use claude_parsing::*;
+#[path = "external_sessions/claude/loading.rs"]
+mod claude_loading;
+use claude_loading::*;
+#[path = "external_sessions/claude/summary.rs"]
+mod claude_summary;
+use claude_summary::*;
+#[path = "external_sessions/claude/metadata.rs"]
+mod claude_metadata;
+use claude_metadata::*;
+#[path = "external_sessions/claude/catalog.rs"]
+mod claude_catalog;
+use claude_catalog::*;
+#[path = "external_sessions/claude/deletion.rs"]
+mod claude_deletion;
+use claude_deletion::*;
+#[cfg(test)]
+#[path = "external_sessions/claude/tests.rs"]
+mod claude_tests;
 include!("external_sessions/gemini.rs");
 include!("external_sessions/catalog.rs");
 include!("external_sessions/operations.rs");

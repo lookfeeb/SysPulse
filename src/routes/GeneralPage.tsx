@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { App as AntdApp, Card, Form, InputNumber, Select, Space, Switch, Typography } from "antd";
+import { Alert, App as AntdApp, Button, Card, Form, InputNumber, Select, Space, Spin, Switch, Typography } from "antd";
 import { ThunderboltOutlined, DashboardOutlined, PoweroffOutlined, GlobalOutlined } from "@ant-design/icons";
 import { useTranslation } from "react-i18next";
 import { useConfigStore } from "@/stores/configStore";
@@ -13,6 +13,10 @@ export default function GeneralPage() {
   const { t, i18n } = useTranslation();
   const { message } = AntdApp.useApp();
   const config = useConfigStore((s) => s.config);
+  const configLoading = useConfigStore((s) => s.loading);
+  const configError = useConfigStore((s) => s.error);
+  const firstLoadFailure = useConfigStore((s) => s.firstLoadFailure);
+  const loadConfig = useConfigStore((s) => s.load);
   const patch = useConfigStore((s) => s.patch);
   const autoStartState = useAutostartStore((s) => s.enabled);
   const autoStartStoreLoading = useAutostartStore((s) => s.loading);
@@ -30,7 +34,33 @@ export default function GeneralPage() {
     };
   }, [message, refreshAutoStart]);
 
-  if (!config) return null;
+  const loadDiagnostic = firstLoadFailure ? (
+    <details>
+      <summary>设置读取诊断（首次失败）</summary>
+      <Typography.Paragraph copyable style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", marginTop: 8 }}>
+        {firstLoadFailure}
+      </Typography.Paragraph>
+    </details>
+  ) : null;
+
+  if (!config) {
+    return (
+      <Card title={t("menu.general")}>
+        {configLoading ? (
+          <Space role="status"><Spin size="small" /><span>正在读取设置…</span></Space>
+        ) : (
+          <Alert
+            type={configError ? "error" : "info"}
+            showIcon
+            title={configError ? "无法读取设置" : "设置尚未加载"}
+            description={configError || "请重新读取应用配置。"}
+            action={<Button onClick={() => void loadConfig()}>重新读取</Button>}
+          />
+        )}
+        {loadDiagnostic}
+      </Card>
+    );
+  }
 
   const apply = async (changes: Partial<GeneralConfig>) => {
     try {
@@ -167,6 +197,7 @@ export default function GeneralPage() {
           </Form.Item>
         </Form>
       </Card>
+      {loadDiagnostic}
     </Space>
   );
 }

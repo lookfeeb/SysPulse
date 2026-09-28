@@ -74,23 +74,6 @@ pub fn connection() -> Result<PooledConnection<SqliteConnectionManager>, String>
         .map_err(|e| format!("获取数据库连接失败: {e}"))
 }
 
-/// 生成数据库的一致性单文件快照（`VACUUM INTO`）。
-/// WAL 模式下安全：快照包含全部已提交数据，无需另拷 `-wal`/`-shm` 伴生文件。
-/// 目标文件必须不存在。
-pub fn backup_to(dest: &Path) -> Result<(), String> {
-    if dest.exists() {
-        return Err(format!("备份目标已存在: {}", dest.display()));
-    }
-    if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("创建备份目录失败: {e}"))?;
-    }
-    let conn = connection()?;
-    // VACUUM INTO 不支持参数绑定，目标路径以字符串字面量拼接（转义单引号防注入）
-    let dest_lit = dest.to_string_lossy().replace('\'', "''");
-    conn.execute_batch(&format!("VACUUM INTO '{dest_lit}'"))
-        .map_err(|e| format!("数据库备份失败: {e}"))
-}
-
 /// 读取 KV 表中某 key 的值（table 为内部常量，无注入风险）。
 pub fn kv_get(table: &str, key: &str) -> Result<Option<String>, String> {
     use rusqlite::OptionalExtension;

@@ -286,7 +286,9 @@ pub async fn quit_gracefully(app: AppHandle) {
                     hw_client.shutdown().await;
                 },
                 async {
-                    writer.flush().await;
+                    if let Err(error) = writer.flush().await {
+                        tracing::warn!(?error, "traffic flush failed; pending deltas retained");
+                    }
                 },
                 async {
                     sampler.shutdown().await;

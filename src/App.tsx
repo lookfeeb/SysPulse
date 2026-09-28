@@ -1,7 +1,8 @@
 import { useEffect } from "react";
 import {
-  createMemoryRouter,
-  RouterProvider,
+  MemoryRouter,
+  Routes,
+  Route,
   Navigate,
 } from "react-router-dom";
 import { ConfigProvider, App as AntdApp } from "antd";
@@ -16,21 +17,6 @@ import { bindHwEvents, useHwStore } from "@/stores/hwStore";
 import { useUpdateStore } from "@/stores/updateStore";
 
 import "@/i18n";
-
-const router = createMemoryRouter([
-  {
-    path: "/",
-    element: <AppLayout />,
-    children: [
-      { index: true, element: <Navigate to={DEFAULT_PATH} replace /> },
-      ...PAGES.map((p) => ({ path: p.path, element: p.element })),
-    ],
-  },
-], {
-  future: {
-    v7_relativeSplatPath: true,
-  },
-});
 
 export default function App() {
   const load = useConfigStore((s) => s.load);
@@ -77,7 +63,14 @@ export default function App() {
       }}
     >
       <AntdApp>
-        <RouterProvider router={router} future={{ v7_startTransition: true }} />
+        <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+          <Routes>
+            <Route path="/" element={<AppLayout />}>
+              <Route index element={<Navigate to={DEFAULT_PATH} replace />} />
+              {PAGES.map((page) => <Route key={page.path} path={page.path} element={page.element} />)}
+            </Route>
+          </Routes>
+        </MemoryRouter>
       </AntdApp>
     </ConfigProvider>
   );

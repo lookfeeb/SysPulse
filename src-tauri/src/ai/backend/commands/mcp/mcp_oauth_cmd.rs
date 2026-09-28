@@ -1109,26 +1109,6 @@ pub async fn reconcile_mcp_oauth_proxy_configs() -> Result<usize, String> {
     }
 }
 
-#[tauri::command]
-pub async fn mcp_oauth_authorize(server_key: String) -> Result<(), String> {
-    mcp_oauth_authorize_for_client("kiro".to_string(), server_key).await
-}
-
-#[tauri::command]
-pub async fn mcp_oauth_cancel_authorize(server_key: String) -> Result<(), String> {
-    mcp_oauth_cancel_authorize_for_client("kiro".to_string(), server_key).await
-}
-
-#[tauri::command]
-pub async fn mcp_oauth_status(server_key: String) -> Result<McpOAuthStatus, String> {
-    mcp_oauth_status_for_client("kiro".to_string(), server_key).await
-}
-
-#[tauri::command]
-pub async fn mcp_oauth_revoke(server_key: String) -> Result<String, String> {
-    mcp_oauth_revoke_for_client("kiro".to_string(), server_key).await
-}
-
 #[cfg(test)]
 mod tests {
     use super::{can_reuse_client_id, recover_proxy_endpoint};

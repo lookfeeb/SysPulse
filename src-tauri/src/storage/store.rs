@@ -15,18 +15,17 @@ pub struct TrafficStore {
 impl TrafficStore {
     pub fn open(path: &Path) -> Result<Arc<Self>> {
         let manager = SqliteConnectionManager::file(path)
-            .with_flags(OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE);
+            .with_flags(OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE)
+            .with_init(|conn| {
+                conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;")?;
+                conn.busy_timeout(std::time::Duration::from_secs(5))
+            });
         let pool = Pool::builder()
             .max_size(4)
             .build(manager)
             .map_err(AppError::DbPool)?;
         {
             let conn = pool.get().map_err(AppError::DbPool)?;
-            conn.execute_batch(
-                "PRAGMA journal_mode = WAL;
-                 PRAGMA synchronous  = NORMAL;
-                 PRAGMA foreign_keys = ON;",
-            )?;
             migrations::migrate(&conn)?;
         }
         Ok(Arc::new(Self { pool }))

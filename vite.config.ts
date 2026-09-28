@@ -30,12 +30,6 @@ export default defineConfig({
         main: path.resolve(__dirname, "index.html"),
         overlay: path.resolve(__dirname, "overlay/index.html"),
       },
-      output: {
-        manualChunks: {
-          react: ["react", "react-dom", "react-router-dom"],
-          antd: ["antd"],
-        },
-      },
     },
   },
 });

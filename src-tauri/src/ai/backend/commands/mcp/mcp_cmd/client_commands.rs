@@ -31,16 +31,6 @@ fn server_requires_oauth_revoke(server_type: &str) -> bool {
 }
 
 #[tauri::command]
-pub async fn get_mcp_tool_stats_by_client(client: String) -> Result<McpClientStats, String> {
-    run_blocking_task(move || {
-        let kind = McpClientKind::parse(&client)?;
-        let items = load_mcp_items_for_client(kind)?;
-        Ok(stats_for_items(kind.as_key(), &items))
-    })
-    .await
-}
-
-#[tauri::command]
 pub async fn get_mcp_clients_overview() -> Result<McpClientsOverview, String> {
     run_blocking_task(|| {
         let mut clients = Vec::new();

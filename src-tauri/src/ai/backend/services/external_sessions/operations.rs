@@ -47,7 +47,7 @@ pub fn load_session_page(
     match d.layout {
         Layout::File { .. } if d.source == "codex" => {
             let metadata = if let Some(id) = codex_id_from_path(&path)? {
-                codex_metadata_result(&root)?.remove(&id)
+                codex_metadata_for_id(&root, &id)?
             } else {
                 None
             };
@@ -150,7 +150,7 @@ pub fn load_session(hash: &str, session_id: &str) -> anyhow::Result<IdeSession> 
         Layout::File { .. } if d.source == "codex" => {
             let mut parsed = parse_codex_file(&path)?;
             if let Some(id) = codex_id_from_path(&path)? {
-                if let Some(meta) = codex_metadata_result(&root)?.remove(&id) {
+                if let Some(meta) = codex_metadata_for_id(&root, &id)? {
                     let meta_title = codex_meta_title(&meta);
                     if parsed.cwd.is_empty() {
                         parsed.cwd = meta.cwd;
@@ -316,6 +316,11 @@ fn delete_workspace_unlocked(hash: &str) -> anyhow::Result<()> {
     let workspace = hash.strip_prefix(d.prefix).unwrap_or_default();
     if d.source == "codex" {
         let result = delete_codex_workspace(&root, workspace);
+        invalidate_cache();
+        return result;
+    }
+    if d.source == "claude" {
+        let result = delete_claude_workspace(d, &root, hash);
         invalidate_cache();
         return result;
     }

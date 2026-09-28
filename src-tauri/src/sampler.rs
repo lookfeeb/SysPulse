@@ -6,7 +6,28 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, mpsc};
-use tokio::time::{interval, MissedTickBehavior};
+use tokio::time::{interval_at, Interval, MissedTickBehavior};
+
+fn sampling_interval(milliseconds: u64) -> Interval {
+    let period = Duration::from_millis(milliseconds.max(1));
+    let mut tick = interval_at(tokio::time::Instant::now() + period, period);
+    tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    tick
+}
+
+#[cfg(test)]
+mod interval_tests {
+    use super::*;
+    use futures_util::FutureExt;
+
+    #[tokio::test]
+    async fn initial_and_reconfigured_timers_wait_for_their_period() {
+        for milliseconds in [5000, 6000, 7000] {
+            let mut tick = sampling_interval(milliseconds);
+            assert!(tick.tick().now_or_never().is_none());
+        }
+    }
+}
 
 // ─── Adaptive Interval Engine ───────────────────────────────────────────────
 //
@@ -216,8 +237,7 @@ pub fn spawn(config: Arc<ConfigManager>, writer: WriterHandle) -> SamplerHandle 
         } else {
             current_cfg.general.sample_interval_ms as u64
         };
-        let mut tick = interval(Duration::from_millis(current_interval_ms));
-        tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        let mut tick = sampling_interval(current_interval_ms);
         let mut paused = false;
         let mut adaptive_engine = AdaptiveEngine::new();
 
@@ -243,8 +263,7 @@ pub fn spawn(config: Arc<ConfigManager>, writer: WriterHandle) -> SamplerHandle 
                         let target_ms = adaptive_engine.update(&snap);
                         if target_ms != current_interval_ms {
                             current_interval_ms = target_ms;
-                            tick = interval(Duration::from_millis(current_interval_ms));
-                            tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+                            tick = sampling_interval(current_interval_ms);
                             tracing::debug!(current_interval_ms, "adaptive interval adjusted");
                         }
                     }
@@ -267,8 +286,7 @@ pub fn spawn(config: Arc<ConfigManager>, writer: WriterHandle) -> SamplerHandle 
                         } else {
                             current_interval_ms = new_cfg.general.sample_interval_ms as u64;
                         }
-                        tick = interval(Duration::from_millis(current_interval_ms));
-                        tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+                        tick = sampling_interval(current_interval_ms);
                         tracing::info!(current_interval_ms, adaptive = new_cfg.general.adaptive_interval, "sampler: interval changed");
                     }
                     if let Err(e) = registry.reconfigure(&new_cfg) {
@@ -354,7 +372,9 @@ impl TrafficDeltaTracker {
         self.last_date = Some(today);
 
         if date_changed {
-            writer.flush().await;
+            if let Err(error) = writer.flush().await {
+                tracing::warn!(?error, "traffic flush failed; pending deltas retained");
+            }
         }
     }
 }

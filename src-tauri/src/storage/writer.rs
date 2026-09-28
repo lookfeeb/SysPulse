@@ -16,7 +16,7 @@ pub struct TrafficDelta {
 
 pub enum WriterMsg {
     Delta(TrafficDelta),
-    Flush(tokio::sync::oneshot::Sender<()>),
+    Flush(tokio::sync::oneshot::Sender<crate::error::Result<()>>),
 }
 
 #[derive(Clone)]
@@ -31,20 +31,14 @@ impl WriterHandle {
         }
     }
 
-    pub fn try_send_delta(&self, d: TrafficDelta) {
-        if let Err(e) = self.tx.try_send(WriterMsg::Delta(d)) {
-            tracing::warn!(
-                ?e,
-                "db writer delta dropped because channel is full or closed"
-            );
-        }
-    }
-
-    pub async fn flush(&self) {
+    pub async fn flush(&self) -> crate::error::Result<()> {
         let (tx, rx) = tokio::sync::oneshot::channel();
-        if self.tx.send(WriterMsg::Flush(tx)).await.is_ok() {
-            let _ = rx.await;
-        }
+        self.tx
+            .send(WriterMsg::Flush(tx))
+            .await
+            .map_err(|_| AppError::Other("流量写入任务已停止".into()))?;
+        rx.await
+            .map_err(|_| AppError::Other("流量写入任务未返回结果".into()))?
     }
 }
 
@@ -79,15 +73,18 @@ pub fn spawn_writer(pool: Arc<DbPool>) -> WriterHandle {
                         }
                     }
                     Some(WriterMsg::Flush(reply)) => {
-                        if let Err(e) = flush(&pool, &mut buffer).await {
+                        let result = flush(&pool, &mut buffer).await;
+                        if let Err(e) = &result {
                             tracing::warn!(?e, "db writer manual flush failed");
                         }
-                        let _ = reply.send(());
+                        let _ = reply.send(result);
                     }
                 }
             }
         }
-        let _ = flush(&pool, &mut buffer).await;
+        if let Err(error) = flush(&pool, &mut buffer).await {
+            tracing::error!(?error, pending = buffer.len(), "final traffic flush failed");
+        }
     });
     WriterHandle { tx }
 }
@@ -100,7 +97,11 @@ async fn flush(
         return Ok(());
     }
     let pool = pool.clone();
-    let entries: Vec<_> = buf.drain().collect();
+    // 单一 writer 在等待提交时不会修改缓冲；失败（包括任务失败）保留原批次。
+    let entries: Vec<_> = buf
+        .iter()
+        .map(|(key, value)| (key.clone(), *value))
+        .collect();
     tokio::task::spawn_blocking(move || -> crate::error::Result<()> {
         let mut conn = pool.get().map_err(AppError::DbPool)?;
         let tx = conn.transaction()?;
@@ -126,5 +127,68 @@ async fn flush(
     })
     .await
     .map_err(|e| AppError::Other(format!("join: {e}")))??;
+    buf.clear();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn failed_transaction_retains_deltas_and_retry_commits_once() {
+        let pool = Arc::new(
+            r2d2::Pool::builder()
+                .max_size(1)
+                .build(r2d2_sqlite::SqliteConnectionManager::memory())
+                .unwrap(),
+        );
+        pool.get().unwrap().execute_batch(
+            "CREATE TABLE traffic_daily(date_iso TEXT, luid INTEGER, bytes_recv INTEGER, bytes_sent INTEGER, PRIMARY KEY(date_iso,luid));
+             CREATE TRIGGER reject_write BEFORE INSERT ON traffic_daily BEGIN SELECT RAISE(ABORT, 'busy test'); END;"
+        ).unwrap();
+        let mut buffer = HashMap::from([
+            (("2026-09-28".into(), 1), (100, 200)),
+            (("2026-09-28".into(), 2), (300, 400)),
+        ]);
+        let expected = buffer.clone();
+        assert!(flush(&pool, &mut buffer).await.is_err());
+        assert_eq!(buffer, expected);
+        pool.get()
+            .unwrap()
+            .execute_batch("DROP TRIGGER reject_write;")
+            .unwrap();
+        flush(&pool, &mut buffer).await.unwrap();
+        assert!(buffer.is_empty());
+        flush(&pool, &mut buffer).await.unwrap();
+        let totals: (i64, i64) = pool
+            .get()
+            .unwrap()
+            .query_row(
+                "SELECT SUM(bytes_recv), SUM(bytes_sent) FROM traffic_daily",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(totals, (400, 600));
+    }
+
+    #[tokio::test]
+    async fn manual_flush_reports_writer_failure() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let handle = WriterHandle { tx };
+        let reply = tokio::spawn(async move {
+            if let Some(WriterMsg::Flush(reply)) = rx.recv().await {
+                let _ = reply.send(Err(AppError::Other("write failed".into())));
+            }
+        });
+        assert!(handle
+            .flush()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("write failed"));
+        reply.await.unwrap();
+        assert!(handle.flush().await.is_err());
+    }
 }

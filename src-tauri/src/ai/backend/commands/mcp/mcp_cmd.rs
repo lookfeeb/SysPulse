@@ -4,8 +4,6 @@ mod adapters;
 mod client_commands;
 #[path = "mcp_cmd/discovery.rs"]
 mod discovery;
-#[path = "mcp_cmd/legacy_kiro.rs"]
-mod legacy_kiro;
 #[path = "mcp_cmd/types.rs"]
 pub mod types;
 
@@ -16,5 +14,4 @@ pub use adapters::{
 };
 pub use client_commands::*;
 pub use discovery::*;
-pub use legacy_kiro::*;
 pub use types::{McpClientStats, McpClientsOverview, McpServerItem};

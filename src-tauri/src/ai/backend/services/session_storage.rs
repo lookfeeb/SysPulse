@@ -93,51 +93,6 @@ impl SessionStorage {
         }
     }
 
-    /// 列出所有 workspace
-    pub fn list_workspaces(&self) -> Result<Vec<String>> {
-        let mut workspaces = Vec::new();
-
-        if self.base_path.exists() {
-            // 收集工作区及其修改时间
-            let mut workspace_with_time: Vec<(String, std::time::SystemTime)> = Vec::new();
-
-            for entry in fs::read_dir(&self.base_path)
-                .context("Failed to read workspace-sessions directory")?
-            {
-                let entry = entry?;
-                if entry.file_type()?.is_dir() {
-                    let name = entry.file_name().to_string_lossy().to_string();
-                    let modified = entry.metadata()?.modified()?;
-                    workspace_with_time.push((name, modified));
-                }
-            }
-
-            // 按修改时间倒序排序（最近使用的在前）
-            workspace_with_time.sort_by_key(|item| std::cmp::Reverse(item.1));
-
-            // 只返回名称
-            workspaces = workspace_with_time
-                .into_iter()
-                .map(|(name, _)| name)
-                .collect();
-        }
-
-        // CLI 会话按工作目录(cwd)分组为多个工作区，置顶
-        let mut cli_ws: Vec<String> = Vec::new();
-        for s in self.collect_cli_sessions(None) {
-            let id = format!("{CLI_PREFIX}{}", s.workspace_directory);
-            if !cli_ws.contains(&id) {
-                cli_ws.push(id);
-            }
-        }
-        cli_ws.extend(workspaces);
-        workspaces = cli_ws;
-
-        workspaces.extend(external_sessions::list_workspaces());
-
-        Ok(workspaces)
-    }
-
     /// 一次性列出 workspace 和会话摘要，供前端启动/刷新批量加载
     pub fn list_session_tree(&self) -> Result<SessionTree> {
         let mut workspaces = Vec::new();

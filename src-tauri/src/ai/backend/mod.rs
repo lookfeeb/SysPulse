@@ -8,6 +8,7 @@ pub mod kiro;
 pub mod mcp_oauth;
 pub mod mcp_proxy;
 pub mod models;
+mod oauth_cache;
 pub mod oauth_store;
 pub mod runtime;
 pub mod services;

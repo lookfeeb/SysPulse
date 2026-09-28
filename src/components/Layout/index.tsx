@@ -1,4 +1,5 @@
-import { Layout } from "antd";
+import { Suspense } from "react";
+import { Layout, Spin } from "antd";
 import { Outlet } from "react-router-dom";
 import SideMenu from "./SideMenu";
 import AdminBanner from "./AdminBanner";
@@ -19,7 +20,9 @@ export default function AppLayout() {
           }}
         >
           <AdminBanner />
-          <Outlet />
+          <Suspense fallback={<div role="status" aria-label="正在加载页面"><Spin /></div>}>
+            <Outlet />
+          </Suspense>
         </Content>
       </Layout>
     </Layout>

@@ -16,10 +16,6 @@ import {
 
 const { Text } = Typography;
 
-export default function OverlayPage() {
-  return <OverlaySettingsCard />;
-}
-
 export function OverlaySettingsCard() {
   const config = useConfigStore((s) => s.config);
   const patch = useConfigStore((s) => s.patch);

@@ -2,7 +2,7 @@
 
 use rusqlite::Connection;
 
-#[allow(dead_code)]
+#[cfg(test)]
 pub const MIGRATIONS_LEN: usize = MIGRATIONS.len();
 
 const MIGRATIONS: &[&str] = &[r#"

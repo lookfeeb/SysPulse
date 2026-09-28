@@ -8,6 +8,7 @@ interface ConfigState {
   config: AppConfig | null;
   loading: boolean;
   error: string | null;
+  firstLoadFailure: string | null;
 
   load: () => Promise<void>;
   patch: (p: Partial<AppConfig>) => Promise<void>;
@@ -19,17 +20,23 @@ export const useConfigStore = create<ConfigState>((set) => ({
   config: null,
   loading: false,
   error: null,
+  firstLoadFailure: null,
 
   load: async () => {
     set({ loading: true, error: null });
     try {
       const cfg = await configApi.getConfig();
-      set({ config: cfg, loading: false });
+      set({ config: cfg, loading: false, error: null });
     } catch (e: unknown) {
-      set({
+      const message = e instanceof Error ? e.message : String(e);
+      const code = e instanceof configApi.IpcError ? e.code : "UNKNOWN";
+      // Retain the first failure after a successful retry, without storing config data.
+      set((state) => ({
         loading: false,
-        error: e instanceof Error ? e.message : String(e),
-      });
+        error: message,
+        firstLoadFailure: state.firstLoadFailure ??
+          `${new Date().toISOString()} get_config [${code}] ${message}`.slice(0, 4096),
+      }));
     }
   },
 
