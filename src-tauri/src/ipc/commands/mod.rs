@@ -6,6 +6,7 @@ pub mod history_cmd;
 pub mod hw_cmd;
 pub mod stats_cmd;
 pub mod system_cmd;
+pub mod update_cmd;
 pub mod window_cmd;
 
 #[cfg(not(test))]
@@ -66,6 +67,7 @@ register_commands![
     system_cmd::get_app_info,
     system_cmd::open_path,
     system_cmd::quit_app,
+    update_cmd::download_install_update,
     window_cmd::show_config_window,
     window_cmd::hide_config_window,
     window_cmd::resize_overlay,

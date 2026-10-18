@@ -14,19 +14,17 @@ export default function WorkspacePicker({ workspaces, active, disabled, onSelect
     <label id="aim-workspace-title" htmlFor="aim-workspace-select">项目工作区 <span>{workspaces.length} 个项目</span></label>
     <Select id="aim-workspace-select" aria-labelledby="aim-workspace-title" className="aim-project-select"
       prefix={<FolderOutlined />} value={active?.hash} disabled={disabled || workspaces.length === 0}
-      placeholder="暂无项目" showSearch={{ filterOption: (input, option) =>
-        String(option?.searchText ?? "").toLocaleLowerCase().includes(input.toLocaleLowerCase()) }}
+      placeholder="暂无项目" showSearch={false}
       options={workspaces.map((workspace) => ({ value: workspace.hash, label: workspace.name,
-        searchText: `${workspace.name} ${workspace.path}`, workspace }))}
+        workspace }))}
       optionRender={(option) => <div className="aim-project-option">
         <FolderOutlined /><div><strong>{option.data.workspace.name}</strong><small title={option.data.workspace.path}>{option.data.workspace.path}</small></div>
         <span>{option.data.workspace.sessions.length} 条</span>
       </div>}
       listHeight={280} listItemHeight={56} popupMatchSelectWidth={360}
       classNames={{ popup: { root: "aim-project-popup" } }}
-      notFoundContent={<span className="aim-project-not-found">没有匹配的项目，试试名称或路径</span>}
+      notFoundContent={<span className="aim-project-not-found">暂无可选项目</span>}
       onChange={(hash) => { const next = workspaces.find((w) => w.hash === hash); if (next) onSelect(next); }}
     />
-    <div className="aim-project-path" title={active?.path}>{active?.path ?? "扫描后会在这里显示项目"}</div>
   </div>;
 }

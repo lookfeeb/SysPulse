@@ -23,7 +23,7 @@ import {
 import { busyKey, CLIENTS, FILTERS, isRemoteType, oauthMeta, oauthTooltip, serverKey } from './mcpPresentation';
 import { useMcpManager } from './useMcpManager';
 export default function McpManager() {
-  const { activeClient, setActiveClient, overview, oauthByServer, busy, loading, scanning, loadError, serverQuery, setServerQuery, serverFilter, setServerFilter, loadAll, activeStats, filteredServers, toggleServer, discoverServers, refreshState, authorize, checkOAuth, cancelAuthorize, activeClientMeta, conflictingActionActive, buildMenu } = useMcpManager();
+  const { activeClient, setActiveClient, overview, oauthByServer, busy, loading, scanning, loadError, serverQuery, setServerQuery, serverFilter, setServerFilter, activeStats, filteredServers, toggleServer, discoverServers, refreshState, authorize, checkOAuth, cancelAuthorize, activeClientMeta, conflictingActionActive, buildMenu } = useMcpManager();
   return (
     <div className="aim-mcp">
       <aside className="aim-card aim-mcp-rail">
@@ -112,7 +112,7 @@ export default function McpManager() {
               <Button
                 size="small"
                 disabled={conflictingActionActive}
-                onClick={() => void loadAll()}
+                onClick={() => void refreshState()}
               >
                 重试
               </Button>

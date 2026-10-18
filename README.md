@@ -8,7 +8,7 @@ Windows 桌面系统监控工具，使用 Tauri 2、React 19、TypeScript 和 .N
 - **硬件监控**：采集 CPU、GPU、内存、磁盘、主板和风扇数据。区分未知值与 `0 RPM`；过期快照停止显示。
 - **风扇控制**：提供固件自动、手动 PWM 和 CPU 温控曲线。只有确认转速与控制通道关联后才允许写入；CPU 温度缺失、过期、达到 90°C 或连续写入失败时触发保护并尝试恢复固件控制。看门狗周期为 2 秒。
 - **磁盘清理**：检查用户目录、固定磁盘和开发工具缓存，支持自定义项目根。扫描、清理和进度独立于页面，切换页面后继续运行；删除前复核文件身份、时间、保留期及重解析点，跳过占用或变化的文件。
-- **AI 管理**：管理 Kiro、Codex、Claude CLI 的 MCP 配置与 OAuth；浏览、搜索、分页、导出及按来源能力删除 Kiro、Codex、Claude、Antigravity、Gemini 会话。包含本地 OAuth 代理、凭据加密和 Token 刷新。
+- **AI 管理**：管理 Kiro、Codex、Claude CLI 的 MCP 配置与 OAuth，启动时及每两小时静默扫描；按项目浏览全部来源会话，支持分页、导出及按来源能力删除 Kiro、Codex、Claude、Antigravity、Gemini 会话。包含本地 OAuth 代理、凭据加密和 Token 刷新。
 - **流量与设置**：按日/月查询流量并导出 CSV；固定采样间隔为 500～5000 ms，自适应采样为 500～2000 ms。支持 Windows 计划任务自启、托盘操作和应用更新。
 
 传感器可用性和控制能力取决于硬件、驱动及权限。无法确认的数据与控制关联保持未知或只读。
@@ -76,6 +76,9 @@ cargo test --manifest-path src-tauri/Cargo.toml --locked --lib
 cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets -- -D warnings
 cargo fmt --manifest-path src-tauri/Cargo.toml --all --check
 
+# 可选：临时合成目录的扫描基准，不扫描真实磁盘缓存
+cargo test --manifest-path src-tauri/Cargo.toml --locked --lib scan_synthetic_benchmark -- --ignored --nocapture
+
 # 硬件合成回归，不启动真实采集程序
 # artifacts-path 隔离测试输出，避免与开发中的 helper 冲突
 dotnet build tests/hw-helper/HwHelper.Tests.csproj --artifacts-path target/hw-validation -p:SelfContained=false
@@ -132,6 +135,8 @@ flowchart LR
 
 基础数据与硬件数据使用独立采样循环。硬件读取完成后再等待下一轮，失败时退避；前端从事件与共享状态获取进度和快照。
 
+清理扫描使用共享队列并发处理缓存类别和子目录，任务可乱序完成，最终按固定规则合并结果。类别调度最多 3 路，项目发现最多 4 路，目录统计最多 8 路；待处理目录队列分别限制为 4096 和 256 项，满载时由当前线程继续处理。扫描保留硬链接去重、年龄过滤、重解析点检查和取消能力，进度更新间隔至少 150 ms。
+
 ## 维护约定
 
 Rust 库只公开应用启动与绑定导出入口。IPC 的生产注册和测试处理器共用 [命令清单](src-tauri/src/ipc/commands/mod.rs)。修改命令或数据类型后，在根目录重新生成绑定：
@@ -172,6 +177,6 @@ npm run tauri:dev
 
 ## 第三方与许可
 
-项目自有代码采用 MIT。AI 管理后端部分代码源自 **KiroHub `637321c`**，保留 **CC-BY-NC-SA-4.0** 授权，全文见 [LICENSE.KiroHub](src-tauri/src/ai/backend/LICENSE.KiroHub)。该后端直接参与本项目 Rust 编译，适配层位于 `src-tauri/src/ai/` 和 `src-tauri/src/ipc/commands/ai_cmd.rs`。
+项目自有代码采用 **MIT 许可证**。AI 管理模块包含采用 **CC-BY-NC-SA-4.0** 许可的第三方代码，相关许可与署名保留在 [AI 后端许可文件](src-tauri/src/ai/backend/LICENSE.KiroHub) 中。各部分代码按其适用许可证使用与分发。
 
 硬件传感器使用 **LibreHardwareMonitorLib（MPL 2.0）**。第三方组件分别遵循其许可证。

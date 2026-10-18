@@ -45,15 +45,13 @@ pub(super) fn schedule_dir_size_uncached(
 }
 
 pub(super) fn dir_size_with_min_age_inline(path: &Path, min_age_days: Option<u32>) -> (u64, u64) {
-    let cutoff = min_age_days.and_then(|days| {
-        SystemTime::now().checked_sub(Duration::from_secs(days as u64 * 24 * 60 * 60))
-    });
+    let cutoff = scan_age_cutoff(min_age_days);
     let mut result = DirectoryMeasure::default();
-    let mut local_visited_files = std::collections::HashSet::new();
+    let local_visited_files = Mutex::new(std::collections::HashSet::new());
     dir_size_recursive(
         path,
         &mut result,
-        &mut local_visited_files,
+        &local_visited_files,
         0,
         DIRECTORY_SCAN_MAX_DEPTH,
         cutoff,
@@ -67,6 +65,81 @@ pub(super) fn dir_size_with_min_age_inline(path: &Path, min_age_days: Option<u32
     (result.size, result.count)
 }
 
+fn scan_age_cutoff(min_age_days: Option<u32>) -> Option<SystemTime> {
+    min_age_days.and_then(|days| {
+        SystemTime::now().checked_sub(Duration::from_secs(days as u64 * 24 * 60 * 60))
+    })
+}
+
+pub(super) struct DirectoryScanGroup {
+    pub(super) pending: AtomicUsize,
+    pub(super) diagnostics: Option<Arc<ScanDiagnostics>>,
+    measurement: DirectoryMeasureCell,
+    totals: Mutex<(u64, u64)>,
+    visited: Mutex<std::collections::HashSet<FileIdentity>>,
+    cutoff: Option<SystemTime>,
+}
+
+impl DirectoryScanGroup {
+    pub(super) fn new(min_age_days: Option<u32>, measurement: DirectoryMeasureCell) -> Self {
+        Self {
+            pending: AtomicUsize::new(0),
+            diagnostics: current_scan_diagnostics(),
+            measurement,
+            totals: Mutex::new((0, 0)),
+            visited: Mutex::new(std::collections::HashSet::new()),
+            cutoff: scan_age_cutoff(min_age_days),
+        }
+    }
+
+    pub(super) fn complete(&self, result: DirectoryMeasure) {
+        if let Some(diagnostics) = &self.diagnostics {
+            for warning in result.warnings {
+                diagnostics.warn(warning);
+            }
+        }
+        let mut totals = self
+            .totals
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        totals.0 = totals.0.saturating_add(result.size);
+        totals.1 = totals.1.saturating_add(result.count);
+        // A parent remains pending until all its children are submitted. The
+        // final worker publishes exactly once, independent of completion order.
+        if self.pending.fetch_sub(1, Ordering::AcqRel) == 1 {
+            self.measurement.complete(*totals);
+        }
+    }
+}
+
+struct DirectoryWalk<'a> {
+    visited: &'a Mutex<std::collections::HashSet<FileIdentity>>,
+    diagnostics: Option<Arc<ScanDiagnostics>>,
+    max_depth: u32,
+    cutoff: Option<SystemTime>,
+    dispatch: Option<(&'a SharedFileScanQueue, &'a Arc<DirectoryScanGroup>)>,
+}
+
+pub(super) fn measure_directory_job(
+    job: &FileScanJob,
+    queue: &SharedFileScanQueue,
+) -> DirectoryMeasure {
+    let mut result = DirectoryMeasure::default();
+    walk_directory(
+        &job.path,
+        &mut result,
+        job.depth,
+        &DirectoryWalk {
+            visited: &job.group.visited,
+            diagnostics: job.group.diagnostics.clone(),
+            max_depth: DIRECTORY_SCAN_MAX_DEPTH,
+            cutoff: job.group.cutoff,
+            dispatch: Some((queue, &job.group)),
+        },
+    );
+    result
+}
+
 #[derive(Default)]
 pub(super) struct DirectoryMeasure {
     pub(super) size: u64,
@@ -78,31 +151,66 @@ pub(super) struct DirectoryMeasure {
 pub(super) fn dir_size_recursive(
     path: &Path,
     result: &mut DirectoryMeasure,
-    local_visited_files: &mut std::collections::HashSet<FileIdentity>,
+    local_visited_files: &Mutex<std::collections::HashSet<FileIdentity>>,
     depth: u32,
     max_depth: u32,
     cutoff: Option<SystemTime>,
+) {
+    walk_directory(
+        path,
+        result,
+        depth,
+        &DirectoryWalk {
+            visited: local_visited_files,
+            diagnostics: current_scan_diagnostics(),
+            max_depth,
+            cutoff,
+            dispatch: None,
+        },
+    );
+}
+
+fn walk_directory(
+    path: &Path,
+    result: &mut DirectoryMeasure,
+    depth: u32,
+    context: &DirectoryWalk<'_>,
 ) {
     if SCAN_CANCEL_REQUESTED.load(Ordering::Relaxed) {
         result.stopped = true;
         return;
     }
-    if let Some(diagnostics) = current_scan_diagnostics() {
+    if let Some(diagnostics) = &context.diagnostics {
         if !diagnostics.should_continue(path) {
             result.stopped = true;
             return;
         }
-        let dispatched = diagnostics.dispatch_engineer();
-        if dispatched == 1 || dispatched % 512 == 0 {
-            diagnostics.progress("engineer", "工兵蚁营正在建立目录数据", Some(path));
-        }
+        diagnostics.dispatch_engineer();
+        diagnostics.progress("engineer", "正在并发统计缓存目录", Some(path));
     }
-    if depth > max_depth {
+    if depth > context.max_depth {
         push_measure_warning(
             result,
-            format!("{}: 超过最大扫描深度 {}", path.display(), max_depth),
+            format!("{}: 超过最大扫描深度 {}", path.display(), context.max_depth),
         );
         return;
+    }
+    // Recheck queued directories: an entry can become a junction while waiting.
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_dir() && !metadata_is_reparse_point(&meta) => {}
+        Ok(_) => {
+            if let Some(diagnostics) = &context.diagnostics {
+                diagnostics.skip_expected(1);
+            }
+            return;
+        }
+        Err(error) => {
+            push_measure_warning(
+                result,
+                format!("{}: 读取目录元数据失败: {}", path.display(), error),
+            );
+            return;
+        }
     }
     let entries = match std::fs::read_dir(path) {
         Ok(entries) => entries,
@@ -130,13 +238,14 @@ pub(super) fn dir_size_recursive(
             }
         };
         let entry_path = entry.path();
-        if let Some(diagnostics) = current_scan_diagnostics() {
+        if let Some(diagnostics) = &context.diagnostics {
             if !diagnostics.try_visit(&entry_path) {
                 result.stopped = true;
                 break;
             }
         }
-        let meta = match std::fs::symlink_metadata(&entry_path) {
+        // Windows ReadDir already supplies this metadata; do not reopen every entry.
+        let meta = match entry.metadata() {
             Ok(meta) => meta,
             Err(error) => {
                 push_measure_warning(
@@ -147,23 +256,28 @@ pub(super) fn dir_size_recursive(
             }
         };
         if metadata_is_reparse_point(&meta) {
-            with_scan_diagnostics(|diagnostics| diagnostics.skip_expected(1));
+            if let Some(diagnostics) = &context.diagnostics {
+                diagnostics.skip_expected(1);
+            }
             continue;
         }
         if meta.is_dir() {
-            dir_size_recursive(
-                &entry_path,
-                result,
-                local_visited_files,
-                depth + 1,
-                max_depth,
-                cutoff,
-            );
+            if let Some((queue, group)) = context.dispatch {
+                if queue.try_push(FileScanJob {
+                    path: entry_path.clone(),
+                    depth: depth + 1,
+                    group: group.clone(),
+                }) {
+                    continue;
+                }
+            }
+            walk_directory(&entry_path, result, depth + 1, context);
             if result.stopped {
                 break;
             }
         } else {
-            if cutoff
+            if context
+                .cutoff
                 .is_some_and(|cutoff| meta.modified().map_or(true, |modified| modified > cutoff))
             {
                 continue;
@@ -171,7 +285,12 @@ pub(super) fn dir_size_recursive(
             if let Some((volume_serial, file_id, allocated_size)) = file_details(&entry_path, &meta)
             {
                 let identity = (volume_serial, file_id);
-                if !local_visited_files.insert(identity) {
+                if !context
+                    .visited
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .insert(identity)
+                {
                     continue;
                 }
                 result.size = result.size.saturating_add(allocated_size);

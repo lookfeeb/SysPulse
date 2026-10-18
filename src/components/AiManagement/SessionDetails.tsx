@@ -75,9 +75,7 @@ export default function SessionDetails({ model }: {
             </div>)}
         </header>
 
-        {model.selectedOutsideFilter && <div className="aim-conv-filter-note" role="status">
-          <span>当前会话不在筛选结果中</span><Button type="link" size="small" onClick={model.clearFilters}>清除筛选</Button>
-        </div>}
+
 
         <div className="aim-conv-scroll" ref={conversationScrollRef} aria-busy={sessionLoading}>
           {!selectedSummary ? (<div className="aim-empty">

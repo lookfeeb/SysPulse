@@ -89,6 +89,9 @@ async openPath(args: OpenPathArgs) : Promise<null> {
 async quitApp() : Promise<null> {
     return await TAURI_INVOKE("quit_app");
 },
+async downloadInstallUpdate(rid: number, onEvent: TAURI_CHANNEL<UpdateDownloadEvent>) : Promise<null> {
+    return await TAURI_INVOKE("download_install_update", { rid, onEvent });
+},
 async showConfigWindow() : Promise<null> {
     return await TAURI_INVOKE("show_config_window");
 },
@@ -238,11 +241,13 @@ export type PathDetail = { path: string; sizeBytes: number; fileCount: number; m
 export type ResetFanControlArgs = { fanId: string }
 export type ResizeArgs = { width: number; height: number }
 export type ScanCleanupArgs = { projectRoots: string[] }
-export type ScanResult = { scanId: string; categories: CleanupCategory[]; totalSizeBytes: number; totalFileCount: number; scannedAtMs: number; expiresAtMs: number; durationMs: number; scannedPaths: number; skippedPaths: number; ignoredPaths: number; hotspotCount: number; scoutWorkers: number; engineerWorkers: number; scoutTasks: number; engineerTasks: number; projectRoots: string[]; warnings: string[]; complete: boolean; cancelled: boolean }
+export type ScanResult = { scanId: string; categories: CleanupCategory[]; totalSizeBytes: number; totalFileCount: number; scannedAtMs: number; durationMs: number; scannedPaths: number; skippedPaths: number; ignoredPaths: number; hotspotCount: number; scoutWorkers: number; engineerWorkers: number; scoutTasks: number; engineerTasks: number; projectRoots: string[]; warnings: string[]; complete: boolean; cancelled: boolean }
 export type SetConfigArgs = { patch: JsonValue }
 export type SetFanCurveArgs = { fanId: string; curve: FanCurvePoint[] }
 export type SetFanManualArgs = { fanId: string; pwm: number }
 export type Snapshot = { timestampMs: number; cpu: CpuSnapshot; memory: MemorySnapshot; network: NetworkSnapshot }
+export type TAURI_CHANNEL<TSend> = null
+export type UpdateDownloadEvent = { event: "Started"; data: { contentLength: number | null } } | { event: "Progress"; data: { downloaded: number; contentLength: number | null } } | { event: "Verifying" } | { event: "Installing" }
 
 /** tauri-specta globals **/
 

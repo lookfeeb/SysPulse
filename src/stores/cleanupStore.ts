@@ -83,8 +83,7 @@ export const useCleanupStore = create<CleanupState>((set, get) => ({
   async clean(args, projectRoots) {
     const current = get();
     if (current.phase !== "idle" || current.consumed || !current.scan?.complete
-      || current.scan.cancelled || current.scan.scanId !== args.scanId
-      || current.scan.expiresAtMs <= Date.now()) return;
+      || current.scan.cancelled || current.scan.scanId !== args.scanId) return;
     // 同步占用快照，快速双击、切页或重新挂载均不能重复提交删除。
     set({ taskId: ++taskId, phase: "cleaning", consumed: true, lastCleanResult: null, notice: null,
       cleanProgress: { percent: 0, processedItems: 0, totalItems: 0,

@@ -89,16 +89,17 @@ impl ProjectCacheDiscovery {
 
 pub(super) fn verified_extra_project_cache(path: &Path, name: &str) -> Option<&'static str> {
     let parent = path.parent()?;
-    if parent.join("package.json").is_file() && matches!(name, ".turbo" | ".parcel-cache") {
+    if matches!(name, ".turbo" | ".parcel-cache") && parent.join("package.json").is_file() {
         return Some("node-cache");
     }
     let container = parent
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or_default();
-    if parent
-        .parent()
-        .is_some_and(|root| root.join("package.json").is_file())
+    if matches!(name, ".cache" | ".vite" | "cache")
+        && parent
+            .parent()
+            .is_some_and(|root| root.join("package.json").is_file())
         && ((container.eq_ignore_ascii_case("node_modules") && matches!(name, ".cache" | ".vite"))
             || (container.eq_ignore_ascii_case(".next") && name == "cache"))
     {
@@ -160,7 +161,11 @@ pub(super) struct ProjectScoutQueue {
     pub(super) tasks: Mutex<std::collections::VecDeque<ProjectScoutTask>>,
     pub(super) ready: Condvar,
     pub(super) pending: AtomicUsize,
+    assigned_keys: std::collections::HashSet<String>,
+    assigned_identities: std::collections::HashSet<FileIdentity>,
 }
+
+pub(super) const PROJECT_SCOUT_QUEUE_CAPACITY: usize = 4096;
 
 impl ProjectScoutQueue {
     #[cfg(test)]
@@ -190,17 +195,36 @@ impl ProjectScoutQueue {
             pending: AtomicUsize::new(tasks.len()),
             tasks: Mutex::new(tasks),
             ready: Condvar::new(),
+            assigned_keys: roots
+                .iter()
+                .map(|root| normalize_path_key(&root.path.to_string_lossy()))
+                .collect(),
+            assigned_identities: roots
+                .iter()
+                .filter_map(|root| directory_identity(&root.path))
+                .collect(),
         }
     }
 
-    pub(super) fn push(&self, task: ProjectScoutTask) {
-        self.pending.fetch_add(1, Ordering::Relaxed);
+    pub(super) fn push(&self, task: ProjectScoutTask) -> bool {
         let mut tasks = self
             .tasks
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if tasks.len() >= PROJECT_SCOUT_QUEUE_CAPACITY {
+            return false;
+        }
+        self.pending.fetch_add(1, Ordering::Relaxed);
         tasks.push_back(task);
         self.ready.notify_one();
+        true
+    }
+
+    fn is_assigned_root(&self, path: &Path) -> bool {
+        self.assigned_keys
+            .contains(&normalize_path_key(&path.to_string_lossy()))
+            || directory_identity(path)
+                .is_some_and(|identity| self.assigned_identities.contains(&identity))
     }
 
     pub(super) fn pop(&self) -> Option<ProjectScoutTask> {
@@ -209,6 +233,12 @@ impl ProjectScoutQueue {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         loop {
+            if SCAN_CANCEL_REQUESTED.load(Ordering::Relaxed) {
+                self.pending.fetch_sub(tasks.len(), Ordering::AcqRel);
+                tasks.clear();
+                self.ready.notify_all();
+                return None;
+            }
             if let Some(task) = tasks.pop_front() {
                 return Some(task);
             }
@@ -258,12 +288,6 @@ pub(super) fn discover_project_caches(
 
     let fixed_roots = fixed_disk_roots();
     let search_plan = project_search_plan(custom_roots, &fixed_roots);
-    let roots = Arc::new(
-        search_plan
-            .iter()
-            .map(|root| root.path.clone())
-            .collect::<Vec<_>>(),
-    );
     let queue = Arc::new(ProjectScoutQueue::from_plan(&search_plan));
     let volume_probe_tasks = Arc::new(AtomicUsize::new(
         search_plan
@@ -280,53 +304,46 @@ pub(super) fn discover_project_caches(
             + discovery.dotnet.len()
             + discovery.java.len(),
     ));
-    let shared = Arc::new(Mutex::new(ProjectCacheDiscovery::default()));
-    let workers = (0..scout_workers.max(1))
+    let workers = (1..scout_workers.max(1))
         .filter_map(|index| {
-            let roots = roots.clone();
             let queue = queue.clone();
             let found = found.clone();
-            let shared = shared.clone();
             let volume_probe_tasks = volume_probe_tasks.clone();
             let volume_probe_limit_reported = volume_probe_limit_reported.clone();
             std::thread::Builder::new()
                 .name(format!("cleanup-scout-{index}"))
                 .spawn(move || {
-                    let mut local = ProjectCacheDiscovery::default();
-                    while let Some(task) = queue.pop() {
-                        scan_project_cache_task(
-                            task,
-                            roots.as_slice(),
-                            queue.as_ref(),
-                            found.as_ref(),
-                            volume_probe_tasks.as_ref(),
-                            volume_probe_limit_reported.as_ref(),
-                            &mut local,
-                        );
-                        queue.complete();
-                    }
-                    if let Ok(mut result) = shared.lock() {
-                        result.rust.append(&mut local.rust);
-                        result.cpp.append(&mut local.cpp);
-                        result.python.append(&mut local.python);
-                        result.node.append(&mut local.node);
-                        result.dotnet.append(&mut local.dotnet);
-                        result.java.append(&mut local.java);
-                    }
+                    run_project_scout(
+                        &queue,
+                        &found,
+                        &volume_probe_tasks,
+                        &volume_probe_limit_reported,
+                    )
                 })
                 .ok()
         })
         .collect::<Vec<_>>();
-    for worker in workers {
-        let _ = worker.join();
-    }
-    if let Ok(mut concurrent) = shared.lock() {
-        discovery.rust.append(&mut concurrent.rust);
-        discovery.cpp.append(&mut concurrent.cpp);
-        discovery.python.append(&mut concurrent.python);
-        discovery.node.append(&mut concurrent.node);
-        discovery.dotnet.append(&mut concurrent.dotnet);
-        discovery.java.append(&mut concurrent.java);
+    let local = run_project_scout(
+        &queue,
+        &found,
+        &volume_probe_tasks,
+        &volume_probe_limit_reported,
+    );
+    for mut part in std::iter::once(local).chain(workers.into_iter().map(|worker| {
+        worker.join().unwrap_or_else(|_| {
+            with_scan_diagnostics(|diagnostics| {
+                diagnostics.truncated.store(true, Ordering::Relaxed);
+                diagnostics.warn("项目发现线程异常，结果不完整");
+            });
+            ProjectCacheDiscovery::default()
+        })
+    })) {
+        discovery.rust.append(&mut part.rust);
+        discovery.cpp.append(&mut part.cpp);
+        discovery.python.append(&mut part.python);
+        discovery.node.append(&mut part.node);
+        discovery.dotnet.append(&mut part.dotnet);
+        discovery.java.append(&mut part.java);
     }
     deduplicate_paths(&mut discovery.rust);
     deduplicate_paths(&mut discovery.cpp);
@@ -334,6 +351,29 @@ pub(super) fn discover_project_caches(
     deduplicate_paths(&mut discovery.node);
     deduplicate_paths(&mut discovery.dotnet);
     deduplicate_paths(&mut discovery.java);
+    discovery
+}
+
+fn run_project_scout(
+    queue: &ProjectScoutQueue,
+    found: &AtomicUsize,
+    probes: &AtomicUsize,
+    reported: &AtomicBool,
+) -> ProjectCacheDiscovery {
+    let mut discovery = ProjectCacheDiscovery::default();
+    while let Some(task) = queue.pop() {
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            scan_project_cache_task(task, queue, found, probes, reported, &mut discovery);
+        }));
+        // Always retire the parent so other consumers cannot wait forever.
+        queue.complete();
+        if outcome.is_err() {
+            with_scan_diagnostics(|diagnostics| {
+                diagnostics.truncated.store(true, Ordering::Relaxed);
+                diagnostics.warn("项目目录任务异常，结果不完整");
+            });
+        }
+    }
     discovery
 }
 
@@ -374,7 +414,6 @@ pub(super) fn is_safe_project_root(path: &Path) -> bool {
 
 pub(super) fn scan_project_cache_task(
     task: ProjectScoutTask,
-    assigned_roots: &[PathBuf],
     queue: &ProjectScoutQueue,
     found: &AtomicUsize,
     volume_probe_tasks: &AtomicUsize,
@@ -384,9 +423,16 @@ pub(super) fn scan_project_cache_task(
     let Some(diagnostics) = current_scan_diagnostics() else {
         return;
     };
-    let dispatched = diagnostics.dispatch_scout();
-    if dispatched == 1 || dispatched % 256 == 0 {
-        diagnostics.progress("scout", "侦察蚁营正在深度检查项目目录", Some(&task.dir));
+    diagnostics.dispatch_scout();
+    diagnostics.progress("scout", "正在并发发现项目缓存", Some(&task.dir));
+    if !diagnostics.should_continue(&task.dir) {
+        return;
+    }
+    if !std::fs::symlink_metadata(&task.dir)
+        .is_ok_and(|meta| meta.is_dir() && !metadata_is_reparse_point(&meta))
+    {
+        diagnostics.skip_expected(1);
+        return;
     }
     let mut scan_root = task.root.clone();
     let mut scan_depth = task.depth;
@@ -437,6 +483,7 @@ pub(super) fn scan_project_cache_task(
             return;
         }
     };
+    let max_depth = project_search_depth(&scan_root);
     for entry in entries {
         if !diagnostics.should_continue(&task.dir) {
             return;
@@ -456,7 +503,7 @@ pub(super) fn scan_project_cache_task(
         if !diagnostics.try_visit(&path) {
             return;
         }
-        let metadata = match std::fs::symlink_metadata(&path) {
+        let metadata = match entry.metadata() {
             Ok(metadata) => metadata,
             Err(error) => {
                 diagnostics.warn(format!("{}: 读取元数据失败: {}", path.display(), error));
@@ -470,7 +517,7 @@ pub(super) fn scan_project_cache_task(
             diagnostics.skip_expected(1);
             continue;
         }
-        if is_separately_assigned_root(&task.root, &path, assigned_roots) {
+        if queue.is_assigned_root(&path) {
             diagnostics.skip_expected(1);
             continue;
         }
@@ -496,9 +543,7 @@ pub(super) fn scan_project_cache_task(
             continue;
         }
         let next_mode = match scan_mode {
-            ProjectScoutMode::Deep => {
-                (scan_depth < project_search_depth(&scan_root)).then_some(ProjectScoutMode::Deep)
-            }
+            ProjectScoutMode::Deep => (scan_depth < max_depth).then_some(ProjectScoutMode::Deep),
             ProjectScoutMode::FixedVolumeProbe => {
                 if is_project_container_name(&name) {
                     Some(ProjectScoutMode::Deep)
@@ -540,7 +585,7 @@ pub(super) fn scan_project_cache_task(
             }
             let promote = scan_mode == ProjectScoutMode::FixedVolumeProbe
                 && next_mode == ProjectScoutMode::Deep;
-            queue.push(ProjectScoutTask {
+            let child = ProjectScoutTask {
                 root: if promote {
                     path.clone()
                 } else {
@@ -549,7 +594,17 @@ pub(super) fn scan_project_cache_task(
                 dir: path,
                 depth: if promote { 0 } else { scan_depth + 1 },
                 mode: next_mode,
-            });
+            };
+            if !queue.push(child.clone()) {
+                scan_project_cache_task(
+                    child,
+                    queue,
+                    found,
+                    volume_probe_tasks,
+                    volume_probe_limit_reported,
+                    discovery,
+                );
+            }
         }
     }
 }
@@ -611,16 +666,6 @@ pub(super) fn directory_has_project_marker(path: &Path) -> bool {
                     )
                 })
     })
-}
-
-pub(super) fn is_separately_assigned_root(
-    root: &Path,
-    path: &Path,
-    assigned_roots: &[PathBuf],
-) -> bool {
-    assigned_roots
-        .iter()
-        .any(|assigned| !same_path(assigned, root) && same_path(assigned, path))
 }
 
 pub(super) fn project_search_depth(root: &Path) -> u32 {
@@ -770,6 +815,23 @@ pub(super) fn is_rust_target_artifact_dir(path: &Path) -> bool {
 }
 
 pub(super) fn is_verified_cpp_build_dir(path: &Path, name: &str) -> bool {
+    // Reject ordinary source/container names before probing build marker files.
+    if !matches!(
+        name,
+        "build"
+            | "build-debug"
+            | "build-release"
+            | "cmake-build-debug"
+            | "cmake-build-release"
+            | "cmake-build-relwithdebinfo"
+            | "debug"
+            | "release"
+            | "relwithdebinfo"
+            | "obj"
+            | "bin"
+    ) {
+        return false;
+    }
     let cmake_metadata = path.join("CMakeCache.txt").is_file()
         || path.join("CMakeFiles").is_dir()
         || path.join("build.ninja").is_file();

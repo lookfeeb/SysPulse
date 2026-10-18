@@ -24,6 +24,196 @@ fn temp_root(name: &str) -> PathBuf {
 }
 
 #[test]
+#[ignore = "synthetic scan benchmark; run explicitly with --ignored --nocapture"]
+fn scan_synthetic_benchmark() {
+    let root = temp_root("scan-benchmark");
+    for index in 0..160 {
+        let project = root.join(format!("project-{index}"));
+        fs::create_dir_all(project.join(".turbo")).unwrap();
+        fs::write(project.join("package.json"), b"{}").unwrap();
+        for branch in 0..4 {
+            let dir = project.join(format!("src/branch-{branch}"));
+            fs::create_dir_all(&dir).unwrap();
+            for file in 0..8 {
+                fs::write(dir.join(format!("file-{file}.txt")), [1u8; 64]).unwrap();
+            }
+        }
+    }
+    for trial in 0..3 {
+        let diagnostics = Arc::new(ScanDiagnostics::default());
+        let _guard = install_test_scan_diagnostics(diagnostics.clone());
+        let file_queue = Arc::new(FileScanQueue::start(4));
+        let _queue_guard = ActiveScanFileQueue::install(file_queue);
+        let start = Instant::now();
+        let measured = dir_size(&root);
+        let measure_ms = start.elapsed().as_millis();
+        assert_eq!(measured.1, 5_280);
+        let roots = vec![root.clone()];
+        let queue = ProjectScoutQueue::new(&roots);
+        let found = AtomicUsize::new(0);
+        let probes = AtomicUsize::new(0);
+        let reported = AtomicBool::new(false);
+        let mut discovery = ProjectCacheDiscovery::default();
+        let start = Instant::now();
+        while let Some(task) = queue.pop() {
+            scan_project_cache_task(task, &queue, &found, &probes, &reported, &mut discovery);
+            queue.complete();
+        }
+        assert_eq!(discovery.node.len(), 160);
+        eprintln!("scan benchmark trial={trial} measure_ms={measure_ms} discovery_ms={} files={} caches={}",
+            start.elapsed().as_millis(), measured.1, discovery.node.len());
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn scan_jobs_finish_out_of_order_but_keep_rule_precedence() {
+    let _guard = install_test_scan_diagnostics(Arc::new(ScanDiagnostics::default()));
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let finished = Arc::new(Mutex::new(Vec::new()));
+    let first = finished.clone();
+    let second = finished.clone();
+    let category = |id: &str| CleanupCategory {
+        id: id.into(),
+        name: id.into(),
+        description: String::new(),
+        size_bytes: 0,
+        file_count: 0,
+        paths: Vec::new(),
+        risk_level: CleanupRisk::Safe,
+        default_selected: true,
+        min_age_days: None,
+    };
+    let jobs: Vec<ScanJob<'_>> = vec![
+        Box::new(move || {
+            release_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+            first.lock().unwrap().push(1);
+            vec![category("first")]
+        }),
+        Box::new(move || {
+            second.lock().unwrap().push(2);
+            release_tx.send(()).unwrap();
+            vec![category("second")]
+        }),
+    ];
+    let result = run_scan_jobs(jobs, 2);
+    assert_eq!(*finished.lock().unwrap(), vec![2, 1]);
+    assert_eq!(
+        result
+            .iter()
+            .map(|category| category.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["first", "second"]
+    );
+}
+
+#[test]
+fn bounded_directory_workers_preserve_hardlinks_and_age_filter() {
+    let root = temp_root("bounded-file-queue");
+    fs::create_dir_all(&root).unwrap();
+    let old = SystemTime::now() - Duration::from_secs(30 * 24 * 60 * 60);
+    let shared = root.join("shared.tmp");
+    fs::write(&shared, [7u8; 64]).unwrap();
+    File::options()
+        .write(true)
+        .open(&shared)
+        .unwrap()
+        .set_times(FileTimes::new().set_modified(old))
+        .unwrap();
+    let branches = FILE_SCAN_QUEUE_CAPACITY + 32;
+    for index in 0..branches {
+        let dir = root.join(format!("branch-{index}"));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("old.tmp");
+        fs::write(&path, [1u8; 64]).unwrap();
+        File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_times(FileTimes::new().set_modified(old))
+            .unwrap();
+        fs::hard_link(&shared, dir.join("linked.tmp")).unwrap();
+    }
+    fs::write(root.join("recent.tmp"), [2u8; 64]).unwrap();
+    let _guard = install_test_scan_diagnostics(Arc::new(ScanDiagnostics::default()));
+    let expected = dir_size_with_min_age_inline(&root, Some(7));
+    assert_eq!(expected.1, branches as u64 + 1);
+    for workers in [1, 4] {
+        let queue = Arc::new(FileScanQueue::start(workers));
+        let _queue_guard = ActiveScanFileQueue::install(queue);
+        assert_eq!(dir_size_with_min_age(&root, Some(7)), expected);
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn queued_directory_measurements_finish_after_cancellation() {
+    struct ResetCancellation;
+    impl Drop for ResetCancellation {
+        fn drop(&mut self) {
+            SCAN_CANCEL_REQUESTED.store(false, Ordering::SeqCst);
+        }
+    }
+    let _guard = install_test_scan_diagnostics(Arc::new(ScanDiagnostics::default()));
+    let _reset = ResetCancellation;
+    let root = temp_root("cancel-file-queue");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("keep.tmp"), b"untouched").unwrap();
+    let queue = Arc::new(FileScanQueue::start(2));
+    let _queue_guard = ActiveScanFileQueue::install(queue);
+    SCAN_CANCEL_REQUESTED.store(true, Ordering::SeqCst);
+    let measurements = (0..FILE_SCAN_QUEUE_CAPACITY + 32)
+        .map(|_| schedule_dir_size(&root, None))
+        .collect::<Vec<_>>();
+    for measurement in measurements {
+        assert_eq!(measurement.wait(), (0, 0));
+    }
+    assert!(root.join("keep.tmp").is_file());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn project_queue_overflow_scans_inline_without_losing_candidates() {
+    let root = temp_root("bounded-scout-queue");
+    fs::create_dir_all(root.join("packages/project/.turbo")).unwrap();
+    fs::write(root.join("packages/project/package.json"), b"{}").unwrap();
+    let diagnostics = Arc::new(ScanDiagnostics::default());
+    let _guard = install_test_scan_diagnostics(diagnostics);
+    let queue = ProjectScoutQueue::new(&[]);
+    for index in 0..PROJECT_SCOUT_QUEUE_CAPACITY {
+        assert!(queue.push(ProjectScoutTask {
+            root: root.clone(),
+            dir: root.join(format!("pending-{index}")),
+            depth: 1,
+            mode: ProjectScoutMode::Deep,
+        }));
+    }
+    let found = AtomicUsize::new(0);
+    let probes = AtomicUsize::new(0);
+    let reported = AtomicBool::new(false);
+    let mut discovery = ProjectCacheDiscovery::default();
+    scan_project_cache_task(
+        ProjectScoutTask {
+            root: root.clone(),
+            dir: root.clone(),
+            depth: 0,
+            mode: ProjectScoutMode::Deep,
+        },
+        &queue,
+        &found,
+        &probes,
+        &reported,
+        &mut discovery,
+    );
+    assert_eq!(discovery.node, vec![root.join("packages/project/.turbo")]);
+    assert_eq!(
+        queue.tasks.lock().unwrap().len(),
+        PROJECT_SCOUT_QUEUE_CAPACITY
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn only_safe_categories_are_selected_by_default() {
     assert!(cleanup_policy("win-temp").default_selected);
     assert!(cleanup_policy("installer-cache").default_selected);
@@ -40,6 +230,7 @@ fn only_safe_categories_are_selected_by_default() {
 
 #[test]
 fn age_filter_excludes_recent_files() {
+    let _guard = install_test_scan_diagnostics(Arc::new(ScanDiagnostics::default()));
     let root = temp_root("age");
     fs::create_dir_all(&root).unwrap();
     let recent = root.join("recent.tmp");
@@ -79,15 +270,13 @@ fn advanced_category_requires_explicit_confirmation() {
     assert!(validate_risk_confirmation([CleanupRisk::Advanced], false, true).is_ok());
 }
 
-#[test]
-fn cancelled_or_incomplete_scan_is_never_cleanable() {
-    let base = ScanResult {
+fn complete_test_scan() -> ScanResult {
+    ScanResult {
         scan_id: "scan-1".into(),
         categories: Vec::new(),
         total_size_bytes: 0,
         total_file_count: 0,
         scanned_at_ms: 0,
-        expires_at_ms: 0,
         duration_ms: 0,
         scanned_paths: 0,
         skipped_paths: 0,
@@ -101,7 +290,12 @@ fn cancelled_or_incomplete_scan_is_never_cleanable() {
         warnings: Vec::new(),
         complete: true,
         cancelled: false,
-    };
+    }
+}
+
+#[test]
+fn cancelled_or_incomplete_scan_is_never_cleanable() {
+    let base = complete_test_scan();
     assert!(scan_is_cleanable(&base));
     assert!(!scan_is_cleanable(&ScanResult {
         cancelled: true,
@@ -130,6 +324,7 @@ fn path_normalization_handles_extended_windows_prefixes() {
 
 #[test]
 fn scan_result_contains_only_supplied_categories() {
+    let _guard = install_test_scan_diagnostics(Arc::new(ScanDiagnostics::default()));
     let diagnostics = ScanDiagnostics::default();
     let categories = vec![CleanupCategory {
         id: "win-temp".into(),
@@ -238,7 +433,6 @@ fn export_document_records_category_and_path_selection() {
         total_size_bytes: 30,
         total_file_count: 3,
         scanned_at_ms: 100,
-        expires_at_ms: 200,
         duration_ms: 5,
         scanned_paths: 2,
         skipped_paths: 0,
@@ -292,7 +486,6 @@ fn export_document_omits_unselected_categories() {
         total_size_bytes: 42,
         total_file_count: 2,
         scanned_at_ms: 100,
-        expires_at_ms: 200,
         duration_ms: 5,
         scanned_paths: 2,
         skipped_paths: 0,
@@ -399,6 +592,7 @@ fn programming_process_lists_cover_supported_toolchains() {
 
 #[test]
 fn ordinary_access_warning_does_not_make_scan_incomplete() {
+    let _guard = install_test_scan_diagnostics(Arc::new(ScanDiagnostics::default()));
     let diagnostics = ScanDiagnostics::default();
     diagnostics.warn("C:\\protected: access denied");
     let result = finalize_scan_result(
@@ -416,6 +610,7 @@ fn ordinary_access_warning_does_not_make_scan_incomplete() {
 
 #[test]
 fn budget_truncation_makes_scan_incomplete() {
+    let _guard = install_test_scan_diagnostics(Arc::new(ScanDiagnostics::default()));
     let diagnostics = ScanDiagnostics::default();
     diagnostics.truncated.store(true, Ordering::Relaxed);
     let result = finalize_scan_result(
@@ -711,7 +906,6 @@ fn fixed_volume_probe_promotes_marked_project_to_deep_scan() {
         path: volume.clone(),
         mode: ProjectScoutMode::FixedVolumeProbe,
     }];
-    let roots = vec![volume.clone()];
     let queue = ProjectScoutQueue::from_plan(&plan);
     let diagnostics = Arc::new(ScanDiagnostics::default());
     let _guard = install_test_scan_diagnostics(diagnostics);
@@ -723,7 +917,6 @@ fn fixed_volume_probe_promotes_marked_project_to_deep_scan() {
     while let Some(task) = queue.pop() {
         scan_project_cache_task(
             task,
-            &roots,
             &queue,
             &found,
             &volume_probe_tasks,
@@ -743,14 +936,27 @@ fn nested_project_roots_are_assigned_once() {
     let child = root.join("projects");
     fs::create_dir_all(&child).unwrap();
     let roots = vec![root.clone(), child.clone()];
-
-    assert!(is_separately_assigned_root(&root, &child, &roots));
-    assert!(!is_separately_assigned_root(&child, &child, &roots));
+    fs::write(child.join("package.json"), b"{}").unwrap();
+    fs::create_dir(child.join(".turbo")).unwrap();
+    let diagnostics = Arc::new(ScanDiagnostics::default());
+    let _guard = install_test_scan_diagnostics(diagnostics.clone());
+    let queue = ProjectScoutQueue::new(&roots);
+    let found = AtomicUsize::new(0);
+    let probes = AtomicUsize::new(0);
+    let reported = AtomicBool::new(false);
+    let mut discovery = ProjectCacheDiscovery::default();
+    while let Some(task) = queue.pop() {
+        scan_project_cache_task(task, &queue, &found, &probes, &reported, &mut discovery);
+        queue.complete();
+    }
+    assert_eq!(discovery.node, vec![child.join(".turbo")]);
+    assert_eq!(diagnostics.scout_tasks.load(Ordering::Relaxed), 2);
     fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
 fn scout_queue_does_not_finish_while_a_worker_can_enqueue_children() {
+    let _guard = install_test_scan_diagnostics(Arc::new(ScanDiagnostics::default()));
     let root = temp_root("scout-queue-race");
     let queue = Arc::new(ProjectScoutQueue::new(std::slice::from_ref(&root)));
     let task = queue.pop().unwrap();
@@ -773,6 +979,7 @@ fn scout_queue_does_not_finish_while_a_worker_can_enqueue_children() {
 
 #[test]
 fn directory_measure_cache_reuses_result_without_zeroing_later_categories() {
+    let _guard = install_test_scan_diagnostics(Arc::new(ScanDiagnostics::default()));
     let root = temp_root("measure-cache");
     fs::create_dir_all(&root).unwrap();
     fs::write(root.join("cache.bin"), vec![7u8; 64]).unwrap();
@@ -791,6 +998,7 @@ fn directory_measure_cache_reuses_result_without_zeroing_later_categories() {
 
 #[test]
 fn scanner_handles_many_small_files_and_deep_directories() {
+    let _guard = install_test_scan_diagnostics(Arc::new(ScanDiagnostics::default()));
     let root = temp_root("performance");
     let mut leaf = root.clone();
     for depth in 0..20 {
@@ -960,7 +1168,6 @@ fn project_level_cargo_target_dir_is_discovered_without_parent_manifest() {
     let task = queue.pop().unwrap();
     scan_project_cache_task(
         task,
-        &roots,
         &queue,
         &found,
         &volume_probe_tasks,
@@ -974,13 +1181,14 @@ fn project_level_cargo_target_dir_is_discovered_without_parent_manifest() {
 
 #[test]
 fn scan_depth_limit_is_reported() {
+    let _guard = install_test_scan_diagnostics(Arc::new(ScanDiagnostics::default()));
     let root = temp_root("depth-warning");
     let child = root.join("child");
     fs::create_dir_all(&child).unwrap();
     fs::write(child.join("file.tmp"), b"data").unwrap();
     let mut result = DirectoryMeasure::default();
-    let mut visited = std::collections::HashSet::new();
-    dir_size_recursive(&root, &mut result, &mut visited, 0, 0, None);
+    let visited = Mutex::new(std::collections::HashSet::new());
+    dir_size_recursive(&root, &mut result, &visited, 0, 0, None);
     assert!(result
         .warnings
         .iter()
@@ -1107,7 +1315,6 @@ fn deep_project_discovery_visits_monorepo_packages_beyond_old_depth_limit() {
     while let Some(task) = queue.pop() {
         scan_project_cache_task(
             task,
-            &roots,
             &queue,
             &found,
             &probe_tasks,
@@ -1194,4 +1401,26 @@ fn cleanup_skips_locked_file_and_continues_other_files() {
     assert!(errors.iter().any(|error| error.contains("文件正在使用")));
     drop(handle);
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn old_scan_remains_available_until_replaced_or_consumed() {
+    let old = complete_test_scan(); // scanned_at_ms = 0, deliberately older than any previous TTL.
+    store_scan(&old);
+    assert!(cached_scan("other").is_none());
+    assert!(take_cached_scan("other").is_none());
+    let cached = cached_scan(&old.scan_id).expect("old scan remains available");
+    assert!(scan_is_cleanable(&cached));
+    assert!(take_cached_scan(&old.scan_id).is_some());
+    assert!(take_cached_scan(&old.scan_id).is_none());
+    assert!(cached_scan(&old.scan_id).is_none());
+
+    store_scan(&old);
+    let latest = ScanResult {
+        scan_id: "new-scan".into(),
+        ..old.clone()
+    };
+    store_scan(&latest);
+    assert!(cached_scan(&old.scan_id).is_none());
+    assert!(take_cached_scan(&latest.scan_id).is_some());
 }

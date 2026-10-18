@@ -1,12 +1,11 @@
 import { useCleanupStore } from "@/stores/cleanupStore";
 import type { CleanupCategory, PathDetail } from "@/bindings";
-import { commands } from "@/bindings";
 import type { DisplayCategory } from "@/routes/cleanupSelection";
 import { MAX_PROJECT_ROOTS, PROGRAMMING_CATEGORY_ID, addProjectRoot, buildDisplayCategories, cleanablePaths, cleanupCategorySelection, displayCategorySelection, normalizePathKey, normalizeProjectRoots, replaceProjectRoot, restoreSelectedCategories, scanButtonState, setCategoriesCheckedState, sumPathFiles, sumPathSize, togglePathState, validExcludedPaths } from "@/routes/cleanupSelection";
 import { fmtBytes } from "@/utils/format";
 import { readStoredStringList, writeStoredStringList } from "@/utils/storageList";
 import { CodeOutlined } from "@ant-design/icons";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { open } from "@tauri-apps/plugin-dialog";
 import { App as AntdApp, Checkbox, Space, Tag, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useEffect, useMemo, useState } from "react";
@@ -47,12 +46,12 @@ function stageMeta(stage: string): {
     color: string;
 } {
     if (stage === "scout")
-        return { label: "侦察蚁", color: "blue" };
+        return { label: "发现目录", color: "blue" };
     if (stage === "engineer")
-        return { label: "工兵蚁", color: "cyan" };
+        return { label: "检查缓存", color: "cyan" };
     if (stage === "done")
         return { label: "已完成", color: "green" };
-    return { label: "蚁后", color: "purple" };
+    return { label: "准备扫描", color: "purple" };
 }
 function categoryIcon(id: string): string {
     const icons: Record<string, string> = {
@@ -96,33 +95,29 @@ export function useCleanupModel() {
     const { scan: cleanupCache, phase, consumed, cancelRequested, scanProgress, cleanProgress, lastCleanResult } = useCleanupStore();
     const scanning = phase === "scanning" || phase === "refreshing";
     const cleaning = phase === "cleaning";
-    const initialCache = cleanupCache && cleanupCache.expiresAtMs > Date.now() ? cleanupCache : null;
     const categories = cleanupCache?.categories ?? [];
-    const [selected, setSelected] = useState<Set<string>>(() => restoreSelected(initialCache?.categories ?? []));
+    const [selected, setSelected] = useState<Set<string>>(() => restoreSelected(cleanupCache?.categories ?? []));
     const [excludedPaths, setExcludedPaths] = useState<Set<string>>(() => restoreExcludedPaths());
     const [projectRoots, setProjectRoots] = useState<string[]>(() => normalizeProjectRoots(readStoredStringList(PROJECT_ROOTS_STORAGE_KEY) ?? []));
-    const [exporting, setExporting] = useState(false);
     const [detailCat, setDetailCat] = useState<DisplayCategory | null>(null);
     const [activeToolchainId, setActiveToolchainId] = useState<string | null>(null);
     const [projectManagerOpen, setProjectManagerOpen] = useState(false);
     const scanId = !consumed ? cleanupCache?.scanId ?? null : null;
-    const scanExpiresAt = cleanupCache?.expiresAtMs ?? null;
     const [nowMs, setNowMs] = useState(Date.now());
     const displayCategories = useMemo(() => buildDisplayCategories(categories), [categories]);
     const sortedDisplayCategories = useMemo(() => [...displayCategories].sort((left, right) => {
         const order = { safe: 0, caution: 1, advanced: 2 } as const;
         return order[left.riskLevel] - order[right.riskLevel];
     }), [displayCategories]);
-    const busy = scanning || cleaning || exporting;
-    const scanExpired = scanExpiresAt !== null && nowMs >= scanExpiresAt;
+    const busy = scanning || cleaning;
     const scanIncomplete = cleanupCache !== null && (!cleanupCache.complete || cleanupCache.cancelled);
     useEffect(() => {
-        if (scanExpiresAt === null)
+        if (!cleanupCache)
             return;
         setNowMs(Date.now());
         const timer = window.setInterval(() => setNowMs(Date.now()), 15000);
         return () => window.clearInterval(timer);
-    }, [scanExpiresAt]);
+    }, [cleanupCache]);
     useEffect(() => {
         if (!cleanupCache) return;
         const restored = restoreSelected(cleanupCache.categories);
@@ -133,19 +128,14 @@ export function useCleanupModel() {
         writeStoredStringList(EXCLUDED_PATHS_STORAGE_KEY, excluded);
         setNowMs(Date.now());
     }, [cleanupCache]);
-    const safeCategories = categories.filter((category) => category.riskLevel === "safe");
-    const safeSelectionStates = safeCategories.map((category) => cleanupCategorySelection(category, selected, excludedPaths));
-    const allSafeSelected = safeSelectionStates.length > 0 && safeSelectionStates.every((state) => state.checked);
-    const partiallySafeSelected = safeSelectionStates.some((state) => state.checked || state.indeterminate) && !allSafeSelected;
     const selectedAdvanced = categories.some((category) => category.riskLevel === "advanced" && selected.has(category.id));
     const selectedCaution = categories.some((category) => category.riskLevel === "caution" && selected.has(category.id));
     const totalSelected = categories.reduce((sum, category) => sum + sumPathSize(cleanablePaths(category, selected, excludedPaths)), 0);
     const selectedFiles = categories.reduce((sum, category) => sum + sumPathFiles(cleanablePaths(category, selected, excludedPaths)), 0);
     const selectedPathCount = categories.reduce((sum, category) => sum + cleanablePaths(category, selected, excludedPaths).length, 0);
     const totalPathCount = categories.reduce((sum, category) => sum + category.paths.length, 0);
-    const canClean = selectedPathCount > 0 && !!scanId && !scanExpired && !scanIncomplete && !busy;
-    const canExport = !consumed && !!cleanupCache?.scanId && selectedPathCount > 0 && !scanning && !cleaning && !exporting;
-    const scanButton = scanButtonState({ scanning, cancelRequested, cleaning, exporting });
+    const canClean = selectedPathCount > 0 && !!scanId && !scanIncomplete && !busy;
+    const scanButton = scanButtonState({ scanning, cancelRequested, cleaning, exporting: false });
     const saveSelected = (next: Set<string>) => writeStoredStringList(SELECTED_STORAGE_KEY, next);
     const saveExcludedPaths = (next: Set<string>) => writeStoredStringList(EXCLUDED_PATHS_STORAGE_KEY, next);
     const invalidateScan = () => {
@@ -203,41 +193,6 @@ export function useCleanupModel() {
             confirmAdvanced: selectedAdvanced,
         }, projectRoots);
     };
-    const onExport = async () => {
-        if (!canExport || !cleanupCache)
-            return;
-        if (selectedPathCount === 0) {
-            void message.info("请先勾选需要导出的清理分组或具体路径");
-            return;
-        }
-        const selectedCategoryIds = categories
-            .filter((category) => selected.has(category.id)
-            && category.paths.some((item) => !excludedPaths.has(normalizePathKey(item.path))))
-            .map((category) => category.id);
-        const path = await save({
-            title: "导出磁盘清理审核清单",
-            defaultPath: `syspulse-cleanup-${new Date().toISOString().slice(0, 10)}.json`,
-            filters: [{ name: "JSON", extensions: ["json"] }],
-        });
-        if (!path)
-            return;
-        setExporting(true);
-        try {
-            const result = await commands.exportCleanupScan({
-                scanId: cleanupCache.scanId,
-                path,
-                selectedCategoryIds,
-                excludedPaths: [...excludedPaths],
-            });
-            void message.success(`已导出 ${compactNumber(result.records)} 条路径 → ${result.savedTo}`);
-        }
-        catch (error: unknown) {
-            void message.error(error instanceof Error ? error.message : String(error));
-        }
-        finally {
-            setExporting(false);
-        }
-    };
     const chooseProjectRoot = async (): Promise<string | null> => {
         const chosen = await open({ directory: true, multiple: false, title: "选择项目工作区" });
         return typeof chosen === "string" ? chosen : null;
@@ -286,13 +241,12 @@ export function useCleanupModel() {
         {
             title: (<div className="cleanup-table-column-title">
           <strong>清理项目</strong>
-          <span>缓存类别与风险</span>
         </div>),
             key: "category",
             render: (_, row) => {
                 const meta = riskMeta(row.category.riskLevel);
                 return (<div className="cleanup-category-cell">
-            <Checkbox checked={row.selection.checked} indeterminate={row.selection.indeterminate} disabled={busy} onClick={(event) => event.stopPropagation()} onChange={() => toggleCategory(row.category)}/>
+            <Checkbox checked={row.selection.checked} indeterminate={row.selection.indeterminate} aria-label={`选择${row.category.name}`} disabled={busy} onClick={(event) => event.stopPropagation()} onChange={() => toggleCategory(row.category)}/>
             <span className="cleanup-category-icon">
               {row.category.id === PROGRAMMING_CATEGORY_ID ? <CodeOutlined /> : categoryIcon(row.category.id)}
             </span>
@@ -310,30 +264,27 @@ export function useCleanupModel() {
         {
             title: (<div className="cleanup-table-column-title is-right">
           <strong>路径</strong>
-          <span>已选 / 总数</span>
         </div>),
             dataIndex: ["selection", "totalPathCount"],
-            width: 90,
+            width: 68,
             align: "right",
             render: (_, row) => `${row.selection.checkedPathCount}/${row.selection.totalPathCount}`,
         },
         {
             title: (<div className="cleanup-table-column-title is-right">
-          <strong>占用</strong>
-          <span>发现总量</span>
+          <strong>占用空间</strong>
         </div>),
             dataIndex: ["category", "sizeBytes"],
-            width: 120,
+            width: 102,
             align: "right",
-            render: (_, row) => <Text strong style={{ color: "#cf1322" }}>{fmtBytes(row.category.sizeBytes)}</Text>,
+            render: (_, row) => <Text strong className="cleanup-size-total">{fmtBytes(row.category.sizeBytes)}</Text>,
         },
         {
             title: (<div className="cleanup-table-column-title is-right">
-          <strong>清理队列</strong>
-          <span>容量与文件</span>
+          <strong>已选空间</strong>
         </div>),
             key: "selected",
-            width: 150,
+            width: 116,
             align: "right",
             render: (_, row) => (<div>
           <Text>{fmtBytes(row.selectedSize)}</Text>
@@ -374,6 +325,6 @@ export function useCleanupModel() {
             : "默认只选择超过保留期的安全项；清理由你最后确认。";
     const heroScoutTasks = scanning ? scanProgress?.scoutTasks ?? 0 : cleanupCache?.scoutTasks ?? 0;
     const heroEngineerTasks = scanning ? scanProgress?.engineerTasks ?? 0 : cleanupCache?.engineerTasks ?? 0;
-    return { lastCleanResult, phase, Text, activeDetailCategory, activeDetailSelection, allSafeSelected, busy, canClean, canExport, categories, categoryColumns, categoryIcon, categoryRows, cleanProgress, cleaning, cleanupCache, closeDetail, compactNumber, detailAllSelection, detailCat, detailCategories, detailSelectedFiles, detailSelectedPaths, detailSelectedSize, detailToolchains, discoveredToolchains, excludedPaths, exporting, heroEngineerTasks, heroScanDetail, heroScanState, heroScoutTasks, onAddProjectRoot, onClean, onExport, onReplaceProjectRoot, onScanButton, openDetail, partiallySafeSelected, persistProjectRoots, progressMeta, projectManagerOpen, projectRoots, riskMeta, safeCategories, scanButton, scanExpired, scanIncomplete, scanProgress, scanning, selected, selectedAdvanced, selectedCaution, selectedFiles, selectedPathCount, setActiveToolchainId, setCategoriesChecked, setProjectManagerOpen, sourceLabel, toggleCategory, togglePath, totalPathCount, totalSelected, visibleDetailPaths };
+    return { lastCleanResult, phase, Text, activeDetailCategory, activeDetailSelection, busy, canClean, categories, categoryColumns, categoryIcon, categoryRows, cleanProgress, cleaning, cleanupCache, closeDetail, compactNumber, detailAllSelection, detailCat, detailCategories, detailSelectedFiles, detailSelectedPaths, detailSelectedSize, detailToolchains, discoveredToolchains, excludedPaths, heroEngineerTasks, heroScanDetail, heroScanState, heroScoutTasks, onAddProjectRoot, onClean, onReplaceProjectRoot, onScanButton, openDetail, persistProjectRoots, progressMeta, projectManagerOpen, projectRoots, riskMeta, scanButton, scanIncomplete, scanProgress, scanning, selected, selectedAdvanced, selectedCaution, selectedFiles, selectedPathCount, setActiveToolchainId, setCategoriesChecked, setProjectManagerOpen, sourceLabel, toggleCategory, togglePath, totalPathCount, totalSelected, visibleDetailPaths };
 }
 export type CleanupModel = ReturnType<typeof useCleanupModel>;

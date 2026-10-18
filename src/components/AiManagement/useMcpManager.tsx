@@ -1,7 +1,6 @@
 import { errorMessage } from "@/utils/errorMessage";
 import type {
   AiMcpOAuthStatus,
-  AiMcpOverview,
   AiMcpServerItem,
 } from "@/bindings";
 import { commands } from "@/bindings";
@@ -11,142 +10,42 @@ import {
   DisconnectOutlined,
   ReloadOutlined
 } from "@ant-design/icons";
-import { listen } from "@tauri-apps/api/event";
 import type { MenuProps } from "antd";
 import {
   App as AntdApp
 } from "antd";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ExclusiveActionLock } from "./mcpActionLock";
-import { busyKey, clientLabel, CLIENTS, EMPTY_SERVERS, isRemoteType, McpClient, ServerFilter, serverKey, sortMcpServers } from './mcpPresentation';
+import { useCallback, useMemo } from "react";
+import { useMcpStore } from "@/stores/mcpStore";
+import { busyKey, clientLabel, CLIENTS, isRemoteType, McpClient, ServerFilter, serverKey } from './mcpPresentation';
 export function useMcpManager() {
   const { message, modal } = AntdApp.useApp();
-  const [activeClient, setActiveClient] = useState<McpClient>("codex");
-  const [overview, setOverview] = useState<AiMcpOverview | null>(null);
-  const [serversByClient, setServersByClient] =
-    useState<Record<McpClient, AiMcpServerItem[]>>(EMPTY_SERVERS);
-  const [oauthByServer, setOauthByServer] = useState<Record<string, AiMcpOAuthStatus>>({});
-  const [busy, setBusy] = useState<Record<string, boolean>>({});
-  const [exclusiveAction, setExclusiveAction] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [scanning, setScanning] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [serverQuery, setServerQuery] = useState("");
-  const [serverFilter, setServerFilter] = useState<ServerFilter>("all");
-  const serversRef = useRef(serversByClient);
-  const loadVersionRef = useRef(0);
-  const oauthLoadVersionRef = useRef(0);
-  const actionLockRef = useRef(new ExclusiveActionLock());
-
-  useEffect(() => {
-    serversRef.current = serversByClient;
-  }, [serversByClient]);
-
+  const { activeClient, overview, serversByClient, oauthByServer, busy, exclusiveAction, loading, scanning,
+    loadError, serverQuery, serverFilter, updateServers: setServersByClient,
+    beginAction: beginExclusiveAction, finishAction: finishExclusiveAction, refresh: loadAll, syncClient } = useMcpStore();
+  const setActiveClient = (activeClient: McpClient) => useMcpStore.setState({ activeClient });
+  const setServerQuery = (serverQuery: string) => useMcpStore.setState({ serverQuery });
+  const setServerFilter = (serverFilter: ServerFilter) => useMcpStore.setState({ serverFilter });
+  const setScanning = (scanning: boolean) => useMcpStore.setState({ scanning });
+  const setOauthByServer = (update: (current: Record<string, AiMcpOAuthStatus>) => Record<string, AiMcpOAuthStatus>) =>
+    useMcpStore.setState((state) => ({ oauthByServer: update(state.oauthByServer) }));
   const setActionBusy = useCallback((key: string, value: boolean) => {
-    setBusy((current) => {
-      if (value) return { ...current, [key]: true };
-      const next = { ...current };
-      delete next[key];
-      return next;
+    useMcpStore.setState((state) => {
+      const busy = { ...state.busy };
+      if (value) busy[key] = true;
+      else delete busy[key];
+      return { busy };
     });
   }, []);
 
-  const beginExclusiveAction = useCallback((key: string): boolean => {
-    if (!actionLockRef.current.acquire(key)) return false;
-    setExclusiveAction(key);
-    return true;
-  }, []);
-
-  const finishExclusiveAction = useCallback((key: string) => {
-    if (actionLockRef.current.release(key)) setExclusiveAction(null);
-  }, []);
-
-  const loadOAuth = useCallback(async (servers: AiMcpServerItem[]) => {
-    const requestVersion = ++oauthLoadVersionRef.current;
-    const serverSnapshotVersion = loadVersionRef.current;
-    const remoteServers = servers.filter((server) => isRemoteType(server.type));
-    const settled = await Promise.allSettled(
-      remoteServers.map(async (server) => ({
-        key: serverKey(server),
-        status: await commands.aiMcpOauthStatus({
-          client: server.client,
-          name: server.name,
-        }),
-      })),
-    );
-    const loaded: Record<string, AiMcpOAuthStatus> = {};
-    for (const result of settled) {
-      if (result.status === "fulfilled") {
-        loaded[result.value.key] = result.value.status;
-      }
-    }
-    if (requestVersion !== oauthLoadVersionRef.current) return;
-    const activeKeys = new Set(remoteServers.map(serverKey));
-    setOauthByServer((current) => {
-      const next: Record<string, AiMcpOAuthStatus> = {};
-      for (const [key, status] of Object.entries(current)) {
-        if (activeKeys.has(key)) next[key] = status;
-      }
-      return { ...next, ...loaded };
-    });
-
-    void serverSnapshotVersion;
-  }, []);
-
-  const loadAll = useCallback(async (): Promise<boolean> => {
-    const requestVersion = ++loadVersionRef.current;
-    setLoading(true);
-    setLoadError(null);
+  const reconcileClient = async (client: McpClient, completed: string): Promise<boolean> => {
     try {
-      const [nextOverview, codex, kiro, claude] = await Promise.all([
-        commands.aiGetMcpOverview(),
-        commands.aiGetMcpServers({ client: "codex" }),
-        commands.aiGetMcpServers({ client: "kiro" }),
-        commands.aiGetMcpServers({ client: "claude-cli" }),
-      ]);
-      const nextServers: Record<McpClient, AiMcpServerItem[]> = {
-        codex,
-        kiro,
-        "claude-cli": claude,
-      };
-      for (const client of CLIENTS) nextServers[client.key] = sortMcpServers(nextServers[client.key]);
-      if (requestVersion !== loadVersionRef.current) return false;
-      setOverview(nextOverview);
-      setServersByClient(nextServers);
-      serversRef.current = nextServers;
-      void loadOAuth(Object.values(nextServers).flat());
+      await syncClient(client);
       return true;
-    } catch (error: unknown) {
-      if (requestVersion === loadVersionRef.current) setLoadError(errorMessage(error));
+    } catch (error) {
+      void message.warning(`${completed}，列表同步失败：${errorMessage(error)}。请手动刷新。`);
       return false;
-    } finally {
-      if (requestVersion === loadVersionRef.current) setLoading(false);
     }
-  }, [loadOAuth]);
-
-  useEffect(() => {
-    void loadAll();
-  }, [loadAll]);
-
-  useEffect(() => {
-    let disposed = false;
-    let unlisten: (() => void) | undefined;
-    void listen("mcp-tokens-updated", () => {
-      void loadOAuth(Object.values(serversRef.current).flat());
-    }).then((dispose) => {
-      if (disposed) {
-        dispose();
-        return;
-      }
-      unlisten = dispose;
-    }).catch((error: unknown) => {
-      if (!disposed) setLoadError("监听 MCP Token 更新失败：" + errorMessage(error));
-    });
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
-  }, [loadOAuth]);
+  };
 
   const servers = serversByClient[activeClient];
   const activeStats = useMemo(() => ({
@@ -183,8 +82,6 @@ export function useMcpManager() {
           item.name === server.name ? { ...item, disabled: !enabled } : item
         ),
       }));
-      const nextOverview = await commands.aiGetMcpOverview();
-      setOverview(nextOverview);
       void message.success(enabled ? "MCP 服务器已启用" : "MCP 服务器已停用");
     } catch (error: unknown) {
       void message.error(errorMessage(error));
@@ -200,11 +97,7 @@ export function useMcpManager() {
     setScanning(true);
     try {
       const imported = await commands.aiDiscoverMcpServers({ client: activeClient });
-      const refreshed = await loadAll();
-      if (!refreshed) {
-        void message.warning("扫描已完成，但刷新配置失败，请重试刷新");
-        return;
-      }
+      if (!await reconcileClient(activeClient, "扫描已完成")) return;
       if (imported.length > 0) {
         void message.success("扫描完成，已导入 " + imported.length + " 项 MCP 配置");
       } else {
@@ -241,11 +134,8 @@ export function useMcpManager() {
         name: server.name,
       });
       setOauthByServer((current) => ({ ...current, [serverKey(server)]: status }));
-      if (await loadAll()) {
-        void message.success(server.name + " 授权成功");
-      } else {
-        void message.warning(server.name + " 已授权，但界面刷新失败");
-      }
+      if (!await reconcileClient(server.client as McpClient, server.name + " 已授权")) return;
+      void message.success(server.name + " 授权成功");
     } catch (error: unknown) {
       const text = errorMessage(error);
       if (text.includes("取消")) {
@@ -318,7 +208,6 @@ export function useMcpManager() {
         name: server.name,
       });
       setOauthByServer((current) => ({ ...current, [serverKey(server)]: status }));
-      await loadOAuth(Object.values(serversRef.current).flat());
       void message.success(server.name + " Token 已刷新");
     } catch (error: unknown) {
       void message.error(errorMessage(error));
@@ -343,12 +232,8 @@ export function useMcpManager() {
     setActionBusy(key, true);
     try {
       const result = await commands.aiMcpOauthRevoke({ client: server.client, name: server.name });
-      const refreshed = await loadAll();
+      if (!await reconcileClient(server.client as McpClient, "撤销操作已完成")) return;
       const text = result || (server.name + " 的授权已撤销");
-      if (!refreshed) {
-        void message.warning(text + "；界面刷新失败");
-        return;
-      }
       if (text.includes("未完成") || text.includes("未提供") || text.includes("未恢复")) {
         void message.warning(text);
       } else {
@@ -373,11 +258,8 @@ export function useMcpManager() {
         name: server.name,
         overwrite: true,
       });
-      if (await loadAll()) {
-        void message.success("已将 " + server.name + " 复制到 " + clientLabel(target));
-      } else {
-        void message.warning("复制已完成，但界面刷新失败");
-      }
+      if (!await reconcileClient(target, "复制已完成")) return;
+      void message.success("已将 " + server.name + " 复制到 " + clientLabel(target));
     } catch (error: unknown) {
       void message.error(errorMessage(error));
     } finally {
@@ -392,11 +274,9 @@ export function useMcpManager() {
     setActionBusy(key, true);
     try {
       await commands.aiDeleteMcpServer({ client: server.client, name: server.name });
-      if (await loadAll()) {
-        void message.success("已删除 MCP 服务器 " + server.name);
-      } else {
-        void message.warning("服务器已删除，但界面刷新失败");
-      }
+      const client = server.client as McpClient;
+      setServersByClient((current) => ({ ...current, [client]: current[client].filter((item) => item.name !== server.name) }));
+      void message.success("已删除 MCP 服务器 " + server.name);
     } catch (error: unknown) {
       void message.error(errorMessage(error));
     } finally {

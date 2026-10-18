@@ -1,6 +1,6 @@
 [package]
 name = "syspulse"
-version = "0.1.29"
+version = "0.1.30"
 description = "Lightweight Windows network/system monitor"
 authors = ["SysPulse"]
 edition = "2021"
@@ -45,6 +45,7 @@ toml_edit = "=0.22.27"
 sysinfo = "0.33"
 chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.22"
+minisign-verify = "=0.2.5"
 url = "2.5"
 urlencoding = "2.1"
 # uuid 1.23+ 的 fast-rng 依赖链会解析到需要 edition 2024 的

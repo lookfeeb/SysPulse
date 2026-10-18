@@ -20,7 +20,7 @@ export const sessionFixture = {
   listDelayMs: 0, loadDelayMs: 0, failNextList: false, failNextLoad: false,
   get remaining() { return sessions.length; },
 };
-const scan: ScanResult = {scanId: 'fixture-scan', categories: [{id:'node-cache',name:'Node 缓存（测试）',description:'内存模拟数据',sizeBytes:1024,fileCount:2,riskLevel:'safe',defaultSelected:true,minAgeDays:7,paths:[{path:'C:/Synthetic/Fixture/cache',sizeBytes:1024,fileCount:2,matchedRule:'fixture',source:'fixture',volumeSerial:1,fileId:1}]}],totalSizeBytes:1024,totalFileCount:2,scannedAtMs:Date.now(),expiresAtMs:Date.now()+3600000,durationMs:100,scannedPaths:1,skippedPaths:0,ignoredPaths:0,hotspotCount:0,scoutWorkers:1,engineerWorkers:1,scoutTasks:1,engineerTasks:1,projectRoots:[],warnings:[],complete:true,cancelled:false};
+const scan: ScanResult = {scanId: 'fixture-scan', categories: [{id:'node-cache',name:'Node 缓存（测试）',description:'内存模拟数据',sizeBytes:1024,fileCount:2,riskLevel:'safe',defaultSelected:true,minAgeDays:7,paths:[{path:'C:/Synthetic/Fixture/cache',sizeBytes:1024,fileCount:2,matchedRule:'fixture',source:'fixture',volumeSerial:1,fileId:1}]}],totalSizeBytes:1024,totalFileCount:2,scannedAtMs:Date.now(),durationMs:100,scannedPaths:1,skippedPaths:0,ignoredPaths:0,hotspotCount:0,scoutWorkers:1,engineerWorkers:1,scoutTasks:1,engineerTasks:1,projectRoots:[],warnings:[],complete:true,cancelled:false};
 const failConfig = new URLSearchParams(location.search).has('config-failure');
 const backgroundCleanup = new URLSearchParams(location.search).has('cleanup-background');
 let pendingScan: ((result: ScanResult) => void) | null = null;
@@ -43,6 +43,7 @@ export const hardwareFixture = {
   },
 };
 export const cleanupFixture = {
+  directoryChoices: [] as string[],
   scanCalls: 0,
   cleanCalls: 0,
   async progress(scannedPaths: number) {
@@ -53,7 +54,7 @@ export const cleanupFixture = {
     const resolve = pendingScan;
     pendingScan = null;
     resolve?.({...scan,scanId:`fixture-scan-${this.scanCalls}`,scannedAtMs:Date.now(),
-      expiresAtMs:Date.now()+3600000,complete:!cancelled,cancelled});
+      complete:!cancelled,cancelled});
   },
   finishClean() {
     const resolve = pendingClean;
@@ -64,6 +65,10 @@ export const cleanupFixture = {
 let configAttempts = 0;
 let authorized = false;
 const oauthStatus = () => ({oauthSupported:true,authorized,expiresAt:Math.floor(Date.now()/1000)+3600,expiringSoon:false,expired:false,refreshFailed:false,needsReauth:false,message:null});
+export const mcpFixture = {
+  listCalls: [] as string[], overviewCalls: 0, oauthCalls: 0, toggleCalls: 0, readDelayMs: 0, failNextRead: false,
+};
+let mcpDisabled = false;
 mockWindows('config');
 mockIPC(async (cmd, payload) => {
   const args = (payload as { args?: Record<string, any> } | undefined)?.args ?? {};
@@ -89,9 +94,15 @@ mockIPC(async (cmd, payload) => {
     case 'is_admin': return true;
     case 'autostart_is_enabled': return false;
     case 'query_traffic_history': return [];
-    case 'ai_get_mcp_overview': return {totalServers:1,enabledServers:1,clients:[{client:'codex',totalServers:1,enabledServers:1}]};
-    case 'ai_get_mcp_servers': return args.client==='codex' ? [{name:'隔离 OAuth',client:'codex',type:'http',detail:'https://example.invalid/mcp',disabled:false}] : [];
-    case 'ai_mcp_oauth_status': return oauthStatus();
+    case 'ai_get_mcp_overview': mcpFixture.overviewCalls++; return {totalServers:1,enabledServers:1,clients:[{client:'codex',totalServers:1,enabledServers:1}]};
+    case 'ai_get_mcp_servers':
+      mcpFixture.listCalls.push(args.client);
+      await new Promise(resolve => setTimeout(resolve, mcpFixture.readDelayMs));
+      if (mcpFixture.failNextRead) { mcpFixture.failNextRead = false; throw new Error('模拟 MCP 读取失败'); }
+      return args.client==='codex' ? [{name:'隔离 OAuth',client:'codex',type:'http',detail:'https://example.invalid/mcp',disabled:mcpDisabled}] : [];
+    case 'ai_mcp_oauth_status': mcpFixture.oauthCalls++; return oauthStatus();
+    case 'ai_toggle_mcp_server': mcpFixture.toggleCalls++; mcpDisabled = args.disabled; return null;
+    case 'plugin:dialog|open': return cleanupFixture.directoryChoices.shift() ?? null;
     case 'ai_mcp_oauth_authorize': authorized=true; return null;
     case 'ai_mcp_oauth_refresh': return oauthStatus();
     case 'ai_mcp_oauth_revoke': authorized=false; return '已撤销模拟授权';

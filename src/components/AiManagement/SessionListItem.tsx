@@ -13,6 +13,7 @@ interface Props {
 }
 
 export default function SessionListItem({ summary, active, mutatingKey, onSelect, onDelete }: Props) {
+  const brand = summary.source === "codex" ? "openai" : summary.source === "claude" ? "claude" : null;
   const readonly = isReadOnlySession(summary);
   const indexOnly = isCodexIndexSession(summary);
   const deleting = mutatingKey === "session:" + summary.workspaceHash + ":" + summary.sessionId;
@@ -22,7 +23,7 @@ export default function SessionListItem({ summary, active, mutatingKey, onSelect
       disabled={mutatingKey !== null} onClick={() => void onSelect(summary)} title={summary.title}>
       <strong className="aim-ses-title">{title}</strong>
       <span className="aim-ses-meta">
-        <span className="aim-ses-logo" data-source={summary.source.replace(/[^a-zA-Z0-9-]/g, "-")} aria-hidden="true">{sourceMonogram(summary.source)}</span>
+        <span className={`aim-ses-logo${brand ? " is-brand" : ""}`} data-source={summary.source.replace(/[^a-zA-Z0-9-]/g, "-")} aria-hidden="true">{brand ? <img src={`/brands/${brand}.svg`} alt="" width={16} height={16} /> : sourceMonogram(summary.source)}</span>
         <span className="aim-ses-origin">{sourceMeta(summary.source).label}</span>
         <span>· {indexOnly ? "仅索引" : `${summary.messageCount} 条`}</span>
         <time className="aim-ses-time" dateTime={timestampDate(summary.modifiedAt)?.toISOString()}

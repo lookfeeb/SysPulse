@@ -5,7 +5,7 @@
   min-height: 0;
   flex: 1;
   gap: 12px;
-  grid-template-columns: 292px minmax(0, 1fr);
+  grid-template-columns: 284px minmax(0, 1fr);
 }
 
 .aim-ses-side {
@@ -23,10 +23,6 @@
   color: var(--aim-ink);
   font-size: 16px;
   font-weight: 700;
-}
-.aim-library-header span {
-  color: var(--aim-ink-3);
-  font-size: 11px;
 }
 .aim-project-picker {
   margin: 0 12px 12px;
@@ -49,14 +45,6 @@
 .aim-project-select.ant-select {
   width: 100%;
   font-weight: 600;
-}
-.aim-project-path {
-  margin-top: 7px;
-  overflow: hidden;
-  color: var(--aim-ink-4);
-  font: 10px/1.5 var(--aim-mono);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .aim-project-popup {
   max-width: calc(100vw - 24px);
@@ -89,50 +77,10 @@
 .aim-project-not-found {
   font-size: 12px;
 }
-
-.aim-ses-tools {
-  display: flex;
-  flex-direction: column;
-  flex: 0 0 auto;
-  gap: 8px;
-  padding: 0 12px 10px;
-}
-.aim-ses-tools .aim-input {
-  width: 100%;
-  min-width: 0;
-}
-.aim-ses-filter-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 4px;
-}
-.aim-ses-source.ant-select {
-  flex: 1;
-  min-width: 0;
-  max-width: 174px;
-  font-size: 11px;
-}
-.aim-ses-filter-row .ant-btn {
-  padding-inline: 4px;
-  font-size: 11px;
-}
-.aim-ses-result-bar {
-  display: flex;
-  flex: 0 0 auto;
-  justify-content: space-between;
-  padding: 8px 14px;
-  border-top: 1px solid var(--aim-line-soft);
-  color: var(--aim-ink-3);
-  font-size: 10.5px;
-}
-.aim-ses-result-bar > span:last-child {
-  color: var(--aim-ink-4);
-}
 .aim-ses-scroll {
   min-height: 0;
   flex: 1;
-  padding: 0 6px 6px;
+  padding: 2px 9px 6px;
   overflow: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
@@ -158,9 +106,10 @@
 
 .aim-ses-item {
   position: relative;
-  height: calc(100% - 4px);
-  border: 1px solid transparent;
-  border-radius: 9px;
+  height: calc(100% - 6px);
+  border: 1px solid var(--aim-line-soft);
+  border-radius: 10px;
+  background: var(--aim-panel);
   transition: background .14s ease, border-color .14s ease;
 }
 .aim-ses-item:hover {
@@ -174,7 +123,7 @@
   display: block;
   width: 100%;
   height: 100%;
-  padding: 9px 30px 9px 10px;
+  padding: 8px 30px 8px 12px;
   border: 0;
   border-radius: 8px;
   background: transparent;
@@ -296,22 +245,6 @@
 .aim-session-delete-summary small {
   color: var(--ant-color-text-secondary);
 }
-.aim-conv-filter-note {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex: 0 0 auto;
-  gap: 6px;
-  padding: 5px 13px;
-  background: var(--aim-panel-sub);
-  color: var(--aim-ink-3);
-  font-size: 11px;
-}
-.aim-conv-filter-note .ant-btn {
-  flex-shrink: 0;
-  font-size: 11px;
-}
-
 /* ---------- 右：会话阅读 ---------- */
 .aim-conv {
   min-width: 0;
@@ -643,7 +576,7 @@
   .aim-library-header {
     padding: 8px 12px;
   }
-  .aim-library-header > div {
+  .aim-library-identity > div {
     display: flex;
     align-items: baseline;
     gap: 8px;
@@ -659,16 +592,6 @@
   .aim-project-picker label {
     margin-bottom: 4px;
   }
-  .aim-project-path {
-    margin-top: 4px;
-  }
-  .aim-ses-tools {
-    gap: 6px;
-    padding-bottom: 6px;
-  }
-  .aim-ses-result-bar {
-    padding-block: 5px;
-  }
   .aim-ses-foot {
     padding-block: 4px;
   }
@@ -683,3 +606,45 @@
     max-width: 94%;
   }
 }
+
+.aim-ses-side.aim-card { border-color: #dbe5ef; background: linear-gradient(180deg, #f5f9fd 0, #fff 190px); box-shadow: 0 3px 14px -10px #19486d44; }
+.aim-library-header { padding: 16px 14px 14px; }
+.aim-library-identity { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.aim-library-icon { display: grid; place-items: center; width: 34px; height: 34px; flex: 0 0 34px; border-radius: 10px; border: 1px solid #d5e6f5; background: #eaf4fc; color: var(--aim-brand); font-size: 18px; }
+.aim-library-header h2 { font-size: 15px; letter-spacing: .2px; }
+.aim-library-header .ant-btn { width: 28px; height: 28px; border: 1px solid var(--aim-line); border-radius: 8px; color: var(--aim-ink-3); background: #ffffffb3; }
+.aim-project-picker { padding: 11px; background: var(--aim-panel); border-color: #dce7f1; border-radius: 11px; box-shadow: 0 2px 4px -3px #12334d30; }
+.aim-project-picker label { align-items: center; color: var(--aim-ink-2); font-weight: 600; }
+.aim-project-picker label span { padding: 2px 6px; border-radius: 5px; background: var(--aim-panel-sunk); color: var(--aim-ink-3); font-size: 10px; font-weight: 400; }
+.aim-ses-scroll { background: #f9fbfd; border-top: 1px solid var(--aim-line-soft); }
+.aim-ses-item.is-active { border-color: #b9d8f1; background: #edf6ff; box-shadow: inset 3px 0 var(--aim-brand); }
+.aim-ses-item.is-active .aim-ses-title { color: #1b5b90; }
+.aim-ses-group-hd { color: var(--aim-ink-3); }
+.aim-ses-time { color: var(--aim-ink-3); }
+.aim-ses-foot { background: var(--aim-panel); }
+.aim-ses-foot > span { display: flex; align-items: center; gap: 4px; color: var(--aim-ink-3); }
+.aim-ses-foot kbd { padding: 0 3px; border: 1px solid var(--aim-line); border-radius: 3px; color: var(--aim-ink-2); background: var(--aim-panel-sub); font: 9px/15px var(--aim-mono); }
+.aim-ses-foot i { width: 4px; }
+@media (max-height: 620px) {
+  .aim-library-header { padding: 10px 12px; }
+  .aim-library-icon { width: 28px; height: 28px; flex-basis: 28px; font-size: 15px; border-radius: 8px; }
+  .aim-library-identity { gap: 7px; }
+  .aim-library-identity > div { display: block; }
+  .aim-project-picker { padding: 8px; }
+}
+
+.aim-library-header h2 { margin: 0; }
+.aim-project-picker { margin-bottom: 12px; padding: 0; border: 0; background: transparent; box-shadow: none; }
+.aim-project-picker label { display: block; margin: 0 0 7px; color: var(--aim-ink-3); font-size: 11px; font-weight: 500; }
+.aim-project-picker label { display: flex; }
+.aim-project-select.ant-select { width: 100%; min-height: 38px; border: 1px solid #dce6f0; border-radius: 9px; background: #fff; box-shadow: 0 2px 4px -3px #24476522; font-size: 12px; font-weight: 500; }
+.aim-project-select.ant-select:not(.ant-select-disabled):hover { border-color: #9ac2e3; }
+.aim-project-select .ant-select-prefix { display: grid; place-items: center; width: 24px; height: 24px; margin-right: 5px; border-radius: 6px; background: #edf5fc; color: var(--aim-brand); }
+.aim-project-select .ant-select-suffix { color: #8299ae; font-size: 10px; }
+@media (max-height: 620px) {
+  .aim-project-picker { margin-bottom: 10px; }
+  .aim-project-select.ant-select { min-height: 34px; }
+}
+
+.aim-ses-logo.is-brand { background: transparent; border-radius: 0; }
+.aim-ses-logo.is-brand img { display: block; width: 16px; height: 16px; }

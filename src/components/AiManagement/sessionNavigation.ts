@@ -1,5 +1,5 @@
 import type { AiSessionSummary, AiSessionTree } from "@/bindings";
-import { sameSession, sourceMeta, timestampDate, workspaceName, workspacePath, type WorkspaceView } from "./sessionPresentation";
+import { sameSession, timestampDate, workspaceName, workspacePath, type WorkspaceView } from "./sessionPresentation";
 
 export function buildWorkspaceViews(tree: AiSessionTree): WorkspaceView[] {
   return tree.workspaces.map((hash) => {
@@ -7,17 +7,6 @@ export function buildWorkspaceViews(tree: AiSessionTree): WorkspaceView[] {
       (timestampDate(b.modifiedAt)?.getTime() ?? 0) - (timestampDate(a.modifiedAt)?.getTime() ?? 0));
     const path = workspacePath(hash, sessions);
     return { hash, path, name: workspaceName(path), sessions };
-  });
-}
-
-export function filterSessions(sessions: AiSessionSummary[], query: string, source: string) {
-  const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
-  return sessions.filter((summary) => {
-    if (source !== "all" && summary.source !== source) return false;
-    if (terms.length === 0) return true;
-    const text = [summary.title, summary.sessionId, summary.workspaceDirectory, summary.sessionType,
-      summary.source, sourceMeta(summary.source).label].join(" ").toLocaleLowerCase();
-    return terms.every((term) => text.includes(term));
   });
 }
 

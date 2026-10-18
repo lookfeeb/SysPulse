@@ -16,6 +16,8 @@ import { useTranslation } from "react-i18next";
 import { getAppInfo, openPath, quitApp } from "@/ipc";
 import type { AppInfo } from "@/bindings";
 import { useUpdateStore, type UpdateStatus } from "@/stores/updateStore";
+import { fmtBytes } from "@/utils/format";
+import "./AboutPage.css";
 import UpdateNotesModal from "@/components/UpdateNotesModal";
 
 const { Text } = Typography;
@@ -55,6 +57,7 @@ export default function AboutPage() {
   const [notesDate, setNotesDate] = useState("");
   const [notesLoading, setNotesLoading] = useState(false);
 
+  const pending = useUpdateStore((s) => s.pending);
   const status = useUpdateStore((s) => s.status);
   const checkForUpdate = useUpdateStore((s) => s.checkForUpdate);
   const downloadAndInstall = useUpdateStore((s) => s.downloadAndInstall);
@@ -66,7 +69,7 @@ export default function AboutPage() {
   // Surface install-ready transitions as a toast.
   useEffect(() => {
     if (status.kind === "ready") {
-      void message.success("更新已下载，重启后生效");
+      void message.success("更新安装完成");
     }
   }, [status.kind, message]);
 
@@ -93,13 +96,13 @@ export default function AboutPage() {
   if (!info) return null;
 
   const isChecking = status.kind === "checking";
-  const isDownloading = status.kind === "downloading";
+  const isDownloading = status.kind === "downloading" || status.kind === "verifying" || status.kind === "installing";
 
   return (
     <Space vertical size={16} style={{ width: "100%" }}>
       {/* App Identity */}
       <Card style={{ borderRadius: 10 }} styles={{ body: { padding: "20px 24px" } }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+        <div className="about-app-identity">
           <div
             style={{
               width: 48,
@@ -116,7 +119,7 @@ export default function AboutPage() {
           </div>
           <div style={{ flex: 1 }}>
             <Text style={{ fontSize: 18, fontWeight: 700, display: "block" }}>{info.name}</Text>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
               <Tag
                 color="blue"
                 style={{ margin: 0, fontWeight: 600, cursor: "pointer" }}
@@ -132,7 +135,7 @@ export default function AboutPage() {
               <UpdateBadge status={status} />
             </div>
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
+          <div className="about-update-actions">
             <Button
               icon={<SyncOutlined spin={isChecking} />}
               loading={isChecking}
@@ -153,6 +156,11 @@ export default function AboutPage() {
                 安装 v{status.version}
               </Button>
             )}
+            {status.kind === "error" && pending && (
+              <Button type="primary" size="small" icon={<CloudDownloadOutlined />} onClick={() => void downloadAndInstall()}>
+                {status.operation === "install" ? "重试下载" : `安装 v${pending.version}`}
+              </Button>
+            )}
             {status.kind === "ready" && (
               <Button
                 type="primary"
@@ -160,19 +168,21 @@ export default function AboutPage() {
                 onClick={() => void quitApp()}
                 style={{ background: "#22c55e", borderColor: "#22c55e" }}
               >
-                重启应用
+                关闭应用
               </Button>
             )}
           </div>
         </div>
 
         {status.kind === "downloading" && (
-          <Progress
-            percent={status.progress}
-            size="small"
-            strokeColor="#3388cc"
-            style={{ maxWidth: 320, marginTop: 12 }}
-          />
+          <div className="about-download" aria-live="polite">
+            <div className="about-download-heading"><strong>{status.downloaded ? "正在下载更新" : "正在连接下载服务"}</strong><span>{status.bytesPerSecond > 0 ? `${fmtBytes(status.bytesPerSecond)}/s` : "连接中…"}</span></div>
+            <Progress percent={status.progress ?? 0} showInfo={status.progress !== null} size="small" strokeColor="#3388cc" className={status.progress === null ? "is-indeterminate" : ""} />
+            <div className="about-download-meta"><span>{fmtBytes(status.downloaded)}{status.total ? ` / ${fmtBytes(status.total)}` : " · 正在获取文件大小"}</span><span>可切换页面，下载会继续</span></div>
+          </div>
+        )}
+        {(status.kind === "verifying" || status.kind === "installing") && (
+          <div className="about-download"><SyncOutlined spin /> {status.kind === "verifying" ? "正在校验更新包签名…" : "正在启动安装程序…"}</div>
         )}
         {status.kind === "available" && (
           <div style={{ marginTop: 10 }}>
@@ -189,7 +199,7 @@ export default function AboutPage() {
         )}
         {status.kind === "error" && (
           <Text type="danger" style={{ display: "block", fontSize: 12, marginTop: 10 }}>
-            检查失败：{status.message}
+            {status.operation === "install" ? "更新失败" : "检查失败"}：{status.message}
           </Text>
         )}
       </Card>
@@ -303,11 +313,15 @@ function UpdateBadge({ status }: { status: UpdateStatus }) {
     case "available":
       return <Tag icon={<CloudDownloadOutlined />} color="warning" style={{ margin: 0 }}>有新版本</Tag>;
     case "downloading":
-      return <Tag icon={<SyncOutlined spin />} color="processing" style={{ margin: 0 }}>下载中 {status.progress}%</Tag>;
+      return <Tag icon={<SyncOutlined spin />} color="processing" style={{ margin: 0 }}>下载中{status.progress === null ? "" : ` ${status.progress}%`}</Tag>;
+    case "verifying":
+      return <Tag icon={<SyncOutlined spin />} color="processing" style={{ margin: 0 }}>校验中</Tag>;
+    case "installing":
+      return <Tag icon={<SyncOutlined spin />} color="processing" style={{ margin: 0 }}>安装中</Tag>;
     case "ready":
       return <Tag icon={<CheckCircleOutlined />} color="success" style={{ margin: 0 }}>更新就绪</Tag>;
     case "error":
-      return <Tag color="error" style={{ margin: 0 }}>检查失败</Tag>;
+      return <Tag color="error" style={{ margin: 0 }}>{status.operation === "install" ? "更新失败" : "检查失败"}</Tag>;
     default:
       return null;
   }

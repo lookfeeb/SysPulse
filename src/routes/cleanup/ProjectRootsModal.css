@@ -1,0 +1,54 @@
+.cleanup-project-modal { max-width: calc(100vw - 40px); }
+.project-scope { display: flex; flex-direction: column; height: min(540px, calc(100vh - 48px)); min-height: 350px; color: #243e55; background: #fff; }
+.project-scope-header { display: flex; flex: 0 0 auto; align-items: center; gap: 13px; padding: 22px 24px; background: linear-gradient(120deg, #f1f7fc, #fbfdff); border-bottom: 1px solid #e6eef5; }
+.project-scope-icon { display: grid; place-items: center; width: 44px; height: 44px; flex-shrink: 0; border: 1px solid #d8e9f5; border-radius: 12px; background: #e7f2fc; color: #3287c6; font-size: 22px; }
+.project-scope-header > div { min-width: 0; flex: 1; }
+.project-scope-header h2 { margin: 0 0 4px; color: #203e56; font-size: 18px; font-weight: 650; }
+.project-scope-header p { margin: 0; color: #7b8e9e; font-size: 12px; }
+.project-scope-header .ant-btn { align-self: flex-start; color: #8a9dab; }
+.project-scope-auto { display: flex; flex: 0 0 auto; align-items: center; flex-wrap: wrap; gap: 8px; padding: 13px 24px; border-bottom: 1px solid #edf1f5; font-size: 11px; }
+.project-scope-auto > span:first-child { margin-right: 6px; color: #6e8396; }
+.project-scope-auto .anticon { margin-right: 5px; color: #479b80; }
+.project-scope-auto strong { padding: 3px 9px; border-radius: 5px; background: #f0f5f8; color: #547186; font-size: 11px; font-weight: 500; }
+.project-scope-auto-note { margin-left: auto; color: #91a0ac; }
+.project-scope-content { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 20px 24px 12px; }
+.project-scope-toolbar { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.project-scope-toolbar h3 { margin: 0; font-size: 13px; font-weight: 650; }
+.project-scope-toolbar h3 span { margin-left: 7px; padding: 2px 6px; border-radius: 5px; background: #edf4fa; color: #547b9e; font-size: 10px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.project-scope-toolbar p { margin: 5px 0 0; color: #8a99a7; font-size: 11px; }
+.project-scope-toolbar .ant-btn { height: 32px; border-radius: 7px; font-size: 12px; box-shadow: none; }
+.project-scope-list { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding-right: 3px; }
+.project-scope-root { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid #e5ecf2; border-radius: 10px; background: #fbfcfe; }
+.project-scope-root + .project-scope-root { margin-top: 8px; }
+.project-scope-root:hover { border-color: #cbdff0; background: #f7fbff; }
+.project-scope-root-icon { display: grid; place-items: center; width: 34px; height: 34px; flex: 0 0 34px; border-radius: 8px; background: #edf4fa; color: #4d88b4; font-size: 17px; }
+.project-scope-root-copy { flex: 1; min-width: 0; }
+.project-scope-root-copy strong { display: block; overflow-wrap: anywhere; color: #35536a; font-size: 12px; font-weight: 600; }
+.project-scope-root-copy button { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; width: 100%; margin-top: 3px; padding: 0; overflow: hidden; overflow-wrap: anywhere; border: 0; background: transparent; color: #7c91a3; font: 10px/1.6 Consolas, monospace; text-align: left; cursor: pointer; }
+.project-scope-root-copy button:hover { color: #2d82be; }
+.project-scope-root-copy button:focus-visible { outline: 2px solid #3388cc; outline-offset: 2px; border-radius: 3px; }
+.project-scope-root-actions { display: flex; flex-shrink: 0; gap: 3px; }
+.project-scope-root-actions .ant-btn { width: 27px; height: 27px; color: #7c93a6; }
+.project-scope-root-actions .ant-btn-dangerous:not(:disabled):hover { color: #d75a65; }
+.project-scope-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100%; padding: 18px; border: 1px dashed #dbe6ef; border-radius: 12px; background: #fafcfe; text-align: center; }
+.project-scope-empty > span { display: grid; place-items: center; width: 52px; height: 52px; margin-bottom: 12px; border: 1px solid #e0ebf4; border-radius: 16px; color: #8eb2ce; background: #f0f6fb; font-size: 26px; }
+.project-scope-empty strong { color: #5b778e; font-size: 13px; font-weight: 500; }
+.project-scope-empty p { margin: 7px 0 0; color: #92a2af; font-size: 11px; line-height: 1.8; }
+.project-scope-footer { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; padding: 13px 24px; border-top: 1px solid #e9eff4; }
+.project-scope-footer > span { margin-right: auto; color: #7d919f; font-size: 11px; }
+.project-scope-footer > span .anticon { margin-right: 5px; color: #58a087; }
+.project-scope-footer .ant-btn { border-radius: 7px; font-size: 12px; }
+.project-scope-footer > .ant-btn:last-child { min-width: 72px; }
+@media (max-height: 620px) {
+  .project-scope-header { padding: 16px 20px; }
+  .project-scope-content { padding: 16px 20px 10px; }
+  .project-scope-toolbar { margin-bottom: 12px; }
+  .project-scope-auto, .project-scope-footer { padding-inline: 20px; }
+}
+@media (max-width: 600px) {
+  .project-scope-header { gap: 10px; padding-inline: 16px; }
+  .project-scope-content, .project-scope-auto, .project-scope-footer { padding-inline: 16px; }
+  .project-scope-auto-note { display: none; }
+  .project-scope-toolbar { align-items: flex-start; }
+  .project-scope-toolbar p { max-width: 210px; }
+}

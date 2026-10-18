@@ -4,7 +4,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { App as AntdApp } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { bindPanelWheelRouting } from "./panelWheel";
-import { buildWorkspaceViews, filterSessions, nextSessionAfterRemoval, resolveTreeSelection } from "./sessionNavigation";
+import { buildWorkspaceViews, nextSessionAfterRemoval, resolveTreeSelection } from "./sessionNavigation";
 import { canRevealSession, isCodexIndexSession, isReadOnlySession, } from "./sessionCapabilities";
 import "./SessionManager.css";
 const EMPTY_TREE: AiSessionTree = {
@@ -12,7 +12,7 @@ const EMPTY_TREE: AiSessionTree = {
     sessionsByWorkspace: {},
 };
 const PAGE_SIZE = 25;
-import { dateGroup, errorMessage, historyText, safeFileName, sameSession, SESSION_GROUP_META, sourceMeta, type SessionGroupView, type WorkspaceView } from "./sessionPresentation";
+import { dateGroup, errorMessage, historyText, safeFileName, sameSession, SESSION_GROUP_META, type SessionGroupView, type WorkspaceView } from "./sessionPresentation";
 export function useSessionManager() {
     const { message } = AntdApp.useApp();
     const [tree, setTree] = useState<AiSessionTree>(EMPTY_TREE);
@@ -26,8 +26,6 @@ export function useSessionManager() {
     const [mutatingKey, setMutatingKey] = useState<string | null>(null);
     const [activeWorkspaceHash, setActiveWorkspaceHash] = useState<string | null>(null);
     const [messagePage, setMessagePage] = useState(1);
-    const [sessionQuery, setSessionQuery] = useState("");
-    const [sourceFilter, setSourceFilter] = useState("all");
     const [copiedMessageKey, setCopiedMessageKey] = useState<string | null>(null);
     const selectedRef = useRef<AiSessionSummary | null>(null);
     const activeWorkspaceRef = useRef<string | null>(null);
@@ -134,7 +132,6 @@ export function useSessionManager() {
             const current = selectedRef.current;
             const { workspace, summary: target } = resolveTreeSelection(buildWorkspaceViews(nextTree), activeWorkspaceRef.current, current);
             const nextHash = workspace?.hash ?? null;
-            if (activeWorkspaceRef.current !== nextHash) { setSessionQuery(""); setSourceFilter("all"); }
             activeWorkspaceRef.current = nextHash;
             setActiveWorkspaceHash(nextHash);
             if (target) {
@@ -167,24 +164,10 @@ export function useSessionManager() {
         return () => { mountedRef.current = false; ++treeLoadSequence.current; ++loadSequence.current; };
     }, [loadTree]);
     const workspaces = useMemo(() => buildWorkspaceViews(tree), [tree]);
-    const totalSessions = useMemo(() => workspaces.reduce((total, workspace) => total + workspace.sessions.length, 0), [workspaces]);
     const activeWorkspace = useMemo(() => workspaces.find((workspace) => workspace.hash === activeWorkspaceHash)
         ?? workspaces[0]
         ?? null, [activeWorkspaceHash, workspaces]);
-    const sourceOptions = useMemo(() => {
-        const sources = new Map<string, number>();
-        for (const summary of activeWorkspace?.sessions ?? []) sources.set(summary.source, (sources.get(summary.source) ?? 0) + 1);
-        return [
-            { value: "all", label: `全部来源 · ${activeWorkspace?.sessions.length ?? 0}` },
-            ...[...sources.keys()]
-                .sort((left, right) => sourceMeta(left).label.localeCompare(sourceMeta(right).label, "zh-CN"))
-                .map((source) => ({ value: source, label: `${sourceMeta(source).label} · ${sources.get(source)}` })),
-        ];
-    }, [activeWorkspace]);
-    useEffect(() => {
-        if (!sourceOptions.some((option) => option.value === sourceFilter)) setSourceFilter("all");
-    }, [sourceOptions, sourceFilter]);
-    const visibleSessions = useMemo(() => filterSessions(activeWorkspace?.sessions ?? [], sessionQuery, sourceFilter), [activeWorkspace, sessionQuery, sourceFilter]);
+    const visibleSessions = useMemo(() => activeWorkspace?.sessions ?? [], [activeWorkspace]);
     const groupedSessions = useMemo<SessionGroupView[]>(() => {
         const buckets: Record<SessionGroupView["key"], AiSessionSummary[]> = {
             today: [],
@@ -231,7 +214,7 @@ export function useSessionManager() {
             const remembered = workspaceSelections.current.get(summary.workspaceHash);
             if (remembered && sameSession(remembered.summary, summary)) workspaceSelections.current.delete(summary.workspaceHash);
             if (sameSession(selectedRef.current, summary)) {
-                const neighbor = nextSessionAfterRemoval(visibleSessions, summary) ?? filterSessions(remaining, sessionQuery, sourceFilter)[0] ?? remaining[0];
+                const neighbor = nextSessionAfterRemoval(visibleSessions, summary) ?? remaining[0];
                 clearSelection();
                 if (neighbor) void loadSessionPage(neighbor, 1, true);
             }
@@ -277,8 +260,6 @@ export function useSessionManager() {
                 const next = resolveTreeSelection(buildWorkspaceViews(nextTree), null, null);
                 activeWorkspaceRef.current = next.workspace?.hash ?? null;
                 setActiveWorkspaceHash(activeWorkspaceRef.current);
-                setSessionQuery("");
-                setSourceFilter("all");
                 if (next.summary) void loadSessionPage(next.summary, 1, true);
             }
             if (await loadTree(true, false)) {
@@ -358,8 +339,6 @@ export function useSessionManager() {
         if (mutationRef.current || activeWorkspaceRef.current === workspace.hash) return;
         activeWorkspaceRef.current = workspace.hash;
         setActiveWorkspaceHash(workspace.hash);
-        setSourceFilter("all");
-        setSessionQuery("");
         const remembered = workspaceSelections.current.get(workspace.hash);
         const target = workspace.sessions.find((s) => remembered && sameSession(remembered.summary, s)) ?? workspace.sessions[0];
         clearSelection();
@@ -388,9 +367,7 @@ export function useSessionManager() {
         : false;
     const hasMutation = mutatingKey !== null;
     const totalPages = session ? Math.ceil(session.totalMessages / session.pageSize) : 1;
-    const clearFilters = () => { setSessionQuery(""); setSourceFilter("all"); };
-    const selectedOutsideFilter = !!selectedSummary && selectedSummary.workspaceHash === activeWorkspace?.hash && !visibleSessions.some((s) => sameSession(selectedSummary, s));
     const retrySession = () => selectedRef.current ? loadSessionPage(selectedRef.current, messagePageRef.current, true) : Promise.resolve(false);
-    return { activeWorkspace, activeWorkspaceHash, canDeleteWorkspace, canRevealSelected, changeMessagePage, conversationPanelRef, conversationScrollRef, copiedMessageKey, copyMessage, deleteSession, deleteWorkspace, exportSession, groupedSessions, hasMutation, indexOnlySelected, messagePage, mutatingKey, openWorkspace, pagedMessages, readonlySelected, refreshTree, revealSession, selectSession, selectedSummary, session, sessionListScrollRef, sessionLoading, sessionQuery, sessionSidebarRef, setSessionQuery, setSourceFilter, sourceFilter, sourceOptions, totalMessageCount, totalPages, totalSessions, treeLoading, workspaceForDelete, workspaces, visibleSessions, clearFilters, selectedOutsideFilter, retrySession };
+    return { activeWorkspace, activeWorkspaceHash, canDeleteWorkspace, canRevealSelected, changeMessagePage, conversationPanelRef, conversationScrollRef, copiedMessageKey, copyMessage, deleteSession, deleteWorkspace, exportSession, groupedSessions, hasMutation, indexOnlySelected, messagePage, mutatingKey, openWorkspace, pagedMessages, readonlySelected, refreshTree, revealSession, selectSession, selectedSummary, session, sessionListScrollRef, sessionLoading, sessionSidebarRef, totalMessageCount, totalPages, treeLoading, workspaceForDelete, workspaces, visibleSessions, retrySession };
 }
 export type SessionModel = ReturnType<typeof useSessionManager>;

@@ -13,6 +13,7 @@ pub(super) struct ScanDiagnostics {
     pub(super) timeout_reported: AtomicBool,
     pub(super) budget_reported: AtomicBool,
     pub(super) truncated: AtomicBool,
+    last_progress_ms: AtomicU64,
 }
 
 impl Default for ScanDiagnostics {
@@ -28,6 +29,7 @@ impl Default for ScanDiagnostics {
             timeout_reported: AtomicBool::new(false),
             budget_reported: AtomicBool::new(false),
             truncated: AtomicBool::new(false),
+            last_progress_ms: AtomicU64::new(0),
         }
     }
 }
@@ -134,6 +136,16 @@ impl ScanDiagnostics {
         )
     }
     pub(super) fn progress(&self, stage: &str, phase: &str, current_path: Option<&Path>) {
+        let now = self.started.elapsed().as_millis() as u64 + 1;
+        if self
+            .last_progress_ms
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |last| {
+                (last == 0 || now.saturating_sub(last) >= 150).then_some(now)
+            })
+            .is_err()
+        {
+            return;
+        }
         if let Ok(active) = active_scan_app().lock() {
             if let Some(app) = active.as_ref() {
                 let _ = app.emit(
@@ -156,6 +168,57 @@ impl ScanDiagnostics {
     }
 }
 
+// Workers pull the next independent job immediately. Results are merged in
+// rule order only after execution, keeping duplicate ownership deterministic.
+pub(super) type ScanJob<'a> = Box<dyn FnOnce() -> Vec<CleanupCategory> + Send + 'a>;
+
+pub(super) fn run_scan_jobs(jobs: Vec<ScanJob<'_>>, worker_count: usize) -> Vec<CleanupCategory> {
+    let jobs = Mutex::new(
+        jobs.into_iter()
+            .enumerate()
+            .collect::<std::collections::VecDeque<_>>(),
+    );
+    let results = Mutex::new(Vec::new());
+    let work = || loop {
+        if scan_should_stop() {
+            break;
+        }
+        let job = jobs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .pop_front();
+        let Some((index, job)) = job else { break };
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(job)) {
+            Ok(categories) => results
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push((index, categories)),
+            Err(_) => with_scan_diagnostics(|diagnostics| {
+                diagnostics.truncated.store(true, Ordering::Relaxed);
+                diagnostics.warn("缓存任务异常，已保留其他任务的结果");
+            }),
+        }
+    };
+    std::thread::scope(|scope| {
+        for index in 1..worker_count.clamp(1, 3) {
+            // The calling thread also works, so thread creation failure cannot
+            // leave a queue without consumers.
+            let _ = std::thread::Builder::new()
+                .name(format!("cleanup-category-{index}"))
+                .spawn_scoped(scope, work);
+        }
+        work();
+    });
+    let mut results = results
+        .into_inner()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    results.sort_by_key(|(index, _)| *index);
+    results
+        .into_iter()
+        .flat_map(|(_, categories)| categories)
+        .collect()
+}
+
 pub(super) fn do_scan(custom_project_roots: Vec<PathBuf>, colony: ColonyConfig) -> ScanResult {
     let diagnostics = Arc::new(ScanDiagnostics::default());
     let _diagnostics_guard = ActiveScanDiagnostics::install(diagnostics.clone());
@@ -163,7 +226,6 @@ pub(super) fn do_scan(custom_project_roots: Vec<PathBuf>, colony: ColonyConfig) 
     let _directory_measures_guard = ActiveScanDirectoryMeasures::install(directory_measures);
     let file_queue = Arc::new(FileScanQueue::start(colony.engineer_workers));
     let _file_queue_guard = ActiveScanFileQueue::install(file_queue);
-    let mut categories = Vec::new();
     let previous_hotspots = load_hotspot_index();
     let active_hotspot_paths = hotspot_paths(&previous_hotspots);
     let hotspot_keys = active_hotspot_paths
@@ -171,170 +233,77 @@ pub(super) fn do_scan(custom_project_roots: Vec<PathBuf>, colony: ColonyConfig) 
         .map(|path| normalize_path_key(&path.to_string_lossy()))
         .collect::<std::collections::HashSet<_>>();
 
-    diagnostics.progress("scout", "侦察蚁正在检查系统缓存", None);
-
-    // 1. Windows Temp（TEMP/TMP 环境变量需经过路径合理性校验，防止误配置一锅端）
-    if let Some(cat) = scan_dir_category(
-        "win-temp",
-        "Windows 临时文件",
-        "系统和应用产生的临时文件",
-        &[
-            std::env::var("TEMP")
-                .ok()
-                .and_then(|s| validate_temp_dir(Path::new(&s))),
-            std::env::var("TMP")
-                .ok()
-                .and_then(|s| validate_temp_dir(Path::new(&s))),
-            Some(PathBuf::from(r"C:\Windows\Temp")),
-        ],
-    ) {
-        categories.push(cat);
-    }
-    if scan_should_stop() {
-        return finalize_scan_result(categories, &diagnostics, colony, &hotspot_keys);
-    }
-
-    // 2. (已移除 Windows Prefetch —— 系统自管理，清空后常用程序启动变慢)
-
-    // 3. Windows Update cache
-    if let Some(cat) = scan_dir_category(
-        "win-update",
-        "Windows 更新缓存",
-        "已下载的 Windows 更新包",
-        &[Some(PathBuf::from(
-            r"C:\Windows\SoftwareDistribution\Download",
-        ))],
-    ) {
-        categories.push(cat);
-    }
-    if scan_should_stop() {
-        return finalize_scan_result(categories, &diagnostics, colony, &hotspot_keys);
-    }
-
-    // 5. Rust build cache (target dirs)
-    if let Some(cat) = scan_rust_targets(&[]) {
-        categories.push(cat);
-    }
-    if scan_should_stop() {
-        return finalize_scan_result(categories, &diagnostics, colony, &hotspot_keys);
-    }
-
-    // 6. npm/pnpm/yarn cache
-    if let Some(cat) = scan_node_cache() {
-        categories.push(cat);
-    }
-    if scan_should_stop() {
-        return finalize_scan_result(categories, &diagnostics, colony, &hotspot_keys);
-    }
-
-    // 6b. Go cache
-    if let Some(cat) = scan_go_cache() {
-        categories.push(cat);
-    }
-    if scan_should_stop() {
-        return finalize_scan_result(categories, &diagnostics, colony, &hotspot_keys);
-    }
-
-    // 6c. Python cache (pip, __pycache__, .mypy_cache)
-    if let Some(cat) = scan_python_cache(&[]) {
-        categories.push(cat);
-    }
-    if scan_should_stop() {
-        return finalize_scan_result(categories, &diagnostics, colony, &hotspot_keys);
-    }
-
-    // 6d. C/C++、.NET、Java 工具缓存与经过项目标记验证的构建产物
-    if let Some(cat) = scan_cpp_cache(&[]) {
-        categories.push(cat);
-    }
-    if let Some(cat) = scan_dotnet_cache() {
-        categories.push(cat);
-    }
-    if let Some(cat) = scan_java_cache() {
-        categories.push(cat);
-    }
-    if scan_should_stop() {
-        return finalize_scan_result(categories, &diagnostics, colony, &hotspot_keys);
-    }
-
-    // 7. Browser caches
-    diagnostics.progress("engineer", "工兵蚁正在统计浏览器与应用缓存", None);
-    if let Some(cat) = scan_browser_cache() {
-        categories.push(cat);
-    }
-    if scan_should_stop() {
-        return finalize_scan_result(categories, &diagnostics, colony, &hotspot_keys);
-    }
-
-    // 7b. WebView2 runtime caches（只取 Cache / Code Cache / GPUCache 等可再生成目录）
-    if let Some(cat) = scan_webview_cache() {
-        categories.push(cat);
-    }
-
-    // 7c. 常见应用缓存（只取明确命名的 Cache / GPUCache / Crashpad reports）
-    if let Some(cat) = scan_app_cache() {
-        categories.push(cat);
-    }
-    if scan_should_stop() {
-        return finalize_scan_result(categories, &diagnostics, colony, &hotspot_keys);
-    }
-
-    // 8. Thumbnail / Icon cache —— 只处理 thumbcache_*.db 和 iconcache_*.db 文件，
-    //    Explorer 目录下还有 UsrClass.dat 等系统数据，绝不能整目录清空
-    if let Some(local) = dirs::data_local_dir() {
-        let explorer_cache = local.join("Microsoft").join("Windows").join("Explorer");
-        if let Some(cat) = scan_thumbnail_cache(&explorer_cache) {
-            categories.push(cat);
-        }
-    }
-
-    // 9. (已移除 Chrome Update —— 那是 Chrome 更新程序的安装目录，不是缓存)
-
-    // 10. Notion cache
-    if let (Some(local), Some(roaming)) = (dirs::data_local_dir(), dirs::data_dir()) {
-        if let Some(cat) = scan_dir_category(
-            "notion-cache",
-            "Notion 缓存",
-            "Notion 应用本地缓存",
-            &[
-                Some(local.join("Notion").join("Cache")),
-                Some(local.join("Notion").join("Code Cache")),
-                Some(local.join("Notion").join("GPUCache")),
-                Some(roaming.join("Notion").join("Cache")),
-                Some(roaming.join("Notion").join("Code Cache")),
-                Some(roaming.join("Notion").join("GPUCache")),
-            ],
-        ) {
-            categories.push(cat);
-        }
-    }
-
-    // 11. (已移除 OfficeFileCache —— 可能包含待同步/恢复内容，不作为垃圾缓存清理)
-
-    // 12. Windows 错误报告与崩溃转储
-    diagnostics.progress("engineer", "工兵蚁正在建立扫描结果", None);
-    if let Some(cat) = scan_windows_error_reports() {
-        categories.push(cat);
-    }
-
-    // 13. DirectX / GPU 着色器缓存
-    if let Some(cat) = scan_shader_cache() {
-        categories.push(cat);
-    }
-
-    // 14. 安装器残留缓存
-    if let Some(cat) = scan_installer_cache() {
-        categories.push(cat);
-    }
-
-    // 先完成确定位置的缓存，再进行固定盘/项目深扫，避免项目发现耗尽预算使后续类别完全漏扫。
-    if !scan_should_stop() {
-        diagnostics.progress("scout", "正在深度发现项目缓存，切换页面可继续扫描", None);
+    let known: &[fn() -> Option<CleanupCategory>] = &[
+        || {
+            scan_dir_category(
+                "win-temp",
+                "Windows 临时文件",
+                "系统和应用产生的临时文件",
+                &[
+                    std::env::var("TEMP")
+                        .ok()
+                        .and_then(|s| validate_temp_dir(Path::new(&s))),
+                    std::env::var("TMP")
+                        .ok()
+                        .and_then(|s| validate_temp_dir(Path::new(&s))),
+                    Some(PathBuf::from(r"C:\Windows\Temp")),
+                ],
+            )
+        },
+        || {
+            scan_dir_category(
+                "win-update",
+                "Windows 更新缓存",
+                "已下载的 Windows 更新包",
+                &[Some(PathBuf::from(
+                    r"C:\Windows\SoftwareDistribution\Download",
+                ))],
+            )
+        },
+        || scan_rust_targets(&[]),
+        scan_node_cache,
+        scan_go_cache,
+        || scan_python_cache(&[]),
+        || scan_cpp_cache(&[]),
+        scan_dotnet_cache,
+        scan_java_cache,
+        scan_browser_cache,
+        scan_webview_cache,
+        scan_app_cache,
+        || scan_thumbnail_cache(&dirs::data_local_dir()?.join("Microsoft/Windows/Explorer")),
+        || {
+            let (local, roaming) = (dirs::data_local_dir()?, dirs::data_dir()?);
+            scan_dir_category(
+                "notion-cache",
+                "Notion 缓存",
+                "Notion 应用本地缓存",
+                &[
+                    Some(local.join("Notion/Cache")),
+                    Some(local.join("Notion/Code Cache")),
+                    Some(local.join("Notion/GPUCache")),
+                    Some(roaming.join("Notion/Cache")),
+                    Some(roaming.join("Notion/Code Cache")),
+                    Some(roaming.join("Notion/GPUCache")),
+                ],
+            )
+        },
+        scan_windows_error_reports,
+        scan_shader_cache,
+        scan_installer_cache,
+    ];
+    let mut jobs: Vec<ScanJob<'_>> = known
+        .iter()
+        .map(|job| Box::new(move || job().into_iter().collect()) as ScanJob<'_>)
+        .collect();
+    // Known caches get the initial queue slots; project discovery can overlap
+    // remaining measurements instead of waiting for the slowest category.
+    jobs.push(Box::new(|| {
         let discovered = discover_project_caches(
             &custom_project_roots,
             &active_hotspot_paths,
             colony.scout_workers,
         );
+        let mut categories = Vec::new();
         for (id, name, paths) in [
             ("rust-target", "Rust 编译缓存", discovered.rust),
             ("python-cache", "Python 缓存", discovered.python),
@@ -349,11 +318,16 @@ pub(super) fn do_scan(custom_project_roots: Vec<PathBuf>, colony: ColonyConfig) 
             if let Some(category) =
                 scan_existing_dirs_category(id, name, "已验证项目标记与构建缓存规则", paths)
             {
-                merge_scan_category(&mut categories, category);
+                categories.push(category);
             }
         }
+        categories
+    }));
+    diagnostics.progress("scout", "正在并发检查系统与工具缓存", None);
+    let mut categories = Vec::new();
+    for category in run_scan_jobs(jobs, colony.scout_workers.clamp(2, 3)) {
+        merge_scan_category(&mut categories, category);
     }
-
     let mut result = finalize_scan_result(categories, &diagnostics, colony, &hotspot_keys);
     update_hotspot_index(
         previous_hotspots,
@@ -382,8 +356,12 @@ pub(super) fn merge_scan_category(
 pub(super) fn scan_should_stop() -> bool {
     SCAN_CANCEL_REQUESTED.load(Ordering::Relaxed)
         || current_scan_diagnostics().is_some_and(|diagnostics| {
-            diagnostics.started.elapsed() >= MAX_SCAN_DURATION
-                || diagnostics.scanned_paths.load(Ordering::Relaxed) >= MAX_SCAN_ENTRIES
+            let exhausted = diagnostics.started.elapsed() >= MAX_SCAN_DURATION
+                || diagnostics.scanned_paths.load(Ordering::Relaxed) >= MAX_SCAN_ENTRIES;
+            if exhausted {
+                diagnostics.truncated.store(true, Ordering::Relaxed);
+            }
+            exhausted
         })
 }
 
@@ -424,7 +402,6 @@ pub(super) fn finalize_scan_result(
         total_size_bytes,
         total_file_count,
         scanned_at_ms: 0,
-        expires_at_ms: 0,
         duration_ms: 0,
         scanned_paths,
         skipped_paths,
@@ -729,14 +706,14 @@ pub(super) fn queue_dir_size(
     let Some(queue) = current_scan_file_queue() else {
         return false;
     };
-    queue
-        .sender
-        .send(FileScanJob {
-            path: path.to_path_buf(),
-            min_age_days,
-            measurement,
-        })
-        .is_ok()
+    if queue.workers.is_empty() {
+        return false;
+    }
+    queue.shared.try_push(FileScanJob {
+        path: path.to_path_buf(),
+        depth: 0,
+        group: Arc::new(DirectoryScanGroup::new(min_age_days, measurement)),
+    })
 }
 
 pub(super) fn fixed_disk_roots() -> Vec<PathBuf> {

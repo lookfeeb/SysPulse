@@ -1,0 +1,9 @@
+.about-app-identity { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; }
+.about-update-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.about-download { margin-top: 16px; padding: 13px 16px; border: 1px solid #e0ebf4; border-radius: 10px; background: #f6faff; color: #41637f; font-size: 12px; }
+.about-download-heading, .about-download-meta { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px 16px; }
+.about-download-heading { margin-bottom: 6px; font-variant-numeric: tabular-nums; }
+.about-download-meta { margin-top: 4px; color: #7c8ea1; font-size: 11px; font-variant-numeric: tabular-nums; }
+.about-download .is-indeterminate .ant-progress-bg { width: 30% !important; animation: about-download-slide 1.5s ease-in-out infinite alternate; }
+@keyframes about-download-slide { from { margin-left: 0; } to { margin-left: 70%; } }
+@media (prefers-reduced-motion: reduce) { .about-download .is-indeterminate .ant-progress-bg { animation: none; } }

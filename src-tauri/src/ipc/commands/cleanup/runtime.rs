@@ -58,7 +58,6 @@ pub(super) static ACTIVE_SCAN_FILE_QUEUE: OnceLock<Mutex<Option<Arc<FileScanQueu
     OnceLock::new();
 pub(super) const CLEANUP_PROGRESS_EVENT: &str = "cleanup:progress";
 pub(super) const CLEANUP_SCAN_PROGRESS_EVENT: &str = "cleanup:scan-progress";
-pub(super) const SCAN_TTL: Duration = Duration::from_secs(10 * 60);
 pub(super) const DIRECTORY_SCAN_MAX_DEPTH: u32 = 64;
 pub(super) const MAX_SCAN_ENTRIES: u64 = 4_000_000;
 pub(super) const MAX_SCAN_DURATION: Duration = Duration::from_secs(10 * 60);
@@ -86,8 +85,8 @@ impl ColonyConfig {
         Self {
             // 一个物理线程承载一个有界“蚁营”；目录任务是逻辑侦察蚁，可在营之间共享，
             // 因此扩大任务规模不等于无限创建系统线程。
-            scout_workers: (parallelism / 2).clamp(2, 8),
-            engineer_workers: ((parallelism * 2) / 3).clamp(2, 10),
+            scout_workers: (parallelism / 4).clamp(1, 4),
+            engineer_workers: (parallelism / 2).clamp(2, 8),
         }
     }
 }
@@ -123,45 +122,111 @@ impl Default for HotspotIndex {
 
 pub(super) struct FileScanJob {
     pub(super) path: PathBuf,
-    pub(super) min_age_days: Option<u32>,
-    pub(super) measurement: DirectoryMeasureCell,
+    pub(super) depth: u32,
+    pub(super) group: Arc<DirectoryScanGroup>,
+}
+
+pub(super) const FILE_SCAN_QUEUE_CAPACITY: usize = 256;
+
+#[derive(Default)]
+struct FileScanQueueState {
+    jobs: std::collections::VecDeque<FileScanJob>,
+    closed: bool,
+}
+
+#[derive(Default)]
+pub(super) struct SharedFileScanQueue {
+    state: Mutex<FileScanQueueState>,
+    ready: Condvar,
+}
+
+impl SharedFileScanQueue {
+    // Producers never wait for queue space: workers scan overflow inline. This
+    // bounds memory without deadlocking when every worker discovers children.
+    pub(super) fn try_push(&self, job: FileScanJob) -> bool {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if state.closed || state.jobs.len() >= FILE_SCAN_QUEUE_CAPACITY {
+            return false;
+        }
+        job.group.pending.fetch_add(1, Ordering::Relaxed);
+        state.jobs.push_back(job);
+        self.ready.notify_one();
+        true
+    }
+
+    fn pop(&self) -> Option<FileScanJob> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        loop {
+            if let Some(job) = state.jobs.pop_front() {
+                return Some(job);
+            }
+            if state.closed {
+                return None;
+            }
+            state = self
+                .ready
+                .wait(state)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+    }
 }
 
 pub(super) struct FileScanQueue {
-    pub(super) sender: std::sync::mpsc::Sender<FileScanJob>,
+    pub(super) shared: Arc<SharedFileScanQueue>,
     pub(super) workers: Vec<std::thread::JoinHandle<()>>,
 }
 
 impl FileScanQueue {
     pub(super) fn start(worker_count: usize) -> Self {
-        let (sender, receiver) = std::sync::mpsc::channel::<FileScanJob>();
-        let receiver = Arc::new(Mutex::new(receiver));
+        let shared = Arc::new(SharedFileScanQueue::default());
         let workers = (0..worker_count.max(1))
             .filter_map(|index| {
-                let receiver = receiver.clone();
+                let shared = shared.clone();
                 std::thread::Builder::new()
                     .name(format!("cleanup-engineer-{index}"))
-                    .spawn(move || loop {
-                        let job = receiver.lock().ok().and_then(|value| value.recv().ok());
-                        let Some(job) = job else { break };
-                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            dir_size_with_min_age_inline(&job.path, job.min_age_days)
-                        }))
-                        .unwrap_or_default();
-                        job.measurement.complete(result);
+                    .spawn(move || {
+                        while let Some(job) = shared.pop() {
+                            let result =
+                                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                    measure_directory_job(&job, &shared)
+                                }))
+                                .unwrap_or_else(|_| {
+                                    if let Some(diagnostics) = &job.group.diagnostics {
+                                        diagnostics.truncated.store(true, Ordering::Relaxed);
+                                        diagnostics.warn(format!(
+                                            "{}: 目录统计异常，结果不完整",
+                                            job.path.display()
+                                        ));
+                                    }
+                                    DirectoryMeasure::default()
+                                });
+                            job.group.complete(result);
+                        }
                     })
                     .ok()
             })
             .collect();
-        Self { sender, workers }
+        Self { shared, workers }
     }
 }
 
 impl Drop for FileScanQueue {
     fn drop(&mut self) {
-        let (replacement, _) = std::sync::mpsc::channel();
-        let sender = std::mem::replace(&mut self.sender, replacement);
-        drop(sender);
+        {
+            let mut state = self
+                .shared
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state.closed = true;
+            self.shared.ready.notify_all();
+        }
         for worker in self.workers.drain(..) {
             let _ = worker.join();
         }
@@ -230,9 +295,11 @@ impl ActiveScanFileQueue {
 
 impl Drop for ActiveScanFileQueue {
     fn drop(&mut self) {
-        if let Ok(mut active) = active_scan_file_queue().lock() {
-            *active = None;
-        }
+        let queue = active_scan_file_queue()
+            .lock()
+            .ok()
+            .and_then(|mut active| active.take());
+        drop(queue);
     }
 }
 
@@ -275,10 +342,8 @@ pub(super) fn current_scan_directory_measures() -> Option<SharedDirectoryMeasure
 }
 
 pub(super) fn with_scan_diagnostics(callback: impl FnOnce(&ScanDiagnostics)) {
-    if let Ok(active) = active_scan_diagnostics().lock() {
-        if let Some(diagnostics) = active.as_ref() {
-            callback(diagnostics);
-        }
+    if let Some(diagnostics) = current_scan_diagnostics() {
+        callback(&diagnostics);
     }
 }
 
@@ -292,7 +357,6 @@ pub(super) fn current_scan_diagnostics() -> Option<Arc<ScanDiagnostics>> {
 #[derive(Clone)]
 pub(super) struct CachedScan {
     pub(super) result: ScanResult,
-    pub(super) created_at: Instant,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -349,18 +413,17 @@ pub(super) fn scan_cache() -> &'static Mutex<Option<CachedScan>> {
 
 pub(super) fn cached_scan(scan_id: &str) -> Option<ScanResult> {
     scan_cache().lock().ok().and_then(|guard| {
-        guard.as_ref().and_then(|cached| {
-            (cached.result.scan_id == scan_id && cached.created_at.elapsed() <= SCAN_TTL)
-                .then(|| cached.result.clone())
-        })
+        guard
+            .as_ref()
+            .and_then(|cached| (cached.result.scan_id == scan_id).then(|| cached.result.clone()))
     })
 }
 
 pub(super) fn take_cached_scan(scan_id: &str) -> Option<ScanResult> {
     let mut guard = scan_cache().lock().ok()?;
-    let matches = guard.as_ref().is_some_and(|cached| {
-        cached.result.scan_id == scan_id && cached.created_at.elapsed() <= SCAN_TTL
-    });
+    let matches = guard
+        .as_ref()
+        .is_some_and(|cached| cached.result.scan_id == scan_id);
     matches.then(|| guard.take().expect("validated cached scan").result)
 }
 
@@ -374,7 +437,6 @@ pub(super) fn store_scan(scan: &ScanResult) {
     if let Ok(mut guard) = scan_cache().lock() {
         *guard = Some(CachedScan {
             result: scan.clone(),
-            created_at: Instant::now(),
         });
     }
 }

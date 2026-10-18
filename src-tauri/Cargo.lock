@@ -4093,7 +4093,7 @@ dependencies = [
 
 [[package]]
 name = "syspulse"
-version = "0.1.29"
+version = "0.1.30"
 dependencies = [
  "anyhow",
  "axum",
@@ -4104,6 +4104,7 @@ dependencies = [
  "embed-resource",
  "futures-util",
  "log",
+ "minisign-verify",
  "open",
  "parking_lot",
  "r2d2",

@@ -84,7 +84,6 @@ pub struct ScanResult {
     pub total_size_bytes: u64,
     pub total_file_count: u64,
     pub scanned_at_ms: i64,
-    pub expires_at_ms: i64,
     pub duration_ms: u64,
     pub scanned_paths: u64,
     pub skipped_paths: u64,
@@ -279,7 +278,6 @@ pub async fn scan_cleanup(
         NEXT_SCAN_ID.fetch_add(1, Ordering::Relaxed)
     );
     result.scanned_at_ms = started_at_ms;
-    result.expires_at_ms = chrono::Local::now().timestamp_millis() + SCAN_TTL.as_millis() as i64;
     result.duration_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
     result.project_roots = exported_project_roots;
     store_scan(&result);
@@ -325,7 +323,7 @@ pub async fn export_cleanup_scan(args: ExportCleanupArgs) -> Result<ExportCleanu
 
 fn do_export_cleanup_scan(args: ExportCleanupArgs) -> Result<ExportCleanupResult, IpcError> {
     let scan = cached_scan(&args.scan_id).ok_or_else(|| {
-        crate::error::AppError::Invalid("扫描结果已过期，请重新扫描后再导出".into())
+        crate::error::AppError::Invalid("扫描快照不存在，请重新扫描后再导出".into())
     })?;
     let document =
         build_cleanup_export_document(scan, args.selected_category_ids, args.excluded_paths);
@@ -465,7 +463,7 @@ pub async fn clean_categories(app: AppHandle, args: CleanArgs) -> Result<CleanRe
     let ids = args.category_ids;
     let excluded = args.excluded_paths;
     let scan = cached_scan(&args.scan_id).ok_or_else(|| {
-        crate::error::AppError::Invalid("扫描结果已过期，请重新扫描后再清理".into())
+        crate::error::AppError::Invalid("扫描快照不存在，请重新扫描后再清理".into())
     })?;
     if !scan_is_cleanable(&scan) {
         return Err(crate::error::AppError::Invalid(

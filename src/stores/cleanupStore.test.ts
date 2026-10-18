@@ -17,7 +17,7 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 const scan = (): ScanResult => ({ scanId: "scan-1", categories: [], totalSizeBytes: 1024,
-  totalFileCount: 2, scannedAtMs: Date.now(), expiresAtMs: Date.now() + 60_000,
+  totalFileCount: 2, scannedAtMs: Date.now(),
   durationMs: 5, scannedPaths: 2, skippedPaths: 0, ignoredPaths: 0, hotspotCount: 0,
   scoutWorkers: 1, engineerWorkers: 1, scoutTasks: 1, engineerTasks: 1, projectRoots: [],
   warnings: [], complete: true, cancelled: false });
@@ -117,6 +117,22 @@ describe("cleanup application task lifetime", () => {
     useCleanupStore.setState({ scan: scan() });
     await useCleanupStore.getState().clean(args, []);
     expect(useCleanupStore.getState()).toMatchObject({ phase: "idle", consumed: true, cleanProgress: null });
+    await useCleanupStore.getState().clean(args, []);
+    expect(api.cleanCategories).toHaveBeenCalledOnce();
+  });
+
+  it("allows an old complete scan but still rejects wrong IDs, incomplete and cancelled results", async () => {
+    const old = { ...scan(), scannedAtMs: Date.now() - 7 * 24 * 60 * 60 * 1000 };
+    for (const invalid of [{ ...old, scanId: "other" }, { ...old, complete: false }, { ...old, cancelled: true }]) {
+      useCleanupStore.setState({ scan: invalid });
+      await useCleanupStore.getState().clean(args, []);
+    }
+    expect(api.cleanCategories).not.toHaveBeenCalled();
+    api.cleanCategories.mockResolvedValue({ freedBytes: 512, deletedFiles: 1, errors: [] });
+    api.scanCleanup.mockRejectedValue(new Error("refresh failed"));
+    useCleanupStore.setState({ scan: old });
+    await useCleanupStore.getState().clean(args, []);
+    expect(api.cleanCategories).toHaveBeenCalledExactlyOnceWith(args);
     await useCleanupStore.getState().clean(args, []);
     expect(api.cleanCategories).toHaveBeenCalledOnce();
   });
