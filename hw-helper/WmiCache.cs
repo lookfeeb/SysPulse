@@ -1,4 +1,5 @@
 using System.Management;
+using System.Diagnostics;
 
 namespace SysPulse.HwHelper;
 
@@ -15,8 +16,7 @@ public sealed class WmiCache
     public List<DiskMetadataRow> StorageDiskRows { get; private set; } = new();
 
     /// <summary>
-    /// Perform all WMI queries. Safe to call from any thread; results are
-    /// replaced atomically (list reference swap).
+    /// Populate an unpublished cache; publish it only after this method returns.
     /// </summary>
     public void Refresh()
     {
@@ -40,14 +40,17 @@ public sealed class WmiCache
         try
         {
             using var searcher = new ManagementObjectSearcher(
-                "SELECT DeviceLocator, Capacity, Speed, Manufacturer, PartNumber FROM Win32_PhysicalMemory");
-            foreach (ManagementObject m in searcher.Get())
+                "SELECT DeviceLocator, Capacity, Speed, ConfiguredClockSpeed, Manufacturer, PartNumber FROM Win32_PhysicalMemory");
+            searcher.Options.Timeout = TimeSpan.FromSeconds(2);
+            using var results = searcher.Get();
+            foreach (ManagementObject m in results)
             {
+                using var row = m;
                 modules.Add(new MemoryModule
                 {
                     Slot = (m["DeviceLocator"]?.ToString() ?? "").Trim(),
                     CapacityBytes = m["Capacity"] is ulong cap ? cap : 0,
-                    SpeedMtps = m["Speed"] is uint sp ? sp : null,
+                    SpeedMtps = ConfiguredSpeed(m["ConfiguredClockSpeed"], m["Speed"]),
                     Manufacturer = (m["Manufacturer"]?.ToString() ?? "").Trim(),
                     PartNumber = (m["PartNumber"]?.ToString() ?? "").Trim(),
                 });
@@ -62,8 +65,8 @@ public sealed class WmiCache
                     .OrderBy(x => x)
                     .ToList();
                 if (speeds.Count > 0)
-                    freqMhz = speeds[speeds.Count / 2];
-                channels = modules.Count;
+                    freqMhz = speeds.All(s => s == speeds[0]) ? speeds[0] : null;
+                // DIMM count does not identify active memory channels.
             }
         }
         catch { /* WMI optional */ }
@@ -80,18 +83,23 @@ public sealed class WmiCache
         try
         {
             using var searcher = new ManagementObjectSearcher(
-                "SELECT Model, Caption, InterfaceType, PNPDeviceID, MediaType FROM Win32_DiskDrive");
-            return searcher
-                .Get()
+                "SELECT Index, Size, SerialNumber, Model, Caption, InterfaceType, PNPDeviceID, MediaType FROM Win32_DiskDrive");
+            searcher.Options.Timeout = TimeSpan.FromSeconds(2);
+            using var results = searcher.Get();
+            return results
                 .Cast<ManagementObject>()
-                .Select(row => new
+                .Select(row =>
                 {
-                    Name = FirstText(row["Model"], row["Caption"]),
-                    Bus = MapDiskInterface(row["InterfaceType"], row["PNPDeviceID"], row["MediaType"]),
+                    using (row) return new DiskMetadataRow {
+                        Index = row["Index"] is uint index && index <= int.MaxValue ? (int)index : null,
+                        SizeBytes = row["Size"] is ulong size ? size : 0,
+                        Serial = FirstText(row["SerialNumber"]),
+                        Name = FirstText(row["Model"], row["Caption"]),
+                        Bus = MapDiskInterface(row["InterfaceType"], row["PNPDeviceID"], row["MediaType"]),
+                    };
                 })
                 .Where(row => !string.IsNullOrWhiteSpace(row.Name)
                            || !string.IsNullOrWhiteSpace(row.Bus))
-                .Select(row => new DiskMetadataRow { Name = row.Name, Bus = row.Bus })
                 .ToList();
         }
         catch
@@ -106,15 +114,19 @@ public sealed class WmiCache
         {
             using var searcher = new ManagementObjectSearcher(
                 @"root\Microsoft\Windows\Storage",
-                "SELECT FriendlyName, Model, BusType, HealthStatus, OperationalStatus FROM MSFT_PhysicalDisk");
-            return searcher
-                .Get()
+                "SELECT FriendlyName, Model, SerialNumber, BusType, HealthStatus, OperationalStatus FROM MSFT_PhysicalDisk");
+            searcher.Options.Timeout = TimeSpan.FromSeconds(2);
+            using var results = searcher.Get();
+            return results
                 .Cast<ManagementObject>()
-                .Select(row => new DiskMetadataRow
+                .Select(row =>
                 {
-                    Name = FirstText(row["FriendlyName"], row["Model"]),
-                    Bus = MapDiskBus(row["BusType"]),
-                    Health = MapDiskHealth(row["HealthStatus"], row["OperationalStatus"]),
+                    using (row) return new DiskMetadataRow {
+                        Name = FirstText(row["Model"], row["FriendlyName"]),
+                        Serial = FirstText(row["SerialNumber"]),
+                        Bus = MapDiskBus(row["BusType"]),
+                        Health = MapDiskHealth(row["HealthStatus"], row["OperationalStatus"]),
+                    };
                 })
                 .Where(row => !string.IsNullOrWhiteSpace(row.Name)
                            || !string.IsNullOrWhiteSpace(row.Bus)
@@ -130,6 +142,36 @@ public sealed class WmiCache
     // -----------------------------------------------------------------------
     // Helpers (moved from SnapshotBuilder so both can share)
     // -----------------------------------------------------------------------
+
+    public static double? ConfiguredSpeed(object? configured, object? rated) =>
+        configured is uint active && active > 0 ? active : rated is uint speed && speed > 0 ? speed : null;
+
+    private readonly Dictionary<string, (long Timestamp, ulong? Used)> _space = new();
+
+    public ulong? GetUsedSpace(string id, DriveInfo[] volumes)
+    {
+        if (_space.TryGetValue(id, out var cached) && Stopwatch.GetElapsedTime(cached.Timestamp).TotalSeconds < 30)
+            return cached.Used;
+        ulong? used = null;
+        try
+        {
+            if (volumes.Length > 0)
+            {
+                ulong total = 0;
+                foreach (var volume in volumes)
+                {
+                    if (!volume.IsReady) throw new IOException("Volume unavailable");
+                    total = checked(total + (ulong)Math.Max(0, volume.TotalSize - volume.TotalFreeSpace));
+                }
+                used = total;
+            }
+        }
+        catch { /* Incomplete volume accounting is unknown, not zero. */ }
+        if (_space.Count >= 256) _space.Clear();
+        _space[id] = (Stopwatch.GetTimestamp(), used);
+        return used;
+    }
+
 
     private static string FirstText(params object?[] values)
     {
@@ -180,27 +222,15 @@ public sealed class WmiCache
         };
     }
 
-    private static string MapDiskHealth(object? healthStatus, object? operationalStatus)
+    public static string MapDiskHealth(object? healthStatus, object? operationalStatus)
     {
         var health = ToUInt16(healthStatus);
-        if (health.HasValue)
-        {
-            return health.Value switch
-            {
-                0 => "good",
-                1 => "warning",
-                2 => "critical",
-                5 => "unknown",
-                _ => "unknown",
-            };
-        }
-
         var op = ToUInt16Array(operationalStatus);
-        if (op.Any(value => value is 3 or 4 or 5 or 9 or 10 or 11 or 12 or 13 or 14))
+        if (health == 2 || op.Any(value => value is 6 or 7 or 12 or 13 or 16))
             return "critical";
-        if (op.Any(value => value is 2 or 6 or 7 or 8))
+        if (health == 1 || op.Any(value => value is 3 or 4 or 5 or 9 or 10))
             return "warning";
-        return op.Any(value => value == 1) ? "good" : "";
+        return health == 0 || op.Any(value => value == 2) ? "good" : "unknown";
     }
 
     private static ushort? ToUInt16(object? value)
@@ -238,6 +268,9 @@ public sealed class WmiCache
 /// </summary>
 public sealed class DiskMetadataRow
 {
+    public int? Index { get; init; }
+    public ulong SizeBytes { get; init; }
+    public string Serial { get; init; } = "";
     public string Name { get; init; } = "";
     public string Bus { get; init; } = "";
     public string Health { get; init; } = "";

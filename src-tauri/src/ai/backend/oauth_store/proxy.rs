@@ -249,14 +249,6 @@ pub fn proxy_credential_key_from_url(value: &str, server_name: &str) -> Option<S
     proxy.credential_key
 }
 
-pub fn proxy_mcp_endpoint_from_url(value: &str, server_name: &str) -> Option<String> {
-    let proxy = parse_mcp_oauth_proxy_url(value)?;
-    if proxy.server_name != server_name {
-        return None;
-    }
-    proxy.mcp_endpoint
-}
-
 pub(super) fn endpoint_matches_server_name(endpoint: &str, server_name: &str) -> bool {
     url::Url::parse(endpoint)
         .ok()

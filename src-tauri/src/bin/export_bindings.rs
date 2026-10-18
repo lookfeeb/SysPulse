@@ -1,3 +1,3 @@
 fn main() {
-    syspulse_lib::ipc::commands::export_bindings();
+    syspulse_lib::export_bindings();
 }

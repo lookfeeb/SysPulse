@@ -2,7 +2,7 @@ import { CheckOutlined, CopyOutlined, DatabaseOutlined, DeleteOutlined, Download
 import { Button, Dropdown, Empty, Pagination, Popconfirm, Spin, Tooltip } from "antd";
 import MarkdownContent from "./MarkdownContent";
 import "./SessionManager.css";
-import { cleanTitle, formatFileSize, formatTime, roleLabel, sourceMeta } from "./sessionPresentation";
+import { sessionDisplayTitle, formatFileSize, formatTime, roleLabel, sourceMeta } from "./sessionPresentation";
 import type { SessionModel } from "./useSessionManager";
 export default function SessionDetails({ model }: {
     model: SessionModel;
@@ -11,9 +11,10 @@ export default function SessionDetails({ model }: {
     return (<section className="aim-card aim-conv" ref={conversationPanelRef} aria-labelledby="aim-conv-title">
         <header className="aim-conv-hd">
           <div className="aim-conv-l1">
-            <h2 id="aim-conv-title">
-              {selectedSummary ? cleanTitle(selectedSummary.title) : "选择一条会话"}
+            <h2 id="aim-conv-title" title={selectedSummary?.title}>
+              {selectedSummary ? sessionDisplayTitle(selectedSummary.title) : "选择一条会话"}
             </h2>
+            {sessionLoading && session && <Spin size="small" />}
             {selectedSummary && (<>
                 <Tooltip title={!canRevealSelected
                 ? (indexOnlySelected
@@ -74,13 +75,17 @@ export default function SessionDetails({ model }: {
             </div>)}
         </header>
 
-        <div className="aim-conv-scroll" ref={conversationScrollRef}>
+        {model.selectedOutsideFilter && <div className="aim-conv-filter-note" role="status">
+          <span>当前会话不在筛选结果中</span><Button type="link" size="small" onClick={model.clearFilters}>清除筛选</Button>
+        </div>}
+
+        <div className="aim-conv-scroll" ref={conversationScrollRef} aria-busy={sessionLoading}>
           {!selectedSummary ? (<div className="aim-empty">
               <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="从左侧选择一条会话"/>
-            </div>) : sessionLoading ? (<div className="aim-empty">
+            </div>) : sessionLoading && !session ? (<div className="aim-empty">
               <Spin size="large" description="正在解析会话内容…"/>
             </div>) : !session ? (<div className="aim-empty">
-              <Empty description="会话内容加载失败，请刷新后重试"/>
+              <Empty description="会话内容加载失败"><Button onClick={() => void model.retrySession()} disabled={hasMutation}>重新加载</Button></Empty>
             </div>) : (<div className="aim-msg-stream">
               {session.conversationSummary?.trim() && (<article className="aim-msg is-summary">
                   <div className="aim-msg-av"><FileSearchOutlined /></div>
@@ -133,7 +138,7 @@ export default function SessionDetails({ model }: {
         </div>
 
         {session && session.totalMessages > session.pageSize && (<footer className="aim-conv-page">
-            <span>第 {messagePage} / {totalPages} 页 · 共 {session.totalMessages} 条消息</span>
+            <span>第 {messagePage} / {totalPages} 页</span>
             <Pagination size="small" current={messagePage} pageSize={session.pageSize} total={session.totalMessages} showSizeChanger={false} disabled={sessionLoading || hasMutation} onChange={(page) => void changeMessagePage(page)}/>
           </footer>)}
       </section>);

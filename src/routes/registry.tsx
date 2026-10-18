@@ -17,7 +17,7 @@ const CleanupPage = lazy(() => import("@/routes/CleanupPage"));
 const AiManagementPage = lazy(() => import("@/routes/AiManagementPage"));
 const AboutPage = lazy(() => import("@/routes/AboutPage"));
 
-export interface PageDef {
+interface PageDef {
   path: string;
   labelKey: string;
   icon: ReactNode;

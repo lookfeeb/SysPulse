@@ -1,3 +1,66 @@
+.cleanup-result-notice {
+  overflow: hidden;
+  border: 1px solid var(--ant-color-border-secondary, #e8e8e8);
+  border-left: 3px solid var(--ant-color-warning, #d89614);
+  border-radius: 10px;
+  background: var(--ant-color-bg-container, #fff);
+  color: var(--ant-color-text, #262626);
+}
+
+.cleanup-result-notice-summary {
+  display: flex;
+  min-height: 46px;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding: 9px 14px;
+  list-style: none;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.cleanup-result-notice-summary::-webkit-details-marker { display: none; }
+.cleanup-result-notice-summary:hover { background: var(--ant-color-fill-quaternary, #fafafa); }
+.cleanup-result-notice-summary:focus-visible {
+  outline: 2px solid var(--ant-color-primary, #1677ff);
+  outline-offset: -2px;
+}
+
+.cleanup-result-notice-icon { color: var(--ant-color-warning, #d89614); font-size: 15px; }
+.cleanup-result-notice-title { font-weight: 600; }
+.cleanup-result-notice-freed { color: var(--ant-color-text-secondary, #595959); }
+.cleanup-result-notice-freed strong { color: #16826d; font-variant-numeric: tabular-nums; }
+.cleanup-result-notice-count {
+  margin-left: auto;
+  padding: 0 7px;
+  border-radius: 5px;
+  background: var(--ant-color-fill-tertiary, #f5f5f5);
+  color: var(--ant-color-text-secondary, #595959);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.cleanup-result-notice-toggle { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.cleanup-result-notice-toggle .anticon { font-size: 10px; transition: transform .15s ease; }
+.cleanup-result-notice[open] .cleanup-result-notice-toggle .anticon { transform: rotate(180deg); }
+.cleanup-result-notice-body { padding: 10px 14px 12px; border-top: 1px solid var(--ant-color-border-secondary, #e8e8e8); }
+.cleanup-result-notice-body > p { margin: 0 0 8px; color: var(--ant-color-text-secondary, #595959); font-size: 12px; line-height: 1.6; }
+.cleanup-result-notice-body ul {
+  max-height: 200px;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border-radius: 6px;
+  background: var(--ant-color-fill-quaternary, #fafafa);
+  list-style: none;
+  font-size: 12px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.cleanup-result-notice-body li + li { margin-top: 6px; }
+.cleanup-result-notice-body ul:focus-visible { outline: 2px solid var(--ant-color-primary, #1677ff); outline-offset: -2px; }
+
 .cleanup-hero {
   position: relative;
   display: grid;

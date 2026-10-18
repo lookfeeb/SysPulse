@@ -191,49 +191,6 @@ pub struct AiHistoryItem {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
-pub struct AiSession {
-    pub session_id: String,
-    pub title: String,
-    pub session_type: String,
-    pub workspace_directory: String,
-    pub history: Vec<AiHistoryItem>,
-    pub conversation_summary: Option<String>,
-}
-
-impl From<crate::ai::backend::models::ide_session::IdeSession> for AiSession {
-    fn from(value: crate::ai::backend::models::ide_session::IdeSession) -> Self {
-        Self {
-            session_id: value.session_id,
-            title: value.title,
-            session_type: value.session_type,
-            workspace_directory: value.workspace_directory,
-            history: value
-                .history
-                .into_iter()
-                .map(|item| AiHistoryItem {
-                    message: AiMessage {
-                        role: item.message.role,
-                        content: item
-                            .message
-                            .content
-                            .into_iter()
-                            .map(|content| AiContentItem {
-                                content_type: content.content_type,
-                                text: content.text,
-                            })
-                            .collect(),
-                        id: item.message.id,
-                        is_hidden: item.message.is_hidden,
-                    },
-                })
-                .collect(),
-            conversation_summary: value.conversation_summary,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
 pub struct AiSessionPage {
     pub session_id: String,
     pub title: String,

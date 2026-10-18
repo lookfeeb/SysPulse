@@ -1,6 +1,6 @@
 import type { AiHistoryItem, AiSessionSummary } from "@/bindings";
 
-export const SOURCE_META: Record<string, { label: string; color: string }> = {
+const SOURCE_META: Record<string, { label: string; color: string }> = {
   ide: { label: "Kiro IDE", color: "blue" },
   cli: { label: "Kiro CLI", color: "purple" },
   codex: { label: "Codex", color: "green" },
@@ -12,7 +12,7 @@ export const SOURCE_META: Record<string, { label: string; color: string }> = {
 };
 
 // Windows 文件名保留字符；控制字符另行按码点过滤，避免源码里出现裸控制字节。
-export const RESERVED_FILENAME_CHARS = /[<>:"/\\|?*]/g;
+const RESERVED_FILENAME_CHARS = /[<>:"/\\|?*]/g;
 
 export { errorMessage } from "@/utils/errorMessage";
 
@@ -20,7 +20,7 @@ export function sourceMeta(source: string): { label: string; color: string } {
   return SOURCE_META[source] ?? { label: source || "未知来源", color: "default" };
 }
 
-export function cleanTitle(value?: string): string {
+function cleanTitle(value?: string): string {
   const clean = (value ?? "")
     .replace(/<\/?[a-zA-Z][^>]*>?/g, " ")
     .replace(/&[a-zA-Z#0-9]+;/g, " ")
@@ -28,6 +28,12 @@ export function cleanTitle(value?: string): string {
     .trim();
   if (!clean) return "未命名会话";
   return clean.length > 100 ? clean.slice(0, 100) + "…" : clean;
+}
+
+/** Hide a copied thread-link prefix only when a readable title follows it. */
+export function sessionDisplayTitle(value: string): string {
+  const withoutLink = value.trim().replace(/^codex:\/\/threads\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\s*/i, "");
+  return cleanTitle(withoutLink || value);
 }
 
 export function timestampDate(timestamp: number | null): Date | null {
@@ -52,6 +58,12 @@ export function formatTime(timestamp: number | null): string {
 export function formatClock(timestamp: number | null): string {
   const date = timestampDate(timestamp);
   if (!date) return "--:--";
+  const today = new Date();
+  if (date.toDateString() !== today.toDateString()) {
+    return date.toLocaleDateString("zh-CN", {
+      ...(date.getFullYear() !== today.getFullYear() ? { year: "numeric" as const } : {}), month: "2-digit", day: "2-digit",
+    });
+  }
   return date.toLocaleTimeString("zh-CN", {
     hour: "2-digit",
     minute: "2-digit",
@@ -65,7 +77,7 @@ export function formatFileSize(bytes: number): string {
   return (bytes / (1024 * 1024)).toFixed(1) + " MB";
 }
 
-export function decodeWorkspacePath(hash: string): string {
+function decodeWorkspacePath(hash: string): string {
   const knownPrefix = Object.keys(SOURCE_META).find((source) => hash.startsWith(source + ":"));
   if (knownPrefix) return hash.slice(knownPrefix.length + 1);
   try {

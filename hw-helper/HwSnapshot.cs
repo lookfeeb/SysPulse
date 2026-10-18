@@ -23,8 +23,8 @@ public sealed class CpuHw
     [JsonPropertyName("name")] public string Name { get; set; } = "";
     [JsonPropertyName("packageTempC")] public double? PackageTempC { get; set; }
     [JsonPropertyName("perCoreTempsC")] public List<double?> PerCoreTempsC { get; set; } = new();
-    [JsonPropertyName("perCoreUsage")] public List<double> PerCoreUsage { get; set; } = new();
-    [JsonPropertyName("totalUsage")] public double TotalUsage { get; set; }
+    [JsonPropertyName("perCoreUsage")] public List<double?> PerCoreUsage { get; set; } = new();
+    [JsonPropertyName("totalUsage")] public double? TotalUsage { get; set; }
     [JsonPropertyName("frequencyMhz")] public double? FrequencyMhz { get; set; }
     [JsonPropertyName("powerW")] public double? PowerW { get; set; }
 }

@@ -45,7 +45,7 @@ function TempCard({
   );
 }
 
-function FanCard({ rpm }: { rpm: number }) {
+function FanCard({ rpm }: { rpm: number | null }) {
   return (
     <Card
       size="small"
@@ -57,9 +57,9 @@ function FanCard({ rpm }: { rpm: number }) {
         <Text type="secondary" style={{ fontSize: 12 }}>最高风扇</Text>
       </div>
       <div style={{ fontSize: 28, fontWeight: 700, color: "#3388cc", lineHeight: 1 }}>
-        {rpm > 0 ? rpm : "—"}
+        {rpm != null ? Math.round(rpm) : "—"}
       </div>
-      {rpm > 0 && (
+      {rpm != null && (
         <Text type="secondary" style={{ fontSize: 11, marginTop: 4, display: "block" }}>
           RPM
         </Text>
@@ -87,7 +87,7 @@ export default function SummaryCards({ snap }: { snap: HwSnapshot | null }) {
     .filter((t) => t.value > 0 && Number.isFinite(t.value))
     .sort((a, b) => b.value - a.value)[0];
 
-  const maxFan = fans.reduce((m, f) => Math.max(m, f.rpm ?? 0), 0);
+  const maxFan = maxValid(fans.map((f) => f.rpm != null && f.rpm >= 0 ? f.rpm : null));
 
   // GPU 名称
   const gpuName = gpus[0]?.name?.split(" ").slice(-3).join(" ") ?? "GPU";

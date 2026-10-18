@@ -1,366 +1,222 @@
+using System.Diagnostics;
 using LibreHardwareMonitor.Hardware;
+using LibreHardwareMonitor.Hardware.Storage;
+using Reading = SysPulse.HwHelper.FanChannels.Reading;
 
 namespace SysPulse.HwHelper;
 
-/// <summary>
-/// Convert the live LHM <see cref="Computer"/> tree into a flat <see cref="HwSnapshot"/>
-/// DTO that the Rust side can consume. Each per-sensor read is wrapped so that
-/// a single failure cannot block the entire snapshot.
-///
-/// WMI queries (disk metadata, memory modules) are NOT performed here — they
-/// live in <see cref="WmiCache"/> and are populated once at startup. This keeps
-/// the hot-path snapshot under the Rust-side request timeout.
-/// </summary>
+/// <summary>Capture each sensor once; publish only successfully refreshed devices.</summary>
 public static class SnapshotBuilder
 {
-    public static HwSnapshot Build(ComputerHost host, WmiCache wmi)
+    public static HwSnapshot Build(ComputerHost host, WmiCache wmi) => Build(host.Refresh(), wmi);
+
+    public static HwSnapshot Build(IEnumerable<IHardware> refreshed, WmiCache wmi)
     {
-        host.Refresh();
-
-        var snap = new HwSnapshot
+        var snap = new HwSnapshot { TimestampMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() };
+        foreach (var hw in refreshed)
         {
-            TimestampMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-        };
-
-        int gpuIndex = 0;
-        int diskIndex = 0;
-
-        foreach (IHardware hw in host.Inner.Hardware)
-        {
-            switch (hw.HardwareType)
+            try
             {
-                case HardwareType.Cpu:
-                    snap.Cpu = TryReadCpu(hw);
-                    break;
-
-                case HardwareType.GpuNvidia:
-                case HardwareType.GpuAmd:
-                case HardwareType.GpuIntel:
-                    snap.Gpus.Add(TryReadGpu(hw, gpuIndex++));
-                    break;
-
-                case HardwareType.Memory:
-                    snap.Memory = TryReadMemory(hw, wmi);
-                    break;
-
-                case HardwareType.Storage:
-                    snap.Disks.Add(TryReadDisk(hw, diskIndex++));
-                    break;
-
-                case HardwareType.Motherboard:
-                    snap.Motherboard = TryReadMotherboard(hw);
-                    break;
-
-                case HardwareType.SuperIO:
-                    // SuperIO often appears as sub-hardware of Motherboard, but on
-                    // some boards it's a top-level node — surface its fans there.
-                    AppendFans(hw, snap.Fans);
-                    break;
+                var sensors = FanChannels.Capture(hw);
+                var fans = ReadFans(hw, sensors);
+                switch (hw.HardwareType)
+                {
+                    case HardwareType.Cpu:
+                        var cpu = ReadCpu(hw.Name, sensors);
+                        snap.Cpu = snap.Cpu is null ? cpu : MergeCpu(snap.Cpu, cpu);
+                        break;
+                    case HardwareType.GpuNvidia:
+                    case HardwareType.GpuAmd:
+                    case HardwareType.GpuIntel:
+                        snap.Gpus.Add(ReadGpu(hw, sensors, fans, snap.Gpus.Count));
+                        break;
+                    case HardwareType.Memory:
+                        snap.Memory = ReadMemory(sensors, wmi);
+                        break;
+                    case HardwareType.Storage:
+                        snap.Disks.Add(ReadDisk(hw, sensors, wmi, snap.Disks.Count));
+                        break;
+                    case HardwareType.Motherboard:
+                    case HardwareType.SuperIO:
+                        snap.Motherboard ??= new MotherboardHw();
+                        if (hw.HardwareType == HardwareType.Motherboard) snap.Motherboard.Model = hw.Name;
+                        else snap.Motherboard.SuperIo = hw.Name;
+                        foreach (var s in sensors)
+                        {
+                            if (s.Type == SensorType.Temperature && Range(s.Value, 0, 150) is double t)
+                                snap.Motherboard.TemperaturesC.Add(new NamedValue { Name = s.Name, Identifier = s.Id, Value = t });
+                            if (s.Type == SensorType.Voltage && Range(s.Value, 0, 15) is double v)
+                                snap.Motherboard.VoltagesV.Add(new NamedValue { Name = s.Name, Identifier = s.Id, Value = v });
+                        }
+                        break;
+                }
+                snap.Fans.AddRange(fans);
             }
-
-            // Fans can live as sub-hardware of any of the above.
-            foreach (IHardware sub in hw.SubHardware)
-            {
-                AppendFans(sub, snap.Fans);
-            }
+            catch (Exception ex) { Console.Error.WriteLine($"[hw-helper] device read failed: {ex.Message}"); }
         }
-
-        ApplySystemDriveSpace(snap.Disks);
-        ApplyDiskMetadata(snap.Disks, wmi);
-
         return snap;
     }
 
-    // -----------------------------------------------------------------------
-    // Per-hardware readers — every sensor probe is wrapped in TryRead so a bad
-    // value does not zero out neighbouring fields. CP-1.1 / CP-4.2 / CP-5.2.
-    // -----------------------------------------------------------------------
-
-    private static CpuHw TryReadCpu(IHardware hw)
+    private static List<FanHw> ReadFans(IHardware hardware, List<Reading> sensors)
     {
-        var cpu = new CpuHw { Name = hw.Name };
+        var fans = new List<FanHw>();
+        foreach (var sensor in sensors.Where(s => s.Type == SensorType.Fan).OrderBy(s => s.Index))
+        {
+            var match = FanChannels.Resolve(hardware.HardwareType, sensors, sensor);
+            fans.Add(new FanHw {
+                Id = sensor.Id, Name = $"{hardware.Name} / {sensor.Name}", Rpm = FanChannels.Rpm(sensor.Value),
+                PwmPercent = Range(match?.Pwm, 0, 100), Controllable = match != null,
+            });
+        }
+        return fans;
+    }
 
-        var temps = hw.Sensors.Where(s => s.SensorType == SensorType.Temperature).ToList();
-        cpu.PackageTempC = ValidTemp(
-            temps.FirstOrDefault(s =>
-                s.Name.Contains("Package", StringComparison.OrdinalIgnoreCase)
-                || s.Name.Contains("CCD1", StringComparison.OrdinalIgnoreCase)
-                || s.Name.Contains("Tctl", StringComparison.OrdinalIgnoreCase))?.Value);
-        cpu.PerCoreTempsC = temps
-            .Where(s => s.Name.StartsWith("Core ", StringComparison.OrdinalIgnoreCase)
-                     || s.Name.StartsWith("CPU Core #", StringComparison.OrdinalIgnoreCase))
-            .OrderBy(s => s.Index)
-            .Select(s => ValidTemp(s.Value))
-            .ToList();
+    public static double? Range(double? value, double min, double max) =>
+        value is double v && double.IsFinite(v) && v >= min && v <= max ? v : null;
+    private static bool Is(string value, string name) => value.Equals(name, StringComparison.OrdinalIgnoreCase);
+    private static double? Find(List<Reading> sensors, SensorType type, double max, params string[] names)
+    {
+        foreach (var name in names)
+            foreach (var s in sensors)
+                if (s.Type == type && Is(s.Name, name) && Range(s.Value, 0, max) is double v) return v;
+        return null;
+    }
 
-        var loads = hw.Sensors.Where(s => s.SensorType == SensorType.Load).ToList();
-        cpu.TotalUsage = (double)(loads.FirstOrDefault(s =>
-            s.Name.Contains("Total", StringComparison.OrdinalIgnoreCase))?.Value ?? 0f);
-        cpu.PerCoreUsage = loads
-            .Where(s => s.Name.StartsWith("CPU Core #", StringComparison.OrdinalIgnoreCase)
-                     || s.Name.StartsWith("Core #", StringComparison.OrdinalIgnoreCase))
-            .OrderBy(s => s.Index)
-            .Select(s => (double)(s.Value ?? 0f))
-            .ToList();
+    private static int? CoreNumber(string name)
+    {
+        var offset = name.IndexOf("Core #", StringComparison.OrdinalIgnoreCase);
+        if (offset < 0) return null;
+        var digits = name.AsSpan(offset + 6);
+        int length = 0;
+        while (length < digits.Length && char.IsAsciiDigit(digits[length])) length++;
+        return int.TryParse(digits[..length], out var number) ? number : null;
+    }
 
-        var clocks = hw.Sensors.Where(s => s.SensorType == SensorType.Clock).ToList();
-        cpu.FrequencyMhz = (double?)clocks
-            .Where(s => s.Name.StartsWith("Core #", StringComparison.OrdinalIgnoreCase)
-                     || s.Name.StartsWith("CPU Core #", StringComparison.OrdinalIgnoreCase))
-            .Select(s => s.Value ?? 0f)
-            .DefaultIfEmpty(0f)
-            .Max();
-        if (cpu.FrequencyMhz <= 0) cpu.FrequencyMhz = null;
-
-        var powers = hw.Sensors.Where(s => s.SensorType == SensorType.Power).ToList();
-        cpu.PowerW = (double?)powers
-            .FirstOrDefault(s => s.Name.Contains("Package", StringComparison.OrdinalIgnoreCase))
-            ?.Value;
-
+    private static CpuHw ReadCpu(string name, List<Reading> sensors)
+    {
+        var cpu = new CpuHw { Name = name };
+        cpu.PackageTempC = Find(sensors, SensorType.Temperature, 150,
+            "CPU Package", "Core (Tdie)", "CPU (Tctl/Tdie)", "Core (Tctl/Tdie)", "Core (Tctl)");
+        cpu.PackageTempC ??= sensors.Where(s => s.Type == SensorType.Temperature &&
+            (CoreNumber(s.Name).HasValue || s.Name.Contains("CCD", StringComparison.OrdinalIgnoreCase)))
+            .Select(s => Range(s.Value, 0, 150)).Max();
+        var loads = sensors.Where(s => s.Type == SensorType.Load && CoreNumber(s.Name).HasValue)
+            .OrderBy(s => s.Index).ToList();
+        var temperatures = new Dictionary<int, double?>();
+        foreach (var s in sensors)
+        {
+            if (s.Type != SensorType.Temperature || CoreNumber(s.Name) is not int core) continue;
+            var value = Range(s.Value, 0, 150);
+            if (!temperatures.TryGetValue(core, out var previous) || previous == null || value > previous)
+                temperatures[core] = value;
+        }
+        cpu.TotalUsage = Find(sensors, SensorType.Load, 100, "CPU Total", "Total");
+        foreach (var s in loads)
+        {
+            cpu.PerCoreUsage.Add(Range(s.Value, 0, 100));
+            var number = CoreNumber(s.Name);
+            cpu.PerCoreTempsC.Add(temperatures.GetValueOrDefault(number!.Value));
+        }
+        if (loads.Count == 0)
+            cpu.PerCoreTempsC = sensors.Where(s => s.Type == SensorType.Temperature && CoreNumber(s.Name).HasValue)
+                .OrderBy(s => s.Index).Select(s => Range(s.Value, 0, 150)).ToList();
+        cpu.FrequencyMhz = sensors.Where(s => s.Type == SensorType.Clock && CoreNumber(s.Name).HasValue)
+            .Select(s => Range(s.Value, 1, 20000)).Average();
+        cpu.PowerW = Find(sensors, SensorType.Power, 10000, "CPU Package", "Package");
         return cpu;
     }
 
-    private static GpuHw TryReadGpu(IHardware hw, int index)
+    private static CpuHw MergeCpu(CpuHw a, CpuHw b)
     {
-        var vendor = hw.HardwareType switch
-        {
-            HardwareType.GpuNvidia => "nvidia",
-            HardwareType.GpuAmd => "amd",
-            HardwareType.GpuIntel => "intel",
-            _ => "unknown",
-        };
-
-        var gpu = new GpuHw { Index = index, Name = hw.Name, Vendor = vendor };
-
-        gpu.UsagePercent = (double?)hw.Sensors
-            .FirstOrDefault(s => s.SensorType == SensorType.Load
-                              && s.Name.Contains("GPU Core", StringComparison.OrdinalIgnoreCase))
-            ?.Value;
-
-        gpu.MemUsedMb = (double?)hw.Sensors
-            .FirstOrDefault(s => s.SensorType == SensorType.SmallData
-                              && s.Name.Contains("Used", StringComparison.OrdinalIgnoreCase))
-            ?.Value;
-        gpu.MemTotalMb = (double?)hw.Sensors
-            .FirstOrDefault(s => s.SensorType == SensorType.SmallData
-                              && s.Name.Contains("Total", StringComparison.OrdinalIgnoreCase))
-            ?.Value;
-
-        gpu.TempC = ValidTemp(hw.Sensors
-            .FirstOrDefault(s => s.SensorType == SensorType.Temperature
-                              && s.Name.Contains("GPU Core", StringComparison.OrdinalIgnoreCase))
-            ?.Value
-            ?? hw.Sensors
-                .FirstOrDefault(s => s.SensorType == SensorType.Temperature)
-                ?.Value);
-
-        gpu.PowerW = (double?)hw.Sensors
-            .FirstOrDefault(s => s.SensorType == SensorType.Power)
-            ?.Value;
-
-        var fanSensor = hw.Sensors.FirstOrDefault(s => s.SensorType == SensorType.Fan);
-        gpu.FanRpm = ValidRpm(fanSensor?.Value);
-        gpu.FanPwm = (double?)hw.Sensors
-            .FirstOrDefault(s => s.SensorType == SensorType.Control)
-            ?.Value;
-
-        return gpu;
+        var ac = Math.Max(1, a.PerCoreUsage.Count);
+        var bc = Math.Max(1, b.PerCoreUsage.Count);
+        a.Name += " + " + b.Name;
+        a.PackageTempC = a.PackageTempC.HasValue && b.PackageTempC.HasValue ? Math.Max(a.PackageTempC.Value, b.PackageTempC.Value) : null;
+        a.TotalUsage = (a.TotalUsage * ac + b.TotalUsage * bc) / (ac + bc);
+        a.FrequencyMhz = (a.FrequencyMhz * ac + b.FrequencyMhz * bc) / (ac + bc);
+        a.PowerW += b.PowerW;
+        a.PerCoreUsage.AddRange(b.PerCoreUsage);
+        a.PerCoreTempsC.AddRange(b.PerCoreTempsC);
+        return a;
     }
 
-    private static MemoryHw TryReadMemory(IHardware hw, WmiCache wmi)
+    private static GpuHw ReadGpu(IHardware hw, List<Reading> s, List<FanHw> fans, int index) => new() {
+        Index = index, Name = hw.Name,
+        Vendor = hw.HardwareType == HardwareType.GpuNvidia ? "nvidia" : hw.HardwareType == HardwareType.GpuAmd ? "amd" : "intel",
+        UsagePercent = Find(s, SensorType.Load, 100, "GPU Core", "D3D 3D"),
+        MemUsedMb = Find(s, SensorType.SmallData, 1048576, "GPU Memory Used", "D3D Dedicated Memory Used"),
+        MemTotalMb = Find(s, SensorType.SmallData, 1048576, "GPU Memory Total"),
+        TempC = Find(s, SensorType.Temperature, 150, "GPU Core", "GPU Temperature"),
+        PowerW = Find(s, SensorType.Power, 10000, "GPU Package", "GPU Power", "GPU Core"),
+        FanRpm = fans.FirstOrDefault()?.Rpm,
+        FanPwm = fans.FirstOrDefault()?.PwmPercent,
+    };
+
+    private static MemoryHw? ReadMemory(List<Reading> s, WmiCache wmi)
     {
-        var mem = new MemoryHw();
-
-        var dataUsed = hw.Sensors.FirstOrDefault(s => s.SensorType == SensorType.Data
-            && s.Name.Contains("Used", StringComparison.OrdinalIgnoreCase));
-        var dataAvail = hw.Sensors.FirstOrDefault(s => s.SensorType == SensorType.Data
-            && s.Name.Contains("Available", StringComparison.OrdinalIgnoreCase));
-        var loadMem = hw.Sensors.FirstOrDefault(s => s.SensorType == SensorType.Load
-            && s.Name.Contains("Memory", StringComparison.OrdinalIgnoreCase));
-
-        if (dataUsed?.Value is float u && dataAvail?.Value is float a)
-        {
-            // LHM Data sensors are in GB.
-            const double gbToBytes = 1024d * 1024d * 1024d;
-            ulong used = (ulong)(u * gbToBytes);
-            ulong total = (ulong)((u + a) * gbToBytes);
-            mem.UsedBytes = used;
-            mem.TotalBytes = total;
-        }
-        mem.UsedPercent = (double)(loadMem?.Value ?? 0f);
-
-        // Use cached WMI data instead of querying on every snapshot.
-        mem.Modules = wmi.MemoryModules;
-        mem.FrequencyMhz = wmi.MemoryFrequencyMhz;
-        mem.Channels = wmi.MemoryChannels;
-
-        return mem;
+        var used = Find(s, SensorType.Data, 1048576, "Memory Used");
+        var available = Find(s, SensorType.Data, 1048576, "Memory Available");
+        if (!used.HasValue || !available.HasValue || used + available <= 0) return null;
+        const double gib = 1024d * 1024 * 1024;
+        var usedBytes = (ulong)(used.Value * gib);
+        var totalBytes = (ulong)((used.Value + available.Value) * gib);
+        if (totalBytes == 0) return null;
+        return new MemoryHw {
+            UsedBytes = usedBytes, TotalBytes = totalBytes, UsedPercent = 100d * usedBytes / totalBytes,
+            Modules = wmi.MemoryModules, FrequencyMhz = wmi.MemoryFrequencyMhz, Channels = wmi.MemoryChannels,
+        };
     }
 
-    private static DiskHw TryReadDisk(IHardware hw, int index)
+    private static DiskHw ReadDisk(IHardware hw, List<Reading> s, WmiCache wmi, int fallbackIndex)
     {
-        var disk = new DiskHw
-        {
-            Index = index,
-            Model = hw.Name,
-            Bus = InferDiskBus(hw),
-            Identifier = hw.Identifier.ToString(),
-        };
-
-        var temp = hw.Sensors.FirstOrDefault(s => s.SensorType == SensorType.Temperature);
-        disk.TempC = ValidTemp(temp?.Value);
-
-        var read = hw.Sensors.FirstOrDefault(s => s.SensorType == SensorType.Throughput
-            && s.Name.Contains("Read", StringComparison.OrdinalIgnoreCase));
-        var write = hw.Sensors.FirstOrDefault(s => s.SensorType == SensorType.Throughput
-            && s.Name.Contains("Write", StringComparison.OrdinalIgnoreCase));
-        disk.ReadBytesPerSec = (double?)read?.Value;
-        disk.WriteBytesPerSec = (double?)write?.Value;
-
-        // Health: read remaining-life as a proxy when available.
-        var life = hw.Sensors.FirstOrDefault(s =>
-            s.SensorType == SensorType.Level
-            && s.Name.Contains("Remaining Life", StringComparison.OrdinalIgnoreCase));
-        if (life?.Value is float lifePct)
-        {
-            disk.Health = lifePct switch
-            {
-                >= 50f => "good",
-                >= 20f => "warning",
-                _ => "critical",
-            };
-        }
-
+        // AbstractStorage.Index is the Windows physical drive number (LHM 0.9.4).
+        var storage = hw as AbstractStorage;
+        var disk = new DiskHw { Index = storage?.Index ?? fallbackIndex, Model = hw.Name, Identifier = hw.Identifier.ToString() };
+        disk.TempC = s.Where(r => r.Type == SensorType.Temperature).Select(r => Range(r.Value, 0, 150)).Max();
+        disk.ReadBytesPerSec = CorrectStorageRate(Find(s, SensorType.Throughput, double.MaxValue, "Read Rate"), Stopwatch.Frequency);
+        disk.WriteBytesPerSec = CorrectStorageRate(Find(s, SensorType.Throughput, double.MaxValue, "Write Rate"), Stopwatch.Frequency);
+        var life = Find(s, SensorType.Level, 100, "Remaining Life");
+        if (life.HasValue) disk.Health = life >= 50 ? "good" : life >= 20 ? "warning" : "critical";
+        ApplyDiskMetadata(disk, wmi, storage?.Index);
+        if (storage != null) disk.UsedBytes = wmi.GetUsedSpace(disk.Identifier, storage.DriveInfos);
+        if (disk.UsedBytes > disk.TotalBytes && disk.TotalBytes > 0) disk.UsedBytes = null;
         return disk;
     }
 
-    private static void ApplySystemDriveSpace(List<DiskHw> disks)
+    // LHM 0.9.4 uses TimeSpan.FromTicks(Stopwatch ticks) in AbstractStorage.
+    // Revisit this correction when upgrading the pinned LHM dependency.
+    public static double? CorrectStorageRate(double? rate, long frequency) =>
+        frequency <= 0 ? null : Range(rate * (frequency / (double)TimeSpan.TicksPerSecond), 0, 1024d * 1024 * 1024 * 1024);
+
+    public static void ApplyDiskMetadata(DiskHw disk, WmiCache wmi, int? physicalIndex)
     {
-        if (disks.Count == 0) return;
-
-        try
+        var drive = physicalIndex.HasValue ? wmi.DiskDriveRows.Find(r => r.Index == physicalIndex) : UniqueModel(wmi.DiskDriveRows, disk.Model);
+        if (drive != null)
         {
-            var systemPath = Environment.GetFolderPath(Environment.SpecialFolder.System);
-            var root = Path.GetPathRoot(systemPath);
-            if (string.IsNullOrWhiteSpace(root)) return;
-
-            var drive = new DriveInfo(root);
-            if (!drive.IsReady || drive.TotalSize <= 0) return;
-
-            var total = (ulong)drive.TotalSize;
-            var free = (ulong)Math.Max(0, drive.AvailableFreeSpace);
-            disks[0].TotalBytes = total;
-            disks[0].UsedBytes = total >= free ? total - free : 0;
+            disk.TotalBytes = drive.SizeBytes;
+            if (drive.Bus.Length > 0) disk.Bus = drive.Bus;
         }
-        catch
-        {
-            /* drive space is optional */
-        }
+        // MSFT_PhysicalDisk.DeviceId is NOT a Win32 physical drive number.
+        var storage = drive?.Serial.Length > 0
+            ? Unique(wmi.StorageDiskRows, r => Is(r.Serial, drive.Serial))
+            : UniqueModel(wmi.DiskDriveRows, disk.Model) != null ? UniqueModel(wmi.StorageDiskRows, disk.Model) : null;
+        if (storage == null) return;
+        if (storage.Bus.Length > 0) disk.Bus = storage.Bus;
+        if (HealthRank(storage.Health) > HealthRank(disk.Health)) disk.Health = storage.Health;
     }
 
-    private static string InferDiskBus(IHardware hw)
+    private static int HealthRank(string health) => health switch { "critical" => 3, "warning" => 2, "good" => 1, _ => 0 };
+    private static DiskMetadataRow? UniqueModel(List<DiskMetadataRow> rows, string model) =>
+        model.Length == 0 ? null : Unique(rows, r => Is(r.Name, model));
+    private static DiskMetadataRow? Unique(List<DiskMetadataRow> rows, Func<DiskMetadataRow, bool> predicate)
     {
-        var id = hw.Identifier.ToString().ToLowerInvariant();
-        var name = hw.Name.ToLowerInvariant();
-        if (id.Contains("nvme") || name.Contains("nvme")) return "nvme";
-        if (id.Contains("usb") || name.Contains("usb")) return "usb";
-        if (id.Contains("sata") || name.Contains("sata")) return "sata";
-        if (id.Contains("hdd") || id.Contains("ssd")) return "sata";
-        return "unknown";
-    }
-
-    private static void ApplyDiskMetadata(List<DiskHw> disks, WmiCache wmi)
-    {
-        if (disks.Count == 0) return;
-
-        var metadataRows = new List<DiskMetadataRow>();
-        metadataRows.AddRange(wmi.DiskDriveRows);
-        metadataRows.AddRange(wmi.StorageDiskRows);
-        if (metadataRows.Count == 0) return;
-
-        foreach (var disk in disks)
+        DiskMetadataRow? match = null;
+        foreach (var row in rows)
         {
-            var matches = metadataRows
-                .Where(row =>
-                    !string.IsNullOrWhiteSpace(row.Name)
-                    && (disk.Model.Contains(row.Name, StringComparison.OrdinalIgnoreCase)
-                        || row.Name.Contains(disk.Model, StringComparison.OrdinalIgnoreCase)))
-                .ToList();
-
-            if (matches.Count == 0 && disk.Index < metadataRows.Count) matches.Add(metadataRows[disk.Index]);
-            if (matches.Count == 0) continue;
-
-            var bus = matches.Select(row => row.Bus).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
-            if ((string.IsNullOrWhiteSpace(disk.Bus) || disk.Bus == "unknown")
-                && !string.IsNullOrWhiteSpace(bus))
-            {
-                disk.Bus = bus;
-            }
-
-            var health = matches.Select(row => row.Health).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
-            if ((string.IsNullOrWhiteSpace(disk.Health) || disk.Health == "unknown")
-                && !string.IsNullOrWhiteSpace(health))
-            {
-                disk.Health = health;
-            }
+            if (!predicate(row)) continue;
+            if (match != null) return null;
+            match = row;
         }
+        return match;
     }
-
-    private static MotherboardHw TryReadMotherboard(IHardware hw)
-    {
-        var mb = new MotherboardHw
-        {
-            Vendor = "",
-            Model = hw.Name,
-        };
-
-        // Super I/O usually shows up as sub-hardware.
-        var superIo = hw.SubHardware.FirstOrDefault(h => h.HardwareType == HardwareType.SuperIO);
-        if (superIo != null) mb.SuperIo = superIo.Name;
-
-        IEnumerable<ISensor> AllSensors() =>
-            hw.Sensors.Concat(hw.SubHardware.SelectMany(s => s.Sensors));
-
-        foreach (var s in AllSensors())
-        {
-            switch (s.SensorType)
-            {
-                case SensorType.Temperature when ValidTemp(s.Value) is double t:
-                    mb.TemperaturesC.Add(new NamedValue {
-                        Name = s.Name, Value = t, Identifier = s.Identifier.ToString() });
-                    break;
-                case SensorType.Voltage when s.Value is float v && v >= 0 && v <= 15:
-                    mb.VoltagesV.Add(new NamedValue {
-                        Name = s.Name, Value = v, Identifier = s.Identifier.ToString() });
-                    break;
-            }
-        }
-
-        return mb;
-    }
-
-    private static void AppendFans(IHardware hw, List<FanHw> dest)
-    {
-        var fanSensors = hw.Sensors.Where(s => s.SensorType == SensorType.Fan).ToList();
-        var ctrls = hw.Sensors.Where(s => s.SensorType == SensorType.Control).ToList();
-        foreach (var f in fanSensors)
-        {
-            // Match a control sensor by index when possible.
-            var pwm = ctrls.FirstOrDefault(c => c.Index == f.Index);
-            dest.Add(new FanHw
-            {
-                Id = f.Identifier.ToString(),
-                Name = $"{hw.Name} / {f.Name}",
-                Rpm = ValidRpm(f.Value),
-                PwmPercent = (double?)pwm?.Value,
-                Controllable = (f.Control != null) || (pwm?.Control != null),
-            });
-        }
-    }
-
-    // CP-1.2: temperature ∈ [0, 150]
-    private static double? ValidTemp(float? raw) => raw is float v && v >= 0f && v <= 150f ? v : null;
-
-    // CP-6.1: rpm ∈ [0, 10000]
-    private static double? ValidRpm(float? raw) => raw is float v && v >= 0f && v <= 10000f ? v : null;
 }

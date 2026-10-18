@@ -1,11 +1,11 @@
 #!/usr/bin/env pwsh
 <#
 .SYNOPSIS
-  Ensure src-tauri/resources/hw-helper/hw-helper.exe exists; build it if not.
+  Build hw-helper when its executable is missing or older than its sources.
 
 .DESCRIPTION
   Cheap idempotent guard meant to run before `tauri dev`. Skips the (slow)
-  `dotnet publish` when the helper is already on disk so iterative dev launches
+  `dotnet publish` when the helper is up to date so iterative dev launches
   stay fast. Use `build-helper.ps1` directly to force a rebuild.
 #>
 

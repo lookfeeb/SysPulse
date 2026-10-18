@@ -8,6 +8,7 @@ import SensorList from "@/components/HardwarePanels/SensorList";
 export default function HardwarePage() {
   const { message } = AntdApp.useApp();
   const snap = useHwStore((s) => s.current);
+  const stale = useHwStore((s) => s.stale);
   const helperStatus = useHwStore((s) => s.helperStatus);
   const helperReason = useHwStore((s) => s.helperReason);
   const fanControl = useHwStore((s) => s.fanControl);
@@ -31,11 +32,14 @@ export default function HardwarePage() {
     }
   }
 
-  const fanControlDisabled = helperStatus !== "running";
+  const fanControlDisabled = helperStatus !== "running" || stale;
 
   return (
     <Space vertical size={16} style={{ width: "100%" }}>
       {/* 状态提示 */}
+      {helperStatus === "running" && stale && (
+        <Alert type="warning" showIcon title="等待新的硬件读数" description="采集尚未完成或数据已过期，收到新读数后自动恢复。" />
+      )}
       {helperStatus === "unavailable" && (
         <Alert
           type="error"

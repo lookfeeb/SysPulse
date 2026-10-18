@@ -58,20 +58,6 @@ impl ConfigManager {
         self.notify.subscribe()
     }
 
-    /// Apply mutation, normalize, persist, broadcast. Returns the new config.
-    pub fn update<F>(&self, f: F) -> Result<AppConfig>
-    where
-        F: FnOnce(&mut AppConfig),
-    {
-        let mut new_cfg = self.snapshot();
-        f(&mut new_cfg);
-        normalize(&mut new_cfg);
-        self.persist(&new_cfg)?;
-        *self.inner.write() = new_cfg.clone();
-        let _ = self.notify.send(new_cfg.clone());
-        Ok(new_cfg)
-    }
-
     /// Replace entire config with a patch object that came from frontend.
     /// The patch is a serde_json::Value; missing fields keep current values.
     pub fn apply_patch(&self, patch: serde_json::Value) -> Result<AppConfig> {
@@ -214,7 +200,7 @@ lastThresholdAlertMonth = "2026-05"
     }
 
     #[test]
-    fn update_does_not_change_memory_when_persist_fails() {
+    fn patch_does_not_change_memory_when_persist_fails() {
         let path = temp_path("blocked-dir");
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
@@ -226,7 +212,7 @@ lastThresholdAlertMonth = "2026-05"
         };
 
         let before = mgr.snapshot();
-        let err = mgr.update(|cfg| cfg.general.sample_interval_ms = 1500);
+        let err = mgr.apply_patch(serde_json::json!({"general": {"sampleIntervalMs": 1500}}));
 
         assert!(err.is_err());
         assert_eq!(mgr.snapshot(), before);

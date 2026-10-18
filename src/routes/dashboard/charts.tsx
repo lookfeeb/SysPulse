@@ -1,7 +1,9 @@
-import type { HwSnapshot, Snapshot } from "@/bindings";
-import { fmtSpeed, fmtTemp, maxValid } from "@/utils/format";
+import type { Snapshot } from "@/bindings";
+import type { HwHistoryPoint } from "@/stores/hwStore";
+import { fmtSpeed, fmtTemp } from "@/utils/format";
 import { useState } from "react";
-export type SparklineSeries = {
+import { alignHistory, historyTimeline } from "./historyTimeline";
+type SparklineSeries = {
   key: string;
   label: string;
   color: string;
@@ -11,7 +13,7 @@ export type SparklineSeries = {
   axis: "left" | "right";
 };
 
-export function latestSeriesValue(
+function latestSeriesValue(
   values: Array<number | null | undefined>,
   index: number,
   maxLen: number,
@@ -26,14 +28,14 @@ export function latestSeriesValue(
   return value != null && Number.isFinite(value) ? value : null;
 }
 
-export function seriesMax(values: Array<number | null | undefined>) {
+function seriesMax(values: Array<number | null | undefined>) {
   return Math.max(
     1,
     ...values.filter((v): v is number => v != null && Number.isFinite(v)),
   );
 }
 
-export function niceTickMax(rawMax: number, unit: SparklineSeries["unit"]): number {
+function niceTickMax(rawMax: number, unit: SparklineSeries["unit"]): number {
   if (unit === "percent") return 100;
   if (unit === "temp") {
     if (rawMax <= 50) return 50;
@@ -49,9 +51,9 @@ export function niceTickMax(rawMax: number, unit: SparklineSeries["unit"]): numb
   return Math.ceil(rawMax / GB) * GB;
 }
 
-export function historyTimeLabel(index: number, maxLen: number) {
-  const secondsAgo = Math.round(((maxLen - 1 - index) / Math.max(1, maxLen - 1)) * 60);
-  return secondsAgo <= 0 ? "现在" : `${secondsAgo} 秒前`;
+function historyTimeLabel(index: number, timestamps: number[]) {
+  const secondsAgo = Math.round(((timestamps.at(-1) ?? 0) - (timestamps[index] ?? 0)) / 1000);
+  return secondsAgo <= 0 ? "最新采样" : `${secondsAgo} 秒前`;
 }
 
 export function NetworkSparkline({
@@ -59,15 +61,18 @@ export function NetworkSparkline({
   hwHistory,
 }: {
   history: Snapshot[];
-  hwHistory: HwSnapshot[];
+  hwHistory: HwHistoryPoint[];
 }) {
+  const timestamps = historyTimeline(history, hwHistory);
+  const live = alignHistory(history, timestamps, 6000);
+  const hardware = alignHistory(hwHistory, timestamps, 5000);
   const networkSeries: SparklineSeries[] = [
     {
       key: "down",
       label: "下行",
       color: "#3388cc",
       unit: "speed",
-      values: history.map((s) => s.network.total.bytesRecvPerSec),
+      values: live.map((s) => s?.network.total.bytesRecvPerSec),
       format: fmtSpeed,
       axis: "left",
     },
@@ -76,7 +81,7 @@ export function NetworkSparkline({
       label: "上行",
       color: "#ff8844",
       unit: "speed",
-      values: history.map((s) => s.network.total.bytesSentPerSec),
+      values: live.map((s) => s?.network.total.bytesSentPerSec),
       format: fmtSpeed,
       axis: "left",
     },
@@ -87,7 +92,7 @@ export function NetworkSparkline({
       label: "CPU 温度",
       color: "#d946ef",
       unit: "temp",
-      values: hwHistory.map((s) => s.cpu?.packageTempC),
+      values: hardware.map((s) => s?.cpuTempC),
       format: fmtTemp,
       axis: "left",
     },
@@ -96,7 +101,7 @@ export function NetworkSparkline({
       label: "GPU 温度",
       color: "#22c55e",
       unit: "temp",
-      values: hwHistory.map((s) => maxValid((s.gpus ?? []).map((gpu) => gpu.tempC))),
+      values: hardware.map((s) => s?.gpuTempC),
       format: fmtTemp,
       axis: "left",
     },
@@ -105,7 +110,7 @@ export function NetworkSparkline({
       label: "内存",
       color: "#64748b",
       unit: "percent",
-      values: history.map((s) => s.memory.usedPercent),
+      values: live.map((s) => s?.memory.usedPercent),
       format: (value) => `${value.toFixed(0)}%`,
       axis: "right",
     },
@@ -118,27 +123,31 @@ export function NetworkSparkline({
         title="网络流量"
         subtitle="上下行使用同一速度刻度"
         series={networkSeries}
+        timestamps={timestamps}
       />
       <HistoryChart
         chartId="system"
         title="系统状态"
         subtitle="左轴温度 · 右轴内存占用"
         series={systemSeries}
+        timestamps={timestamps}
       />
     </div>
   );
 }
 
-export function HistoryChart({
+function HistoryChart({
   chartId,
   title,
   subtitle,
   series,
+  timestamps,
 }: {
   chartId: string;
   title: string;
   subtitle: string;
   series: SparklineSeries[];
+  timestamps: number[];
 }) {
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(() => new Set());
@@ -228,12 +237,13 @@ export function HistoryChart({
     })()
     : [];
 
-  // X 轴时间刻度（最近 60 秒，每 15 秒一个刻度）
+  // Use actual sample times, including variable collection intervals.
+  const durationSeconds = ((timestamps.at(-1) ?? 0) - (timestamps[0] ?? 0)) / 1000;
   const xTickCount = 4;
   const xTicks = Array.from({ length: xTickCount + 1 }, (_, i) => {
-    const secAgo = 60 - (60 * i) / xTickCount;
+    const secAgo = durationSeconds * (1 - i / xTickCount);
     const x = PAD_LEFT + (i / xTickCount) * CHART_W;
-    const label = secAgo === 0 ? "现在" : `-${secAgo.toFixed(0)}s`;
+    const label = secAgo === 0 ? "最新" : `-${secAgo.toFixed(0)}s`;
     return { x, label };
   });
 
@@ -262,7 +272,7 @@ export function HistoryChart({
     <section className="dashboard-history-panel">
       <div className="dashboard-history-heading">
         <div><strong>{title}</strong><span>{subtitle}</span></div>
-        <span className="dashboard-history-window">60 秒</span>
+        <span className="dashboard-history-window">{durationSeconds.toFixed(0)} 秒</span>
       </div>
       <div className="dashboard-history-legend">
         {availableSeries.map((item) => {
@@ -434,7 +444,7 @@ export function HistoryChart({
 
         {hover && (
           <div className="dashboard-history-tooltip" style={{ left: `min(calc(${(hover.x / W) * 100}% + 10px), calc(100% - 178px))` }}>
-            <strong>{historyTimeLabel(hoverIndex!, maxLen)}</strong>
+            <strong>{historyTimeLabel(hoverIndex!, timestamps)}</strong>
             {hover.lines.map((item) => (
               <div key={item.key}>
                 <span><i style={{ background: item.color }} />{item.label}</span>

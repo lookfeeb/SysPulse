@@ -22,7 +22,7 @@ export function overlayPairFor(item: OverlayItem): [OverlayItem, OverlayItem] | 
   return null;
 }
 
-export function normalizeOverlayItem(item: OverlayItem): OverlayItem {
+function normalizeOverlayItem(item: OverlayItem): OverlayItem {
   return item === "gpu" ? "gpu-usage" : item;
 }
 

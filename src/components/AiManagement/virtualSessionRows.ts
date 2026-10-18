@@ -1,19 +1,22 @@
 import type { AiSessionSummary } from "@/bindings";
 import type { SessionGroupView } from "./sessionPresentation";
 
-export type SessionRow =
+type SessionRow =
   | { key: string; top: number; height: number; group: SessionGroupView; session?: never }
   | { key: string; top: number; height: number; session: AiSessionSummary; group?: never };
+
+const SESSION_ROW_HEIGHT = 88;
+const SESSION_GROUP_HEIGHT = 30;
 
 export function buildSessionRows(groups: SessionGroupView[]) {
   const rows: SessionRow[] = [];
   let height = 0;
   for (const group of groups) {
-    rows.push({ key: "group:" + group.key, top: height, height: 30, group });
-    height += 30;
+    rows.push({ key: "group:" + group.key, top: height, height: SESSION_GROUP_HEIGHT, group });
+    height += SESSION_GROUP_HEIGHT;
     for (const session of group.sessions) {
-      rows.push({ key: session.workspaceHash + ":" + session.sessionId, top: height, height: 60, session });
-      height += 60;
+      rows.push({ key: session.workspaceHash + ":" + session.sessionId, top: height, height: SESSION_ROW_HEIGHT, session });
+      height += SESSION_ROW_HEIGHT;
     }
   }
   return { rows, height };

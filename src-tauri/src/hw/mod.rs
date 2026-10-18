@@ -5,11 +5,7 @@ pub mod protocol;
 pub mod sampler;
 pub mod snapshot;
 
-pub use client::{HelperStatus, HwClient};
-pub use fan_control::{
-    FanControlEntry, FanControlManager, FanControlMode, FanControlStatus, FanCurvePoint,
-};
+pub use client::HwClient;
+pub use fan_control::{FanControlManager, FanControlStatus, FanCurvePoint};
 pub use sampler::HwSamplerHandle;
-pub use snapshot::{
-    CpuHw, DiskHw, FanHw, GpuHw, HwSnapshot, MemoryHw, MemoryModule, MotherboardHw, NamedValue,
-};
+pub use snapshot::{GpuHw, HwSnapshot};

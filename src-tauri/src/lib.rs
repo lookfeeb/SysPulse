@@ -1,20 +1,21 @@
-pub mod ai;
-pub mod app;
-pub mod config;
-pub mod error;
-pub mod hw;
-pub mod ipc;
-pub mod logging;
-pub mod monitor;
-pub mod paths;
-pub mod sampler;
-pub mod storage;
-pub mod tray;
+mod ai;
+mod app;
+mod config;
+mod error;
+mod hw;
+mod ipc;
+mod logging;
+mod monitor;
+mod paths;
+mod sampler;
+mod storage;
+mod tray;
 
 #[cfg(windows)]
-pub mod windows_api;
+mod windows_api;
 
-pub use error::{AppError, IpcError, Result};
+#[cfg(not(test))]
+pub use ipc::commands::export_bindings;
 
 /// Application entry point invoked by the bin shim in `main.rs`.
 pub fn run() {

@@ -8,10 +8,7 @@ mod discovery;
 pub mod types;
 
 pub(crate) use adapters::{load_mcp_items_for_client, McpClientKind};
-pub use adapters::{
-    read_mcp_server_url_for_client, write_mcp_server_url_for_client,
-    write_mcp_server_url_for_client_if_current,
-};
+pub use adapters::{read_mcp_server_url_for_client, write_mcp_server_url_for_client_if_current};
 pub use client_commands::*;
 pub use discovery::*;
-pub use types::{McpClientStats, McpClientsOverview, McpServerItem};
+pub use types::{McpClientsOverview, McpServerItem};

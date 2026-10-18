@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 <#
 .SYNOPSIS
   SysPulse 交互式编译脚本
@@ -95,18 +95,6 @@ function Build-Helper {
     if ($LASTEXITCODE -ne 0) { throw "hw-helper 编译失败" }
 }
 
-function Build-Frontend {
-    Write-Host ""
-    Write-Host "  ► 编译前端..." -ForegroundColor Cyan
-    Push-Location $root
-    try {
-        npm run build
-        if ($LASTEXITCODE -ne 0) { throw "前端编译失败" }
-    } finally {
-        Pop-Location
-    }
-}
-
 function Copy-Installers {
     Write-Host ""
     Write-Host "  ► 复制安装包到 release/ ..." -ForegroundColor Cyan
@@ -170,7 +158,6 @@ function Invoke-LtoBuild {
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
 
     Build-Helper
-    Build-Frontend
 
     Write-Host ""
     Write-Host "  ► 编译 Tauri (LTO)..." -ForegroundColor Cyan
@@ -207,7 +194,6 @@ function Invoke-NormalBuild {
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
 
     Build-Helper
-    Build-Frontend
 
     Write-Host ""
     Write-Host "  ► 编译 Tauri..." -ForegroundColor Cyan

@@ -4,6 +4,7 @@ namespace SysPulse.HwHelper;
 
 public static class FanControl
 {
+    private static readonly HashSet<IControl> ManualControls = new(ReferenceEqualityComparer.Instance);
     public static object SetFan(ComputerHost host, RequestParams? args)
     {
         if (args?.FanId is null || string.IsNullOrWhiteSpace(args.FanId))
@@ -35,6 +36,7 @@ public static class FanControl
                 ErrorCodes.InvalidParam,
                 $"pwm must be in {target.MinSoftwareValue:0}..{target.MaxSoftwareValue:0} for this fan");
 
+        ManualControls.Add(target); // A failing write may still have reached the controller.
         TrySetSoftware(target, pwm);
         return new { fanId = args.FanId, mode = "manual", pwm = args.Pwm.Value };
     }
@@ -57,12 +59,13 @@ public static class FanControl
         var attempted = 0;
         var succeeded = 0;
         var failed = 0;
-        foreach (var control in AllControls(host))
+        foreach (var control in ManualControls.ToArray())
         {
             attempted++;
             try
             {
                 control.SetDefault();
+                ManualControls.Remove(control);
                 succeeded++;
             }
             catch (Exception ex)
@@ -77,28 +80,16 @@ public static class FanControl
         return new { attempted, succeeded, failed };
     }
 
-    private static IControl? FindControl(ComputerHost host, string fanId)
+    private static IControl? FindControl(ComputerHost host, string fanId) => FindControl(AllHardware(host), fanId);
+
+    public static IControl? FindControl(IEnumerable<IHardware> hardware, string fanId)
     {
-        host.Refresh();
-
-        foreach (var hw in AllHardware(host))
+        foreach (var hw in hardware)
         {
-            var fan = hw.Sensors.FirstOrDefault(s =>
-                s.SensorType == SensorType.Fan && s.Identifier.ToString() == fanId);
-            if (fan?.Control != null) return fan.Control;
-
-            if (fan != null)
-            {
-                var controlSensor = hw.Sensors.FirstOrDefault(s =>
-                    s.SensorType == SensorType.Control && s.Index == fan.Index);
-                if (controlSensor?.Control != null) return controlSensor.Control;
-            }
-
-            var directControl = hw.Sensors.FirstOrDefault(s =>
-                s.SensorType == SensorType.Control && s.Identifier.ToString() == fanId);
-            if (directControl?.Control != null) return directControl.Control;
+            var sensors = FanChannels.Capture(hw, readValues: false);
+            var fans = sensors.Where(s => s.Type == SensorType.Fan && s.Id == fanId).ToArray();
+            if (fans.Length == 1) return FanChannels.Resolve(hw.HardwareType, sensors, fans[0])?.Control;
         }
-
         return null;
     }
 
@@ -119,6 +110,7 @@ public static class FanControl
         try
         {
             control.SetDefault();
+            ManualControls.Remove(control);
         }
         catch (Exception ex)
         {
@@ -126,27 +118,15 @@ public static class FanControl
         }
     }
 
-    private static IEnumerable<IControl> AllControls(ComputerHost host)
-    {
-        host.Refresh();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var hw in AllHardware(host))
-        {
-            foreach (var sensor in hw.Sensors)
-            {
-                if (sensor.Control is null) continue;
-                var key = $"{hw.Identifier}:{sensor.Index}:{sensor.Control.MinSoftwareValue:0.###}:{sensor.Control.MaxSoftwareValue:0.###}";
-                if (seen.Add(key)) yield return sensor.Control;
-            }
-        }
-    }
-
     private static IEnumerable<IHardware> AllHardware(ComputerHost host)
     {
-        foreach (var hw in host.Inner.Hardware)
+        var seen = new HashSet<IHardware>(ReferenceEqualityComparer.Instance);
+        var pending = new Stack<IHardware>(host.Inner.Hardware);
+        while (pending.TryPop(out var hw))
         {
+            if (!seen.Add(hw)) continue;
             yield return hw;
-            foreach (var sub in hw.SubHardware) yield return sub;
+            foreach (var sub in hw.SubHardware) pending.Push(sub);
         }
     }
 }

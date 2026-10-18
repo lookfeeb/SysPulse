@@ -4,7 +4,6 @@ dist-ssr/
 *.local
 *.tsbuildinfo
 __pycache__/
-1.txt
 
 # Tauri / Cargo
 target/
@@ -16,6 +15,8 @@ src-tauri/resources/hw-helper/
 hw-helper/bin/
 hw-helper/obj/
 hw-helper/publish/
+tests/hw-helper/bin/
+tests/hw-helper/obj/
 
 # Logs
 *.log

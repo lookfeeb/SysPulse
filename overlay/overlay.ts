@@ -358,8 +358,8 @@ async function main() {
     if (changed) autoFitWindow(root, { allowShrink: true });
   });
 
-  await listen<HwSnapshot>("hw:update", (e) => {
-    const h = e.payload;
+  let lastHardwareAt: number | null = null;
+  const renderHardware = (h: HwSnapshot) => {
     const changed = [
       setText(valCpuTemp, fmtTemp(h.cpu?.packageTempC)),
       setText(valCpuFreq, fmtFreq(h.cpu?.frequencyMhz)),
@@ -378,7 +378,25 @@ async function main() {
       changed.push(setText(valMbTemp, fmtTemp(maxValid(mbTemps))));
     }
     if (changed.some(Boolean)) autoFitWindow(root, { allowShrink: true });
+  };
+
+  await listen<HwSnapshot>("hw:update", (e) => {
+    lastHardwareAt = performance.now();
+    renderHardware(e.payload);
   });
+  await listen<{ status: string }>("hw:helper-status", (e) => {
+    if (e.payload.status !== "running") {
+      lastHardwareAt = null;
+      renderHardware({});
+    }
+  });
+  const freshnessTimer = setInterval(() => {
+    if (lastHardwareAt != null && performance.now() - lastHardwareAt > 5000) {
+      lastHardwareAt = null;
+      renderHardware({});
+    }
+  }, 1000);
+  window.addEventListener("beforeunload", () => clearInterval(freshnessTimer), { once: true });
 
   await listen<OverlayConfig>("overlay:config-changed", (e) => {
     config = e.payload;

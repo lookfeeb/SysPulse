@@ -10,9 +10,8 @@ using SysPulse.HwHelper;
 //   stdout:  one Response or EventMessage JSON object per line
 //   stderr:  free-form text logs (forwarded to tracing on Rust side)
 //
-// The helper is intentionally stateless: every reading is fresh, every command
-// returns immediately. All business logic (mode, curves, watchdog, fuse) lives
-// in the Rust main process — see design.md §1.1.
+// Sensor/control access is serialized. Rust owns curves and the watchdog;
+// the helper tracks its own control writes for best-effort restoration on exit.
 // =============================================================================
 
 var jsonOpts = new JsonSerializerOptions
@@ -42,10 +41,9 @@ catch (Exception ex)
     return 2;
 }
 
-// Populate WMI cache once at startup — these queries can take 1-3 seconds
-// but they only need to run once (disk/memory hardware doesn't change at runtime).
+// Publish optional metadata as one completed cache, without delaying readiness.
 var wmiCache = new WmiCache();
-wmiCache.Refresh();
+var metadataTask = Task.Run(() => { var cache = new WmiCache(); cache.Refresh(); return cache; });
 
 EmitEvent("ready", new { lhmHardwareCount = host.Inner.Hardware.Count });
 
@@ -53,12 +51,12 @@ EmitEvent("ready", new { lhmHardwareCount = host.Inner.Hardware.Count });
 Console.CancelKeyPress += (_, args) =>
 {
     args.Cancel = true; // we'll exit naturally after Close()
-    host.Dispose();
+    lock (host) host.Dispose();
     Environment.Exit(0);
 };
 
 string? line;
-while ((line = stdin.ReadLine()) != null)
+while ((line = ReadRequestLine()) != null)
 {
     if (string.IsNullOrWhiteSpace(line)) continue;
 
@@ -79,7 +77,9 @@ while ((line = stdin.ReadLine()) != null)
     }
     if (req is null) continue;
 
-    var response = HandleRequest(req, host, wmiCache);
+    if (metadataTask.IsCompletedSuccessfully) wmiCache = metadataTask.Result;
+    Response response;
+    lock (host) response = HandleRequest(req, host, wmiCache);
     WriteResponse(response);
 
     if (req.Op == "shutdown")
@@ -91,6 +91,12 @@ while ((line = stdin.ReadLine()) != null)
 host.Dispose();
 return 0;
 
+string? ReadRequestLine()
+{
+    try { return ProtocolReader.ReadLine(stdin); }
+    catch (IOException ex) { Console.Error.WriteLine($"[hw-helper] invalid input: {ex.Message}"); return null; }
+}
+
 // -----------------------------------------------------------------------------
 // Local helpers
 // -----------------------------------------------------------------------------
@@ -101,7 +107,6 @@ Response HandleRequest(Request req, ComputerHost h, WmiCache wmi)
     {
         return req.Op switch
         {
-            "heartbeat" => Ok(req.Id, null),
             "snapshot" => Ok(req.Id, SnapshotBuilder.Build(h, wmi)),
             "set_fan" => Ok(req.Id, FanControl.SetFan(h, req.Params)),
             "reset_fan" => Ok(req.Id, FanControl.ResetFan(h, req.Params)),

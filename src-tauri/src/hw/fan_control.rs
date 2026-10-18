@@ -50,6 +50,7 @@ pub struct FanControlStatus {
 #[derive(Clone, Default)]
 pub struct FanControlManager {
     inner: Arc<RwLock<FanControlInner>>,
+    operations: Arc<tokio::sync::Mutex<()>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -61,6 +62,9 @@ struct FanControlInner {
 }
 
 impl FanControlManager {
+    pub async fn lock_operation(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.operations.lock().await
+    }
     pub fn new() -> Self {
         Self::default()
     }
@@ -126,6 +130,13 @@ impl FanControlManager {
         inner.fuse_reason = None;
         status_from_inner(&inner)
     }
+
+    pub fn hold(&self, reason: String) -> FanControlStatus {
+        let mut inner = self.inner.write();
+        inner.fuse_hold = true;
+        inner.fuse_reason = Some(reason);
+        status_from_inner(&inner)
+    }
 }
 
 impl FanControlEntry {
@@ -172,6 +183,7 @@ pub fn spawn_watchdog(
     let child = token.child_token();
     tauri::async_runtime::spawn(async move {
         let mut ticker = tokio::time::interval(WATCHDOG_INTERVAL);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tokio::select! {
                 _ = ticker.tick() => {
@@ -185,6 +197,7 @@ pub fn spawn_watchdog(
 }
 
 pub async fn reset_all_best_effort(manager: &FanControlManager, client: &HwClient) {
+    let _operation = manager.lock_operation().await;
     let had_entries = !manager.inner.read().entries.is_empty();
     if had_entries {
         let _ = client.reset_fans().await;
@@ -198,19 +211,23 @@ async fn run_watchdog_once(
     client: &HwClient,
     last_snapshot: &Arc<RwLock<Option<HwSnapshot>>>,
 ) {
-    let snapshot = last_snapshot.read().clone();
-    let max_temp = snapshot.as_ref().and_then(max_control_temperature);
+    let _operation = manager.lock_operation().await;
+    let max_temp = if client.status() == crate::hw::client::HelperStatus::Running {
+        last_snapshot
+            .read()
+            .as_ref()
+            .and_then(fresh_control_temperature)
+    } else {
+        None
+    };
 
     {
         let mut inner = manager.inner.write();
         inner.max_temp_c = max_temp;
-        if inner.fuse_hold {
-            let client = client.clone();
-            tauri::async_runtime::spawn(async move {
-                let _ = client.reset_fans().await;
-            });
-            let _ = app.emit("fan-control:changed", status_from_inner(&inner));
-            return;
+        if max_temp.is_none() && !inner.entries.is_empty() {
+            inner.fuse_hold = true;
+            inner.fuse_reason =
+                Some("temperature unavailable or stale; restoring firmware control".into());
         }
         if max_temp.is_some_and(|t| t >= FUSE_TEMP_C) && !inner.entries.is_empty() {
             inner.fuse_hold = true;
@@ -224,12 +241,23 @@ async fn run_watchdog_once(
         return;
     }
 
-    let Some(temp) = max_temp else {
+    if max_temp.is_none() {
         return;
-    };
+    }
 
     let entries: Vec<FanControlEntry> = manager.inner.read().entries.values().cloned().collect();
     for entry in entries {
+        // Earlier writes may have awaited a slow controller. Recheck before
+        // each write, while serializing watchdog and user control operations.
+        let fresh = last_snapshot
+            .read()
+            .as_ref()
+            .and_then(fresh_control_temperature);
+        let Some(temp) = fresh.filter(|t| *t < FUSE_TEMP_C) else {
+            manager.hold("temperature unavailable, stale or unsafe during fan update".into());
+            let _ = client.reset_fans().await;
+            break;
+        };
         let target_pwm = match entry.mode {
             FanControlMode::Bios => continue,
             FanControlMode::Manual => entry.manual_pwm,
@@ -250,8 +278,15 @@ async fn run_watchdog_once(
             Ok(()) => {
                 let mut inner = manager.inner.write();
                 if let Some(current) = inner.entries.get_mut(&entry.fan_id) {
-                    current.last_written_pwm = Some(target_pwm);
-                    current.write_failures = 0;
+                    if current.mode == entry.mode
+                        && current.manual_pwm == entry.manual_pwm
+                        && current.curve == entry.curve
+                    {
+                        current.last_written_pwm = Some(target_pwm);
+                        current.write_failures = 0;
+                    } else {
+                        current.last_written_pwm = None;
+                    }
                 }
             }
             Err(e) => {
@@ -279,18 +314,30 @@ async fn run_watchdog_once(
 }
 
 pub fn max_control_temperature(snapshot: &HwSnapshot) -> Option<f64> {
-    let mut values = Vec::new();
-    if let Some(cpu) = &snapshot.cpu {
-        values.extend(cpu.package_temp_c);
-        values.extend(cpu.per_core_temps_c.iter().flatten().copied());
-    }
-    for gpu in &snapshot.gpus {
-        values.extend(gpu.temp_c);
-    }
-    values
-        .into_iter()
-        .filter(|v| v.is_finite())
+    snapshot
+        .cpu
+        .iter()
+        .flat_map(|cpu| {
+            cpu.package_temp_c
+                .into_iter()
+                .chain(cpu.per_core_temps_c.iter().flatten().copied())
+        })
+        .chain(snapshot.gpus.iter().filter_map(|gpu| gpu.temp_c))
+        .filter(|v| v.is_finite() && (0.0..=150.0).contains(v))
         .reduce(f64::max)
+}
+
+pub fn fresh_control_temperature(snapshot: &HwSnapshot) -> Option<f64> {
+    if !snapshot.is_fresh() {
+        return None;
+    }
+    // Losing CPU sensors must not silently substitute a cooler GPU reading.
+    let cpu = snapshot.cpu.as_ref()?;
+    cpu.package_temp_c
+        .into_iter()
+        .chain(cpu.per_core_temps_c.iter().flatten().copied())
+        .find(|v| v.is_finite() && (0.0..=150.0).contains(v))?;
+    max_control_temperature(snapshot)
 }
 
 pub fn interpolate_curve(points: &[FanCurvePoint], temp_c: f64) -> f64 {
@@ -352,6 +399,41 @@ fn status_from_inner(inner: &FanControlInner) -> FanControlStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn fan_operations_share_one_cancellation_safe_lock() {
+        use futures_util::FutureExt;
+        let manager = FanControlManager::new();
+        let shared = manager.clone();
+        let first = manager.lock_operation().await;
+        assert!(shared.lock_operation().now_or_never().is_none());
+        drop(first);
+        assert!(shared.lock_operation().now_or_never().is_some());
+    }
+
+    #[test]
+    fn fan_control_rejects_stale_or_missing_cpu_temperature() {
+        let mut snap = HwSnapshot {
+            received_at: Some(std::time::Instant::now()),
+            cpu: Some(crate::hw::snapshot::CpuHw {
+                package_temp_c: Some(60.0),
+                ..Default::default()
+            }),
+            gpus: vec![crate::hw::snapshot::GpuHw {
+                temp_c: Some(40.0),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert_eq!(fresh_control_temperature(&snap), Some(60.0));
+        snap.received_at = Some(std::time::Instant::now() - Duration::from_secs(6));
+        assert_eq!(fresh_control_temperature(&snap), None);
+        snap.received_at = Some(std::time::Instant::now());
+        snap.cpu.as_mut().unwrap().package_temp_c = Some(f64::NAN);
+        assert_eq!(fresh_control_temperature(&snap), None);
+        snap.cpu = None;
+        assert_eq!(fresh_control_temperature(&snap), None);
+    }
 
     #[test]
     fn curve_interpolates_edges_and_middle() {

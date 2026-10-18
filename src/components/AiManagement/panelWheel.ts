@@ -1,7 +1,7 @@
 const SCROLL_EPSILON = 0.5;
 const DEFAULT_LINE_HEIGHT = 16;
 
-export interface VerticalScrollMetrics {
+interface VerticalScrollMetrics {
   scrollTop: number;
   scrollHeight: number;
   clientHeight: number;

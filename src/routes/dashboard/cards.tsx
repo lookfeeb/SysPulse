@@ -167,11 +167,11 @@ export function DiskCard({ disks }: { disks: DiskHw[] }) {
   );
 }
 
-export function SpeedRow({ children }: { children: ReactNode }) {
+function SpeedRow({ children }: { children: ReactNode }) {
   return <div className="dashboard-speed-row">{children}</div>;
 }
 
-export function SpeedValue({
+function SpeedValue({
   label,
   value,
   color,
@@ -198,7 +198,7 @@ export function SpeedValue({
   );
 }
 
-export function CardLines({ lines }: { lines: string[] }) {
+function CardLines({ lines }: { lines: string[] }) {
   return (
     <div style={{ marginTop: 8 }}>
       {lines.map((line, index) => (

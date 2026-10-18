@@ -2,9 +2,9 @@ use super::{
     binding_key, canonical_mcp_endpoint, canonical_oauth_resource, credential_matches,
     decode_mcp_oauth_store_value, is_mcp_oauth_proxy_url, mcp_oauth_failure_needs_reauth,
     normalize_mcp_oauth_store, normalized_credential_key, parse_mcp_oauth_proxy_url,
-    proxy_credential_key_from_url, proxy_mcp_endpoint_from_url, proxy_url_for_binding,
-    recover_proxy_credential_key, rollback_credential_in_store_if_current, McpOAuthCred,
-    McpOAuthCredentialRollback, McpOAuthStore,
+    proxy_credential_key_from_url, proxy_url_for_binding, recover_proxy_credential_key,
+    rollback_credential_in_store_if_current, McpOAuthCred, McpOAuthCredentialRollback,
+    McpOAuthStore,
 };
 
 fn credential(access_token: &str, refresh_token: Option<&str>) -> McpOAuthCred {
@@ -125,7 +125,10 @@ fn proxy_url_round_trip_recovers_credential_key_and_full_endpoint() {
         Some(credential_key.as_str())
     );
     assert_eq!(
-        proxy_mcp_endpoint_from_url(&proxy, "notion").as_deref(),
+        parse_mcp_oauth_proxy_url(&proxy)
+            .unwrap()
+            .mcp_endpoint
+            .as_deref(),
         Some(mcp_endpoint)
     );
     assert!(proxy_credential_key_from_url(&proxy, "other").is_none());

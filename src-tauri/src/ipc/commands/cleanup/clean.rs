@@ -3,7 +3,7 @@ use super::*;
 // ─── Clean logic ────────────────────────────────────────────────────────────
 
 pub(super) struct CleanProgress<'a> {
-    pub(super) app: &'a AppHandle,
+    pub(super) app: Option<&'a AppHandle>,
     pub(super) total_items: u64,
     pub(super) processed_items: u64,
     pub(super) current_category: String,
@@ -111,7 +111,7 @@ pub(super) fn scan_timestamp(scanned_at_ms: i64) -> Option<SystemTime> {
 impl<'a> CleanProgress<'a> {
     pub(super) fn new(app: &'a AppHandle, total_items: u64) -> Self {
         Self {
-            app,
+            app: Some(app),
             total_items,
             processed_items: 0,
             current_category: String::new(),
@@ -160,19 +160,21 @@ impl<'a> CleanProgress<'a> {
             .checked_div(self.total_items)
             .map(|value| value.min(if done { 100 } else { 99 }) as u8)
             .unwrap_or(if done { 100 } else { 0 });
-        let _ = self.app.emit(
-            CLEANUP_PROGRESS_EVENT,
-            &CleanupProgressEvent {
-                percent,
-                processed_items: self.processed_items,
-                total_items: self.total_items,
-                current_category: self.current_category.clone(),
-                current_path: self.current_path.clone(),
-                freed_bytes: self.freed_bytes,
-                deleted_files: self.deleted_files,
-                done,
-            },
-        );
+        if let Some(app) = self.app {
+            let _ = app.emit(
+                CLEANUP_PROGRESS_EVENT,
+                &CleanupProgressEvent {
+                    percent,
+                    processed_items: self.processed_items,
+                    total_items: self.total_items,
+                    current_category: self.current_category.clone(),
+                    current_path: self.current_path.clone(),
+                    freed_bytes: self.freed_bytes,
+                    deleted_files: self.deleted_files,
+                    done,
+                },
+            );
+        }
         self.last_emit = Instant::now();
     }
 }

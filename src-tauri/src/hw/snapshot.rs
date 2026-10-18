@@ -5,6 +5,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct HwSnapshot {
+    /// Local monotonic receipt time; never accepted from IPC or persisted.
+    #[serde(skip)]
+    #[specta(skip)]
+    pub received_at: Option<std::time::Instant>,
     pub timestamp_ms: i64,
     pub cpu: Option<CpuHw>,
     #[serde(default)]
@@ -30,10 +34,17 @@ pub struct CpuHw {
     pub per_core_temps_c: Vec<Option<f64>>,
     #[serde(default)]
     #[specta(optional = false)]
-    pub per_core_usage: Vec<f64>,
-    pub total_usage: f64,
+    pub per_core_usage: Vec<Option<f64>>,
+    pub total_usage: Option<f64>,
     pub frequency_mhz: Option<f64>,
     pub power_w: Option<f64>,
+}
+
+impl HwSnapshot {
+    pub fn is_fresh(&self) -> bool {
+        self.received_at
+            .is_some_and(|at| at.elapsed() <= std::time::Duration::from_secs(5))
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type)]

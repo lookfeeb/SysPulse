@@ -5,4 +5,4 @@ pub mod registry;
 pub mod snapshot;
 
 pub use registry::MonitorRegistry;
-pub use snapshot::{CpuSnapshot, InterfaceStats, MemorySnapshot, NetworkSnapshot, Snapshot};
+pub use snapshot::Snapshot;

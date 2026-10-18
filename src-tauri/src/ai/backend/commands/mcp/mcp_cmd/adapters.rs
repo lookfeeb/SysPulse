@@ -427,16 +427,6 @@ fn write_mcp_server_for_client_unlocked(
     }
 }
 
-pub fn write_mcp_server_url_for_client(
-    client: &str,
-    server_name: &str,
-    new_url: &str,
-) -> Result<(), String> {
-    with_mcp_config_write_lock(|| {
-        write_mcp_server_url_for_client_unlocked(client, server_name, new_url)
-    })
-}
-
 fn write_mcp_server_url_for_client_unlocked(
     client: &str,
     server_name: &str,

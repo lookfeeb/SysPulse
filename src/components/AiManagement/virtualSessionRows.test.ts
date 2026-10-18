@@ -7,7 +7,8 @@ describe("会话虚拟列表", () => {
     const sessions = Array.from({ length: 10_000 }, (_, i) => ({ sessionId: String(i), workspaceHash: "codex:test" } as AiSessionSummary));
     const { rows, height } = buildSessionRows([{ key: "today", label: "今天", sessions }]);
     expect(rows).toHaveLength(10_001);
-    expect(height).toBe(600_030);
+    expect(height).toBe(rows.at(-1)!.top + rows.at(-1)!.height);
+    expect(rows.every((row, index) => index === 0 || row.top === rows[index - 1].top + rows[index - 1].height)).toBe(true);
     const first = visibleRowRange(rows, 0, 600);
     expect(first.end - first.start).toBeLessThan(25);
     const last = visibleRowRange(rows, height - 600, 600);

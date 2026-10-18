@@ -66,20 +66,86 @@ pub(super) fn project_search_plan(
     roots
 }
 
-#[cfg(test)]
-pub(super) fn project_search_roots(custom_roots: &[PathBuf]) -> Vec<PathBuf> {
-    let fixed_roots = fixed_disk_roots();
-    project_search_plan(custom_roots, &fixed_roots)
-        .into_iter()
-        .map(|root| root.path)
-        .collect()
-}
-
 #[derive(Default)]
 pub(super) struct ProjectCacheDiscovery {
     pub(super) rust: Vec<PathBuf>,
     pub(super) cpp: Vec<PathBuf>,
     pub(super) python: Vec<PathBuf>,
+    pub(super) node: Vec<PathBuf>,
+    pub(super) dotnet: Vec<PathBuf>,
+    pub(super) java: Vec<PathBuf>,
+}
+
+impl ProjectCacheDiscovery {
+    fn add_extra(&mut self, category: &str, path: PathBuf) {
+        match category {
+            "node-cache" => self.node.push(path),
+            "dotnet-cache" => self.dotnet.push(path),
+            "java-cache" => self.java.push(path),
+            _ => {}
+        }
+    }
+}
+
+pub(super) fn verified_extra_project_cache(path: &Path, name: &str) -> Option<&'static str> {
+    let parent = path.parent()?;
+    if parent.join("package.json").is_file() && matches!(name, ".turbo" | ".parcel-cache") {
+        return Some("node-cache");
+    }
+    let container = parent
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    if parent
+        .parent()
+        .is_some_and(|root| root.join("package.json").is_file())
+        && ((container.eq_ignore_ascii_case("node_modules") && matches!(name, ".cache" | ".vite"))
+            || (container.eq_ignore_ascii_case(".next") && name == "cache"))
+    {
+        return Some("node-cache");
+    }
+    if name == "obj"
+        && directory_has_extension(parent, &["csproj", "fsproj", "vbproj"])
+        && path.join("project.assets.json").is_file()
+    {
+        return Some("dotnet-cache");
+    }
+    if (name == "target"
+        && parent.join("pom.xml").is_file()
+        && (path.join("maven-status").is_dir() || path.join("maven-archiver").is_dir()))
+        || (name == ".gradle"
+            && [
+                "build.gradle",
+                "build.gradle.kts",
+                "settings.gradle",
+                "settings.gradle.kts",
+            ]
+            .iter()
+            .any(|marker| parent.join(marker).is_file()))
+    {
+        return Some("java-cache");
+    }
+    None
+}
+
+pub(super) fn nested_node_cache_dirs(project: &Path) -> Vec<PathBuf> {
+    if !project.join("package.json").is_file() {
+        return Vec::new();
+    }
+    ["node_modules/.cache", "node_modules/.vite", ".next/cache"]
+        .iter()
+        .filter_map(|relative| {
+            let mut path = project.to_path_buf();
+            for component in Path::new(relative).components() {
+                path.push(component);
+                let metadata = std::fs::symlink_metadata(&path).ok()?;
+                if !metadata.is_dir() || metadata_is_reparse_point(&metadata) {
+                    return None;
+                }
+            }
+            safe_cleanup_root(&path)
+        })
+        .collect()
 }
 
 #[derive(Clone)]
@@ -185,6 +251,8 @@ pub(super) fn discover_project_caches(
             discovery.cpp.push(path.clone());
         } else if is_verified_python_project_cache(path, &name) {
             discovery.python.push(path.clone());
+        } else if let Some(category) = verified_extra_project_cache(path, &name) {
+            discovery.add_extra(category, path.clone());
         }
     }
 
@@ -205,7 +273,12 @@ pub(super) fn discover_project_caches(
     ));
     let volume_probe_limit_reported = Arc::new(AtomicBool::new(false));
     let found = Arc::new(AtomicUsize::new(
-        discovery.rust.len() + discovery.cpp.len() + discovery.python.len(),
+        discovery.rust.len()
+            + discovery.cpp.len()
+            + discovery.python.len()
+            + discovery.node.len()
+            + discovery.dotnet.len()
+            + discovery.java.len(),
     ));
     let shared = Arc::new(Mutex::new(ProjectCacheDiscovery::default()));
     let workers = (0..scout_workers.max(1))
@@ -236,6 +309,9 @@ pub(super) fn discover_project_caches(
                         result.rust.append(&mut local.rust);
                         result.cpp.append(&mut local.cpp);
                         result.python.append(&mut local.python);
+                        result.node.append(&mut local.node);
+                        result.dotnet.append(&mut local.dotnet);
+                        result.java.append(&mut local.java);
                     }
                 })
                 .ok()
@@ -248,10 +324,16 @@ pub(super) fn discover_project_caches(
         discovery.rust.append(&mut concurrent.rust);
         discovery.cpp.append(&mut concurrent.cpp);
         discovery.python.append(&mut concurrent.python);
+        discovery.node.append(&mut concurrent.node);
+        discovery.dotnet.append(&mut concurrent.dotnet);
+        discovery.java.append(&mut concurrent.java);
     }
     deduplicate_paths(&mut discovery.rust);
     deduplicate_paths(&mut discovery.cpp);
     deduplicate_paths(&mut discovery.python);
+    deduplicate_paths(&mut discovery.node);
+    deduplicate_paths(&mut discovery.dotnet);
+    deduplicate_paths(&mut discovery.java);
     discovery
 }
 
@@ -314,6 +396,13 @@ pub(super) fn scan_project_cache_task(
         scan_depth = 0;
         scan_mode = ProjectScoutMode::Deep;
     }
+    if !diagnostics.should_continue(&task.dir) {
+        return;
+    }
+    for cache in nested_node_cache_dirs(&task.dir) {
+        discovery.node.push(cache);
+        found.fetch_add(1, Ordering::Relaxed);
+    }
     if let Some(target) = cargo_config_target_from_project_root(&task.dir) {
         if !discovery
             .rust
@@ -328,6 +417,7 @@ pub(super) fn scan_project_cache_task(
         || found.load(Ordering::Relaxed) >= MAX_PROJECT_CACHE_PATHS
     {
         if found.load(Ordering::Relaxed) >= MAX_PROJECT_CACHE_PATHS {
+            diagnostics.truncated.store(true, Ordering::Relaxed);
             diagnostics.warn(format!(
                 "{}: 项目缓存候选超过 {} 项，已停止发现",
                 task.root.display(),
@@ -400,6 +490,11 @@ pub(super) fn scan_project_cache_task(
             found.fetch_add(1, Ordering::Relaxed);
             continue;
         }
+        if let Some(category) = verified_extra_project_cache(&path, &name) {
+            discovery.add_extra(category, path);
+            found.fetch_add(1, Ordering::Relaxed);
+            continue;
+        }
         let next_mode = match scan_mode {
             ProjectScoutMode::Deep => {
                 (scan_depth < project_search_depth(&scan_root)).then_some(ProjectScoutMode::Deep)
@@ -417,6 +512,12 @@ pub(super) fn scan_project_cache_task(
                 }
             }
         };
+        if next_mode.is_none() && !should_skip_project_path(&scan_root, &path, &name, scan_depth) {
+            diagnostics.warn(format!(
+                "{}: 已达到项目发现深度边界；可将此目录加入扫描根继续检查",
+                path.display()
+            ));
+        }
         if let Some(next_mode) = next_mode {
             if should_skip_project_path(&scan_root, &path, &name, scan_depth) {
                 continue;
@@ -524,10 +625,10 @@ pub(super) fn is_separately_assigned_root(
 
 pub(super) fn project_search_depth(root: &Path) -> u32 {
     if dirs::home_dir().is_some_and(|home| same_path(&home, root)) {
-        return 5;
+        return 12;
     }
     if is_volume_root(root) {
-        return 4;
+        return 12;
     }
     let is_broad_user_root = [
         dirs::desktop_dir(),
@@ -538,9 +639,9 @@ pub(super) fn project_search_depth(root: &Path) -> u32 {
     .flatten()
     .any(|path| paths_overlap(&path, root) && paths_overlap(root, &path));
     if is_broad_user_root {
-        7
+        16
     } else {
-        9
+        24
     }
 }
 
@@ -554,7 +655,6 @@ pub(super) fn should_skip_project_path(root: &Path, path: &Path, name: &str, dep
             | "node_modules"
             | "target"
             | "vendor"
-            | "packages"
             | ".gradle"
             | ".m2"
             | ".nuget"
@@ -695,7 +795,7 @@ pub(super) fn is_verified_cpp_build_dir(path: &Path, name: &str) -> bool {
         let Some(project_root) = path.parent() else {
             return false;
         };
-        let has_msbuild_project = directory_has_extension(project_root, &["vcxproj", "sln"]);
+        let has_msbuild_project = directory_has_extension(project_root, &["vcxproj"]);
         let has_generated_content = path.join("Debug").is_dir()
             || path.join("Release").is_dir()
             || directory_has_extension(path, &["obj", "pch", "pdb", "ilk", "tlog"]);
@@ -722,6 +822,17 @@ pub(super) fn directory_has_extension(path: &Path, extensions: &[&str]) -> bool 
 }
 
 pub(super) fn is_verified_python_project_cache(path: &Path, name: &str) -> bool {
+    if name == "__pycache__" {
+        return directory_has_extension(path, &["pyc"])
+            && path.parent().is_some_and(|parent| {
+                directory_has_extension(parent, &["py"])
+                    || parent.ancestors().take(8).any(|root| {
+                        ["pyproject.toml", "setup.py", "setup.cfg"]
+                            .iter()
+                            .any(|marker| root.join(marker).is_file())
+                    })
+            });
+    }
     if !matches!(
         name,
         ".mypy_cache" | ".pytest_cache" | ".ruff_cache" | ".tox" | ".nox"

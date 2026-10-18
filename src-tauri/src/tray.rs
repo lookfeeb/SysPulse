@@ -93,9 +93,13 @@ pub fn maybe_update_tray_stats(app: &AppHandle, snap: &crate::monitor::Snapshot)
     }
     mgr.last_tooltip_update_ms.store(now, Ordering::Relaxed);
 
-    let hw = app
-        .try_state::<AppState>()
-        .and_then(|s| s.last_hw_snapshot.read().clone());
+    let hw = app.try_state::<AppState>().and_then(|s| {
+        s.last_hw_snapshot
+            .read()
+            .as_ref()
+            .filter(|s| s.is_fresh())
+            .cloned()
+    });
 
     let tooltip = build_tooltip(snap, hw.as_ref());
 
@@ -125,7 +129,12 @@ fn build_tooltip(snap: &crate::monitor::Snapshot, hw: Option<&crate::hw::HwSnaps
                 .package_temp_c
                 .map(|t| format!("{:.0}°C", t))
                 .unwrap_or_default();
-            hw_parts.push(format!("CPU {temp} {:.0}%", cpu.total_usage));
+            hw_parts.push(format!(
+                "CPU {temp} {}",
+                cpu.total_usage
+                    .map(|v| format!("{v:.0}%"))
+                    .unwrap_or_else(|| "--".into())
+            ));
         }
 
         if let Some(mem) = &h.memory {

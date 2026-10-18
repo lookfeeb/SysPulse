@@ -1,12 +1,11 @@
-import { disposeAsyncListeners } from "@/utils/disposeAsyncListeners";
-import type { CleanupCategory, PathDetail, ScanResult } from "@/bindings";
+import { useCleanupStore } from "@/stores/cleanupStore";
+import type { CleanupCategory, PathDetail } from "@/bindings";
 import { commands } from "@/bindings";
 import type { DisplayCategory } from "@/routes/cleanupSelection";
 import { MAX_PROJECT_ROOTS, PROGRAMMING_CATEGORY_ID, addProjectRoot, buildDisplayCategories, cleanablePaths, cleanupCategorySelection, displayCategorySelection, normalizePathKey, normalizeProjectRoots, replaceProjectRoot, restoreSelectedCategories, scanButtonState, setCategoriesCheckedState, sumPathFiles, sumPathSize, togglePathState, validExcludedPaths } from "@/routes/cleanupSelection";
 import { fmtBytes } from "@/utils/format";
 import { readStoredStringList, writeStoredStringList } from "@/utils/storageList";
 import { CodeOutlined } from "@ant-design/icons";
-import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { App as AntdApp, Checkbox, Space, Tag, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
@@ -15,30 +14,6 @@ const { Text } = Typography;
 const SELECTED_STORAGE_KEY = "syspulse.cleanup.selectedCategories.v4";
 const EXCLUDED_PATHS_STORAGE_KEY = "syspulse.cleanup.excludedPaths.v1";
 const PROJECT_ROOTS_STORAGE_KEY = "syspulse.cleanup.projectRoots.v1";
-type CleanupCache = ScanResult;
-let cleanupCache: CleanupCache | null = null;
-type CleanupProgressEvent = {
-    percent: number;
-    processedItems: number;
-    totalItems: number;
-    currentCategory: string;
-    currentPath: string | null;
-    freedBytes: number;
-    deletedFiles: number;
-    done: boolean;
-};
-type CleanupScanProgressEvent = {
-    stage: "queen" | "scout" | "engineer" | "done" | string;
-    phase: string;
-    scannedPaths: number;
-    skippedPaths: number;
-    ignoredPaths: number;
-    scoutTasks: number;
-    engineerTasks: number;
-    currentPath: string | null;
-    done: boolean;
-    cancelled: boolean;
-};
 type RiskMeta = {
     label: string;
     color: string;
@@ -117,23 +92,21 @@ function relativeScanTime(scannedAtMs: number, nowMs: number): string {
     return new Date(scannedAtMs).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" });
 }
 export function useCleanupModel() {
-    const { message, modal } = AntdApp.useApp();
+    const { message } = AntdApp.useApp();
+    const { scan: cleanupCache, phase, consumed, cancelRequested, scanProgress, cleanProgress, lastCleanResult } = useCleanupStore();
+    const scanning = phase === "scanning" || phase === "refreshing";
+    const cleaning = phase === "cleaning";
     const initialCache = cleanupCache && cleanupCache.expiresAtMs > Date.now() ? cleanupCache : null;
-    const [categories, setCategories] = useState<CleanupCategory[]>(initialCache?.categories ?? []);
+    const categories = cleanupCache?.categories ?? [];
     const [selected, setSelected] = useState<Set<string>>(() => restoreSelected(initialCache?.categories ?? []));
     const [excludedPaths, setExcludedPaths] = useState<Set<string>>(() => restoreExcludedPaths());
     const [projectRoots, setProjectRoots] = useState<string[]>(() => normalizeProjectRoots(readStoredStringList(PROJECT_ROOTS_STORAGE_KEY) ?? []));
-    const [scanning, setScanning] = useState(false);
-    const [cancelRequested, setCancelRequested] = useState(false);
-    const [cleaning, setCleaning] = useState(false);
     const [exporting, setExporting] = useState(false);
     const [detailCat, setDetailCat] = useState<DisplayCategory | null>(null);
     const [activeToolchainId, setActiveToolchainId] = useState<string | null>(null);
     const [projectManagerOpen, setProjectManagerOpen] = useState(false);
-    const [scanProgress, setScanProgress] = useState<CleanupScanProgressEvent | null>(null);
-    const [cleanProgress, setCleanProgress] = useState<CleanupProgressEvent | null>(null);
-    const [scanId, setScanId] = useState<string | null>(initialCache?.scanId ?? null);
-    const [scanExpiresAt, setScanExpiresAt] = useState<number | null>(initialCache?.expiresAtMs ?? null);
+    const scanId = !consumed ? cleanupCache?.scanId ?? null : null;
+    const scanExpiresAt = cleanupCache?.expiresAtMs ?? null;
     const [nowMs, setNowMs] = useState(Date.now());
     const displayCategories = useMemo(() => buildDisplayCategories(categories), [categories]);
     const sortedDisplayCategories = useMemo(() => [...displayCategories].sort((left, right) => {
@@ -150,13 +123,16 @@ export function useCleanupModel() {
         const timer = window.setInterval(() => setNowMs(Date.now()), 15000);
         return () => window.clearInterval(timer);
     }, [scanExpiresAt]);
-    useEffect(() => disposeAsyncListeners([
-        listen<CleanupProgressEvent>("cleanup:progress", (event) => setCleanProgress(event.payload)),
-        listen<CleanupScanProgressEvent>("cleanup:scan-progress", (event) => {
-            setScanProgress(event.payload);
-            if (event.payload.done) setCancelRequested(false);
-        }),
-    ], (error) => console.error("注册或释放清理事件失败", error)), []);
+    useEffect(() => {
+        if (!cleanupCache) return;
+        const restored = restoreSelected(cleanupCache.categories);
+        const excluded = validExcludedPaths(cleanupCache.categories, restoreExcludedPaths());
+        setSelected(restored);
+        setExcludedPaths(excluded);
+        writeStoredStringList(SELECTED_STORAGE_KEY, restored);
+        writeStoredStringList(EXCLUDED_PATHS_STORAGE_KEY, excluded);
+        setNowMs(Date.now());
+    }, [cleanupCache]);
     const safeCategories = categories.filter((category) => category.riskLevel === "safe");
     const safeSelectionStates = safeCategories.map((category) => cleanupCategorySelection(category, selected, excludedPaths));
     const allSafeSelected = safeSelectionStates.length > 0 && safeSelectionStates.every((state) => state.checked);
@@ -168,19 +144,16 @@ export function useCleanupModel() {
     const selectedPathCount = categories.reduce((sum, category) => sum + cleanablePaths(category, selected, excludedPaths).length, 0);
     const totalPathCount = categories.reduce((sum, category) => sum + category.paths.length, 0);
     const canClean = selectedPathCount > 0 && !!scanId && !scanExpired && !scanIncomplete && !busy;
-    const canExport = !!cleanupCache?.scanId && selectedPathCount > 0 && !scanning && !cleaning && !exporting;
+    const canExport = !consumed && !!cleanupCache?.scanId && selectedPathCount > 0 && !scanning && !cleaning && !exporting;
     const scanButton = scanButtonState({ scanning, cancelRequested, cleaning, exporting });
     const saveSelected = (next: Set<string>) => writeStoredStringList(SELECTED_STORAGE_KEY, next);
     const saveExcludedPaths = (next: Set<string>) => writeStoredStringList(EXCLUDED_PATHS_STORAGE_KEY, next);
     const invalidateScan = () => {
-        cleanupCache = null;
-        setCategories([]);
-        setScanId(null);
-        setScanExpiresAt(null);
-        setScanProgress(null);
+        useCleanupStore.getState().invalidate();
         setDetailCat(null);
     };
     const persistProjectRoots = (next: string[], notice?: string) => {
+        if (useCleanupStore.getState().phase !== "idle") return;
         const normalized = normalizeProjectRoots(next);
         writeStoredStringList(PROJECT_ROOTS_STORAGE_KEY, normalized);
         setProjectRoots(normalized);
@@ -191,19 +164,6 @@ export function useCleanupModel() {
         else if (notice) {
             void message.success(notice);
         }
-    };
-    const applyScanResult = (result: ScanResult) => {
-        const nextExcludedPaths = validExcludedPaths(result.categories, excludedPaths);
-        cleanupCache = result;
-        setCategories(result.categories);
-        setScanId(result.complete && !result.cancelled ? result.scanId : null);
-        setScanExpiresAt(result.expiresAtMs);
-        setNowMs(Date.now());
-        const restored = restoreSelected(result.categories);
-        saveSelected(restored);
-        saveExcludedPaths(nextExcludedPaths);
-        setSelected(restored);
-        setExcludedPaths(nextExcludedPaths);
     };
     const commitSelection = (nextSelected: Set<string>, nextExcludedPaths: Set<string>) => {
         saveSelected(nextSelected);
@@ -224,117 +184,24 @@ export function useCleanupModel() {
         const next = togglePathState(category, path, selected, excludedPaths);
         commitSelection(next.selected, next.excludedPaths);
     };
-    const onStartScan = async () => {
-        if (busy)
-            return;
-        invalidateScan();
-        setScanning(true);
-        setCancelRequested(false);
-        setCleanProgress(null);
-        setScanProgress({
-            stage: "queen",
-            phase: "准备扫描",
-            scannedPaths: 0,
-            skippedPaths: 0,
-            ignoredPaths: 0,
-            scoutTasks: 0,
-            engineerTasks: 0,
-            currentPath: null,
-            done: false,
-            cancelled: false,
-        });
-        try {
-            const result = await commands.scanCleanup({ projectRoots });
-            applyScanResult(result);
-            if (result.cancelled) {
-                void message.warning({ content: "扫描已停止，当前结果仅供审核，不能用于清理", key: "cleanup-scan", duration: 4 });
-            }
-            else if (!result.complete) {
-                void message.warning({ content: "扫描因时间或数量预算被截断，当前结果仅供审核", key: "cleanup-scan", duration: 5 });
-            }
-            else {
-                void message.success({ content: `扫描完成，发现 ${fmtBytes(result.totalSizeBytes)}`, key: "cleanup-scan", duration: 2 });
-            }
-        }
-        catch (error: unknown) {
-            void message.error(error instanceof Error ? error.message : String(error));
-        }
-        finally {
-            setScanning(false);
-            setCancelRequested(false);
-        }
-    };
-    const onStopScan = async () => {
-        if (!scanning || cancelRequested)
-            return;
-        setCancelRequested(true);
-        const accepted = await commands.cancelCleanupScan();
-        if (!accepted) {
-            setCancelRequested(false);
-            return;
-        }
-        setScanProgress((current) => current ? { ...current, phase: "正在停止扫描…", cancelled: true } : current);
-    };
     const onScanButton = () => {
-        if (scanButton.action === "stop")
-            void onStopScan();
-        else if (scanButton.action === "start")
-            void onStartScan();
+        if (scanButton.action === "stop") void useCleanupStore.getState().cancelScan();
+        else if (scanButton.action === "start") {
+            setDetailCat(null);
+            void useCleanupStore.getState().startScan(projectRoots);
+        }
     };
     const onClean = async () => {
-        if (!canClean || !scanId)
-            return;
-        setScanId(null);
-        setCleaning(true);
-        setCleanProgress({
-            percent: 0,
-            processedItems: 0,
-            totalItems: 0,
-            currentCategory: "战争蚁正在校验扫描快照",
-            currentPath: null,
-            freedBytes: 0,
-            deletedFiles: 0,
-            done: false,
-        });
-        try {
-            const result = await commands.cleanCategories({
-                scanId,
-                categoryIds: [...selected],
-                excludedPaths: categories
-                    .flatMap((category) => category.paths)
-                    .filter((path) => excludedPaths.has(normalizePathKey(path.path)))
-                    .map((path) => path.path),
-                confirmCaution: selectedCaution,
-                confirmAdvanced: selectedAdvanced,
-            });
-            if (result.errors.length === 0) {
-                void message.success(`已释放 ${fmtBytes(result.freedBytes)}，删除 ${compactNumber(result.deletedFiles)} 个文件`);
-            }
-            else if (result.deletedFiles > 0) {
-                void message.warning(`部分完成：已释放 ${fmtBytes(result.freedBytes)}，${result.errors.length} 项失败`);
-            }
-            else {
-                void message.error(`清理未完成：${result.errors[0] ?? "未知错误"}`);
-            }
-            if (result.errors.length > 0) {
-                modal.warning({
-                    title: "部分项目未能清理",
-                    width: 680,
-                    content: (<div style={{ maxHeight: 320, overflow: "auto", marginTop: 12 }}>
-              {result.errors.map((error, index) => (<div key={`${index}-${error}`} style={{ marginBottom: 8, wordBreak: "break-all" }}>{error}</div>))}
-            </div>),
-                });
-            }
-            const fresh = await commands.scanCleanup({ projectRoots });
-            applyScanResult(fresh);
-            setCleanProgress(null);
-        }
-        catch (error: unknown) {
-            void message.error(error instanceof Error ? error.message : String(error));
-        }
-        finally {
-            setCleaning(false);
-        }
+        if (!canClean || !scanId) return;
+        await useCleanupStore.getState().clean({
+            scanId,
+            categoryIds: [...selected],
+            excludedPaths: categories.flatMap((category) => category.paths)
+                .filter((path) => excludedPaths.has(normalizePathKey(path.path)))
+                .map((path) => path.path),
+            confirmCaution: selectedCaution,
+            confirmAdvanced: selectedAdvanced,
+        }, projectRoots);
     };
     const onExport = async () => {
         if (!canExport || !cleanupCache)
@@ -491,18 +358,22 @@ export function useCleanupModel() {
         : null;
     const discoveredToolchains = detailToolchains.length;
     const progressMeta = stageMeta(scanProgress?.stage ?? "queen");
-    const heroScanState = scanning
+    const heroScanState = cleaning
+        ? "正在后台清理，切换页面不会中断"
+        : scanning
         ? `${progressMeta.label} · ${scanProgress?.phase ?? "正在建立扫描任务"}`
         : cleanupCache
             ? `${relativeScanTime(cleanupCache.scannedAtMs, nowMs)} · ${cleanupCache.complete && !cleanupCache.cancelled ? "结果完整" : "仅供审核"}`
             : "尚未扫描 · 当前处于只读审核模式";
-    const heroScanDetail = scanning
+    const heroScanDetail = cleaning
+        ? cleanProgress?.currentPath ?? "正在校验清理路径"
+        : scanning
         ? scanProgress?.currentPath ?? "正在分派侦察任务"
         : cleanupCache
             ? `检查 ${compactNumber(cleanupCache.scannedPaths)} 项 · 热点 ${compactNumber(cleanupCache.hotspotCount)} · 侦察 ${cleanupCache.scoutWorkers} · 工兵 ${cleanupCache.engineerWorkers}`
             : "默认只选择超过保留期的安全项；清理由你最后确认。";
-    const heroScoutTasks = scanProgress?.scoutTasks ?? cleanupCache?.scoutTasks ?? 0;
-    const heroEngineerTasks = scanProgress?.engineerTasks ?? cleanupCache?.engineerTasks ?? 0;
-    return { Text, activeDetailCategory, activeDetailSelection, allSafeSelected, busy, canClean, canExport, categories, categoryColumns, categoryIcon, categoryRows, cleanProgress, cleaning, cleanupCache, closeDetail, compactNumber, detailAllSelection, detailCat, detailCategories, detailSelectedFiles, detailSelectedPaths, detailSelectedSize, detailToolchains, discoveredToolchains, excludedPaths, exporting, heroEngineerTasks, heroScanDetail, heroScanState, heroScoutTasks, onAddProjectRoot, onClean, onExport, onReplaceProjectRoot, onScanButton, openDetail, partiallySafeSelected, persistProjectRoots, progressMeta, projectManagerOpen, projectRoots, riskMeta, safeCategories, scanButton, scanExpired, scanIncomplete, scanProgress, scanning, selected, selectedAdvanced, selectedCaution, selectedFiles, selectedPathCount, setActiveToolchainId, setCategoriesChecked, setProjectManagerOpen, sourceLabel, toggleCategory, togglePath, totalPathCount, totalSelected, visibleDetailPaths };
+    const heroScoutTasks = scanning ? scanProgress?.scoutTasks ?? 0 : cleanupCache?.scoutTasks ?? 0;
+    const heroEngineerTasks = scanning ? scanProgress?.engineerTasks ?? 0 : cleanupCache?.engineerTasks ?? 0;
+    return { lastCleanResult, phase, Text, activeDetailCategory, activeDetailSelection, allSafeSelected, busy, canClean, canExport, categories, categoryColumns, categoryIcon, categoryRows, cleanProgress, cleaning, cleanupCache, closeDetail, compactNumber, detailAllSelection, detailCat, detailCategories, detailSelectedFiles, detailSelectedPaths, detailSelectedSize, detailToolchains, discoveredToolchains, excludedPaths, exporting, heroEngineerTasks, heroScanDetail, heroScanState, heroScoutTasks, onAddProjectRoot, onClean, onExport, onReplaceProjectRoot, onScanButton, openDetail, partiallySafeSelected, persistProjectRoots, progressMeta, projectManagerOpen, projectRoots, riskMeta, safeCategories, scanButton, scanExpired, scanIncomplete, scanProgress, scanning, selected, selectedAdvanced, selectedCaution, selectedFiles, selectedPathCount, setActiveToolchainId, setCategoriesChecked, setProjectManagerOpen, sourceLabel, toggleCategory, togglePath, totalPathCount, totalSelected, visibleDetailPaths };
 }
 export type CleanupModel = ReturnType<typeof useCleanupModel>;

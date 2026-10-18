@@ -2,6 +2,19 @@ use super::*;
 use std::fs::{self, File, FileTimes};
 use std::io::Write;
 
+// Production admits one scan at a time; parallel tests must share that boundary.
+static TEST_SCAN_DIAGNOSTICS_LOCK: Mutex<()> = Mutex::new(());
+
+fn install_test_scan_diagnostics(
+    diagnostics: Arc<ScanDiagnostics>,
+) -> (ActiveScanDiagnostics, std::sync::MutexGuard<'static, ()>) {
+    let lock = TEST_SCAN_DIAGNOSTICS_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    // Tuple fields drop in order: clear the global diagnostics before unlocking.
+    (ActiveScanDiagnostics::install(diagnostics), lock)
+}
+
 fn temp_root(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
         "syspulse-cleanup-test-{name}-{}-{}",
@@ -190,36 +203,6 @@ fn hotspot_paths_prioritize_recent_entries_and_prune_missing_paths() {
 }
 
 #[test]
-fn hotspot_index_round_trips_and_corrupt_json_falls_back_to_default() {
-    let root = temp_root("hotspot-json");
-    fs::create_dir_all(&root).unwrap();
-    let path = root.join("hotspots.json");
-    let index = HotspotIndex {
-        schema_version: HOTSPOT_SCHEMA_VERSION,
-        entries: vec![HotspotEntry {
-            path: root.to_string_lossy().to_string(),
-            category_id: "rust-target".into(),
-            matched_rule: "Cargo.toml + target".into(),
-            last_seen_ms: 10,
-            last_scanned_ms: 11,
-            size_bytes: 12,
-            file_count: 13,
-            miss_count: 0,
-        }],
-    };
-    write_json_atomic(&path, &index).unwrap();
-    let decoded: HotspotIndex = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-    assert_eq!(decoded.entries.len(), 1);
-    fs::write(&path, b"not-json").unwrap();
-    let decoded = serde_json::from_slice::<HotspotIndex>(&fs::read(&path).unwrap())
-        .ok()
-        .filter(|value| value.schema_version == HOTSPOT_SCHEMA_VERSION)
-        .unwrap_or_default();
-    assert!(decoded.entries.is_empty());
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
 fn export_document_records_category_and_path_selection() {
     let selected_path = PathDetail {
         path: r"C:\cache\selected".into(),
@@ -377,45 +360,41 @@ fn duplicate_paths_are_owned_by_the_first_category_once() {
 }
 
 #[test]
-fn programming_cache_processes_block_conservatively() {
+fn unrelated_programming_process_does_not_block_other_projects() {
     let processes = vec![RunningProcessInfo {
         name: "cargo.exe".into(),
         stem: "cargo".into(),
         command_paths: vec![normalize_path_key(r"C:\unrelated\workspace")],
         cwd: Some(normalize_path_key(r"C:\unrelated\workspace")),
     }];
-    assert_eq!(
-        running_process_blockers_for_path("rust-target", r"D:\project\target", &processes),
-        vec!["cargo.exe"]
+    assert!(
+        running_process_blockers_for_path("rust-target", r"D:\project\target", &processes)
+            .is_empty()
     );
 }
 
 #[test]
 fn programming_process_lists_cover_supported_toolchains() {
-    let rust = watched_processes("rust-target").unwrap().0;
+    let rust = watched_processes("rust-target").unwrap();
     assert!(rust.contains(&"cargo") && rust.contains(&"rustc"));
 
-    let cpp = watched_processes("cpp-cache").unwrap().0;
+    let cpp = watched_processes("cpp-cache").unwrap();
     for process in [
         "cmake", "ninja", "msbuild", "cl", "clang", "gcc", "ccache", "sccache",
     ] {
         assert!(cpp.contains(&process), "{process}");
     }
 
-    let python = watched_processes("python-cache").unwrap().0;
+    let python = watched_processes("python-cache").unwrap();
     for process in ["pip", "uv", "poetry", "pdm", "pytest", "mypy", "ruff"] {
         assert!(python.contains(&process), "{process}");
     }
 
-    assert!(watched_processes("go-cache").unwrap().0.contains(&"go"));
+    assert!(watched_processes("go-cache").unwrap().contains(&"go"));
     assert!(watched_processes("dotnet-cache")
         .unwrap()
-        .0
         .contains(&"nuget"));
-    assert!(watched_processes("java-cache")
-        .unwrap()
-        .0
-        .contains(&"gradle"));
+    assert!(watched_processes("java-cache").unwrap().contains(&"gradle"));
 }
 
 #[test]
@@ -662,8 +641,10 @@ fn custom_project_roots_are_canonicalized_and_deduplicated() {
 fn custom_project_roots_are_scanned_before_broad_roots() {
     let root = temp_root("custom-priority");
     fs::create_dir_all(&root).unwrap();
-    let roots = project_search_roots(std::slice::from_ref(&root));
-    assert!(roots.first().is_some_and(|first| same_path(first, &root)));
+    let plan = project_search_plan(std::slice::from_ref(&root), &[]);
+    assert!(plan.first().is_some_and(|first| {
+        first.mode == ProjectScoutMode::Deep && same_path(&first.path, &root)
+    }));
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -733,7 +714,7 @@ fn fixed_volume_probe_promotes_marked_project_to_deep_scan() {
     let roots = vec![volume.clone()];
     let queue = ProjectScoutQueue::from_plan(&plan);
     let diagnostics = Arc::new(ScanDiagnostics::default());
-    let _guard = ActiveScanDiagnostics::install(diagnostics);
+    let _guard = install_test_scan_diagnostics(diagnostics);
     let found = AtomicUsize::new(0);
     let volume_probe_tasks = AtomicUsize::new(1);
     let volume_probe_limit_reported = AtomicBool::new(false);
@@ -971,7 +952,7 @@ fn project_level_cargo_target_dir_is_discovered_without_parent_manifest() {
     let roots = vec![root.clone()];
     let queue = ProjectScoutQueue::new(&roots);
     let diagnostics = Arc::new(ScanDiagnostics::default());
-    let _guard = ActiveScanDiagnostics::install(diagnostics);
+    let _guard = install_test_scan_diagnostics(diagnostics);
     let found = AtomicUsize::new(0);
     let volume_probe_tasks = AtomicUsize::new(0);
     let volume_probe_limit_reported = AtomicBool::new(false);
@@ -1004,5 +985,213 @@ fn scan_depth_limit_is_reported() {
         .warnings
         .iter()
         .any(|warning| warning.contains("最大扫描深度")));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn generic_node_process_does_not_block_npm_or_bun_cache() {
+    let processes = vec![RunningProcessInfo {
+        name: "node.exe".into(),
+        stem: "node".into(),
+        command_paths: process_argument_path_keys(r"C:\Program Files\nodejs\node.exe"),
+        cwd: Some(normalize_path_key(r"C:\Users\tester")),
+    }];
+    for cache in [
+        r"C:\Users\tester\AppData\Local\npm-cache",
+        r"C:\Users\tester\.bun\install\cache",
+    ] {
+        assert!(running_process_blockers_for_path("node-cache", cache, &processes).is_empty());
+    }
+    let uses_cache = vec![RunningProcessInfo {
+        name: "node.exe".into(),
+        stem: "node".into(),
+        command_paths: process_argument_path_keys(
+            r"--cache=C:\Users\tester\AppData\Local\npm-cache",
+        ),
+        cwd: None,
+    }];
+    assert_eq!(
+        running_process_blockers_for_path(
+            "node-cache",
+            r"C:\Users\tester\AppData\Local\npm-cache",
+            &uses_cache
+        ),
+        vec!["node.exe"]
+    );
+}
+
+#[test]
+fn active_project_build_only_blocks_its_own_verified_target() {
+    let root = temp_root("project-process");
+    let target = root.join("target");
+    fs::create_dir_all(target.join("debug")).unwrap();
+    fs::write(root.join("Cargo.toml"), "[package]").unwrap();
+    let process = vec![RunningProcessInfo {
+        name: "cargo.exe".into(),
+        stem: "cargo".into(),
+        command_paths: Vec::new(),
+        cwd: Some(normalize_path_key(&root.to_string_lossy())),
+    }];
+    assert_eq!(
+        running_process_blockers_for_path("rust-target", &target.to_string_lossy(), &process),
+        vec!["cargo.exe"]
+    );
+    assert!(
+        running_process_blockers_for_path("rust-target", r"C:\elsewhere\target", &process)
+            .is_empty()
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn project_cache_rules_require_markers_and_never_select_dependency_or_source_roots() {
+    let root = temp_root("extra-cache-rules");
+    fs::create_dir_all(root.join("node_modules/.cache")).unwrap();
+    fs::create_dir_all(root.join("node_modules/.vite")).unwrap();
+    fs::create_dir_all(root.join(".next/cache")).unwrap();
+    assert!(nested_node_cache_dirs(&root).is_empty());
+    fs::write(root.join("package.json"), "{}").unwrap();
+    assert_eq!(nested_node_cache_dirs(&root).len(), 3);
+    assert_eq!(
+        verified_extra_project_cache(&root.join("node_modules"), "node_modules"),
+        None
+    );
+    assert_eq!(
+        verified_extra_project_cache(&root.join(".next"), ".next"),
+        None
+    );
+    fs::create_dir_all(root.join("obj")).unwrap();
+    assert_eq!(verified_extra_project_cache(&root.join("obj"), "obj"), None);
+    fs::write(root.join("Test.csproj"), "<Project />").unwrap();
+    fs::write(root.join("obj/project.assets.json"), "{}").unwrap();
+    assert_eq!(
+        verified_extra_project_cache(&root.join("obj"), "obj"),
+        Some("dotnet-cache")
+    );
+    fs::create_dir_all(root.join("target/maven-status")).unwrap();
+    assert_eq!(
+        verified_extra_project_cache(&root.join("target"), "target"),
+        None
+    );
+    fs::write(root.join("pom.xml"), "<project />").unwrap();
+    assert_eq!(
+        verified_extra_project_cache(&root.join("target"), "target"),
+        Some("java-cache")
+    );
+    fs::create_dir_all(root.join("src/__pycache__")).unwrap();
+    fs::write(root.join("src/main.py"), "print(1)").unwrap();
+    fs::write(root.join("src/__pycache__/main.pyc"), "compiled").unwrap();
+    assert!(is_verified_python_project_cache(
+        &root.join("src/__pycache__"),
+        "__pycache__"
+    ));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn deep_project_discovery_visits_monorepo_packages_beyond_old_depth_limit() {
+    let root = temp_root("monorepo-deep");
+    let mut project = root.join("packages");
+    for _ in 0..11 {
+        project = project.join("p");
+    }
+    fs::create_dir_all(project.join("node_modules/.vite")).unwrap();
+    fs::write(project.join("package.json"), "{}").unwrap();
+    let roots = vec![root.clone()];
+    let queue = ProjectScoutQueue::new(&roots);
+    let _guard = install_test_scan_diagnostics(Arc::new(ScanDiagnostics::default()));
+    let found = AtomicUsize::new(0);
+    let probe_tasks = AtomicUsize::new(0);
+    let reported = AtomicBool::new(false);
+    let mut discovery = ProjectCacheDiscovery::default();
+    while let Some(task) = queue.pop() {
+        scan_project_cache_task(
+            task,
+            &roots,
+            &queue,
+            &found,
+            &probe_tasks,
+            &reported,
+            &mut discovery,
+        );
+        queue.complete();
+    }
+    assert!(discovery
+        .node
+        .iter()
+        .any(|cache| same_path(cache, &project.join("node_modules/.vite"))));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn browser_profiles_include_custom_and_alternative_browsers_but_exclude_user_data() {
+    let root = temp_root("browser-profiles");
+    let local = root.join("local");
+    let roaming = root.join("roaming");
+    let relatives = [
+        "Google/Chrome/User Data/Named/Cache",
+        "BraveSoftware/Brave-Browser/User Data/Default/GPUCache",
+        "Mozilla/Firefox/Profiles/test/cache2",
+    ];
+    for relative in relatives {
+        fs::create_dir_all(local.join(relative)).unwrap();
+    }
+    fs::write(
+        local.join("Google/Chrome/User Data/Named/Preferences"),
+        "{}",
+    )
+    .unwrap();
+    fs::create_dir_all(local.join("Google/Chrome/User Data/Named/Local Storage")).unwrap();
+    fs::create_dir_all(roaming.join("Opera Software/Opera GX Stable/Cache")).unwrap();
+    let paths = browser_cache_dirs(&local, Some(&roaming));
+    assert_eq!(paths.len(), 4);
+    assert!(!paths.iter().any(|path| path.ends_with("Local Storage")));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn cleanup_skips_locked_file_and_continues_other_files() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let root = temp_root("locked-file");
+    fs::create_dir_all(root.join("nested")).unwrap();
+    let locked = root.join("nested/locked.tmp");
+    fs::write(&locked, "locked").unwrap();
+    fs::write(root.join("free.tmp"), "free").unwrap();
+    let handle = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(1)
+        .open(&locked)
+        .unwrap();
+    let mut progress = CleanProgress {
+        app: None,
+        total_items: 2,
+        processed_items: 0,
+        current_category: String::new(),
+        current_path: None,
+        freed_bytes: 0,
+        deleted_files: 0,
+        failed_items: 0,
+        last_emit: Instant::now(),
+    };
+    let mut errors = Vec::new();
+    let mut diagnostics = PathCleanupDiagnostics::default();
+    remove_dir_contents_with_progress(
+        &root,
+        &mut progress,
+        CleanupFilePolicy {
+            min_age_days: None,
+            scanned_at: None,
+        },
+        &mut errors,
+        &mut diagnostics,
+    )
+    .unwrap();
+    assert!(locked.is_file());
+    assert!(!root.join("free.tmp").exists());
+    assert_eq!(progress.deleted_files, 1);
+    assert_eq!(progress.failed_items, 1);
+    assert!(errors.iter().any(|error| error.contains("文件正在使用")));
+    drop(handle);
     fs::remove_dir_all(root).unwrap();
 }

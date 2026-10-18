@@ -211,19 +211,8 @@ pub(super) fn do_scan(custom_project_roots: Vec<PathBuf>, colony: ColonyConfig) 
         return finalize_scan_result(categories, &diagnostics, colony, &hotspot_keys);
     }
 
-    // 项目目录只遍历一次，同时识别 Rust、C/C++ 与 Python 缓存。
-    diagnostics.progress("scout", "侦察蚁正在发现编程缓存", None);
-    let project_caches = discover_project_caches(
-        &custom_project_roots,
-        &active_hotspot_paths,
-        colony.scout_workers,
-    );
-    if scan_should_stop() {
-        return finalize_scan_result(categories, &diagnostics, colony, &hotspot_keys);
-    }
-
     // 5. Rust build cache (target dirs)
-    if let Some(cat) = scan_rust_targets(&project_caches.rust) {
+    if let Some(cat) = scan_rust_targets(&[]) {
         categories.push(cat);
     }
     if scan_should_stop() {
@@ -247,7 +236,7 @@ pub(super) fn do_scan(custom_project_roots: Vec<PathBuf>, colony: ColonyConfig) 
     }
 
     // 6c. Python cache (pip, __pycache__, .mypy_cache)
-    if let Some(cat) = scan_python_cache(&project_caches.python) {
+    if let Some(cat) = scan_python_cache(&[]) {
         categories.push(cat);
     }
     if scan_should_stop() {
@@ -255,7 +244,7 @@ pub(super) fn do_scan(custom_project_roots: Vec<PathBuf>, colony: ColonyConfig) 
     }
 
     // 6d. C/C++、.NET、Java 工具缓存与经过项目标记验证的构建产物
-    if let Some(cat) = scan_cpp_cache(&project_caches.cpp) {
+    if let Some(cat) = scan_cpp_cache(&[]) {
         categories.push(cat);
     }
     if let Some(cat) = scan_dotnet_cache() {
@@ -338,6 +327,33 @@ pub(super) fn do_scan(custom_project_roots: Vec<PathBuf>, colony: ColonyConfig) 
         categories.push(cat);
     }
 
+    // 先完成确定位置的缓存，再进行固定盘/项目深扫，避免项目发现耗尽预算使后续类别完全漏扫。
+    if !scan_should_stop() {
+        diagnostics.progress("scout", "正在深度发现项目缓存，切换页面可继续扫描", None);
+        let discovered = discover_project_caches(
+            &custom_project_roots,
+            &active_hotspot_paths,
+            colony.scout_workers,
+        );
+        for (id, name, paths) in [
+            ("rust-target", "Rust 编译缓存", discovered.rust),
+            ("python-cache", "Python 缓存", discovered.python),
+            ("cpp-cache", "C/C++ 编译缓存", discovered.cpp),
+            ("node-cache", "Node.js 缓存", discovered.node),
+            ("dotnet-cache", ".NET/NuGet 缓存", discovered.dotnet),
+            ("java-cache", "Java 构建缓存", discovered.java),
+        ] {
+            if scan_should_stop() {
+                break;
+            }
+            if let Some(category) =
+                scan_existing_dirs_category(id, name, "已验证项目标记与构建缓存规则", paths)
+            {
+                merge_scan_category(&mut categories, category);
+            }
+        }
+    }
+
     let mut result = finalize_scan_result(categories, &diagnostics, colony, &hotspot_keys);
     update_hotspot_index(
         previous_hotspots,
@@ -346,6 +362,21 @@ pub(super) fn do_scan(custom_project_roots: Vec<PathBuf>, colony: ColonyConfig) 
     );
     result.hotspot_count = load_hotspot_index().entries.len() as u64;
     result
+}
+
+pub(super) fn merge_scan_category(
+    categories: &mut Vec<CleanupCategory>,
+    mut extra: CleanupCategory,
+) {
+    if let Some(existing) = categories
+        .iter_mut()
+        .find(|category| category.id == extra.id)
+    {
+        existing.paths.append(&mut extra.paths);
+    } else {
+        categories.push(extra);
+    }
+    deduplicate_category_paths(categories);
 }
 
 pub(super) fn scan_should_stop() -> bool {
@@ -512,6 +543,19 @@ pub(super) fn path_source(id: &str, path: &Path) -> &'static str {
 
 pub(super) fn programming_matched_rule(id: &str, path: &Path) -> &'static str {
     let normalized = normalize_path_key(&path.to_string_lossy());
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .to_lowercase();
+    if verified_extra_project_cache(path, &name) == Some(id) {
+        return match id {
+            "node-cache" => "package.json + 前端构建缓存目录",
+            "dotnet-cache" => ".NET 项目文件 + NuGet 生成的 obj 标记",
+            "java-cache" => "Gradle/Maven 项目文件 + 构建缓存标记",
+            _ => category_matched_rule(id),
+        };
+    }
     match id {
         "rust-target" if normalized.ends_with(r"\.cargo\registry\cache") => {
             "Cargo registry 下载缓存"
@@ -557,6 +601,14 @@ pub(super) fn programming_matched_rule(id: &str, path: &Path) -> &'static str {
 }
 
 pub(super) fn programming_path_source(id: &str, path: &Path) -> &'static str {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .to_lowercase();
+    if verified_extra_project_cache(path, &name) == Some(id) {
+        return "project-discovery";
+    }
     if matches!(id, "rust-target" | "python-cache" | "cpp-cache") {
         let normalized = normalize_path_key(&path.to_string_lossy());
         let global_markers = [
@@ -729,6 +781,8 @@ pub(super) fn chromium_cache_dirs(profile_root: PathBuf) -> Vec<PathBuf> {
         "Code Cache",
         "GPUCache",
         "DawnCache",
+        "DawnGraphiteCache",
+        "DawnWebGPUCache",
         "ShaderCache",
         "GrShaderCache",
     ]

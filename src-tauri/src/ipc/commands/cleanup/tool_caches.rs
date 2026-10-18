@@ -90,6 +90,12 @@ pub(super) fn cargo_config_target_from_project_root(project_root: &Path) -> Opti
 
 pub(super) fn scan_node_cache() -> Option<CleanupCategory> {
     let mut dirs_to_scan: Vec<PathBuf> = Vec::new();
+    if let Some(home) = dirs::home_dir() {
+        push_cache_dir(&mut dirs_to_scan, home.join(".npm"));
+    }
+    if let Some(roaming) = dirs::data_dir() {
+        push_cache_dir(&mut dirs_to_scan, roaming.join("npm-cache"));
+    }
 
     // npm cache（纯下载缓存，等同于 npm cache clean）
     if let Some(local) = dirs::data_local_dir() {
@@ -113,12 +119,17 @@ pub(super) fn scan_node_cache() -> Option<CleanupCategory> {
     }
     // yarn cache（纯下载缓存，等同于 yarn cache clean）
     if let Some(local) = dirs::data_local_dir() {
+        push_cache_dir(
+            &mut dirs_to_scan,
+            local.join("Yarn").join("Berry").join("cache"),
+        );
         let yarn = local.join("Yarn").join("Cache");
         if yarn.exists() {
             dirs_to_scan.push(yarn);
         }
     }
     // 注意：pnpm-store 是内容寻址存储，所有项目硬链接于此，不是缓存垃圾，不清理
+    deduplicate_paths(&mut dirs_to_scan);
 
     if dirs_to_scan.is_empty() {
         return None;

@@ -67,18 +67,6 @@ export const quitApp = async () => {
   await call(commands.quitApp());
 };
 
-export const showConfigWindow = async () => {
-  await call(commands.showConfigWindow());
-};
-
-export const hideConfigWindow = async () => {
-  await call(commands.hideConfigWindow());
-};
-
-export const dockOverlayToTaskbar = async () => {
-  await call(commands.dockOverlayToTaskbar());
-};
-
 export const getHwSnapshot = () => call(commands.getHwSnapshot());
 
 export const getHelperStatus = () => call(commands.getHelperStatus());

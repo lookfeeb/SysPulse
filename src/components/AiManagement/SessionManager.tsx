@@ -1,74 +1,97 @@
-import { DeleteOutlined, DownOutlined, FolderOutlined, ReloadOutlined, SearchOutlined } from "@ant-design/icons";
-import { Button, Dropdown, Input, Popconfirm, Select, Tooltip } from "antd";
+import { DeleteOutlined, EllipsisOutlined, ReloadOutlined, SearchOutlined } from "@ant-design/icons";
+import { App as AntdApp, Button, Dropdown, Input, Select, Tooltip } from "antd";
+import { useRef } from "react";
 import SessionDetails from "./SessionDetails";
 import SessionListItem from "./SessionListItem";
 import "./SessionManager.css";
 import { sameSession } from "./sessionPresentation";
 import { useSessionManager } from "./useSessionManager";
 import VirtualSessionList from "./VirtualSessionList";
+import WorkspacePicker from "./WorkspacePicker";
+
 export default function SessionManager() {
-    const model = useSessionManager();
-    const { activeWorkspace, activeWorkspaceHash, canDeleteWorkspace, deleteSession, deleteWorkspace, groupedSessions, hasMutation, mutatingKey, openWorkspace, refreshTree, selectSession, selectedSummary, sessionListScrollRef, sessionQuery, sessionSidebarRef, setSessionQuery, setSourceFilter, sourceFilter, sourceOptions, totalSessions, treeLoading, workspaceForDelete, workspaces } = model;
-    return (<div className="aim-sessions">
-      <aside className="aim-card aim-ses-side" ref={sessionSidebarRef} aria-labelledby="aim-workspace-title">
-        <Dropdown trigger={["click"]} classNames={{ root: "aim-menu aim-ws-menu" }} menu={{
-            selectedKeys: activeWorkspace ? [activeWorkspace.hash] : [],
-            items: workspaces.map((workspace) => ({
-                key: workspace.hash,
-                label: (<div className="aim-ws-option">
-                  <FolderOutlined />
-                  <div>
-                    <strong>{workspace.name}</strong>
-                    <small title={workspace.path}>{workspace.path}</small>
-                  </div>
-                  <b>{workspace.sessions.length}</b>
-                </div>),
-            })),
-            onClick: ({ key }) => {
-                const workspace = workspaces.find((item) => item.hash === key);
-                if (workspace)
-                    openWorkspace(workspace);
-            },
-        }}>
-          <button type="button" className="aim-ws" disabled={workspaces.length === 0 || hasMutation} aria-label="切换项目工作区">
-            <span className="aim-ws-icon"><FolderOutlined /></span>
-            <span className="aim-ws-copy">
-              <small>当前项目</small>
-              <strong id="aim-workspace-title">{activeWorkspace?.name ?? "暂无项目"}</strong>
-            </span>
-            <span className="aim-ws-count" title={"本机共 " + workspaces.length + " 个项目、" + totalSessions + " 条会话"}>
-              {workspaces.length}
-            </span>
-            <DownOutlined />
-          </button>
-        </Dropdown>
+  const model = useSessionManager();
+  const { modal } = AntdApp.useApp();
+  const searchRef = useRef<import("antd").InputRef>(null);
+  const { activeWorkspace, activeWorkspaceHash, canDeleteWorkspace, deleteSession, deleteWorkspace, groupedSessions,
+    hasMutation, mutatingKey, openWorkspace, refreshTree, selectSession, selectedSummary, sessionListScrollRef,
+    sessionQuery, sessionSidebarRef, setSessionQuery, setSourceFilter, sourceFilter, sourceOptions,
+    totalSessions, treeLoading, workspaces, visibleSessions, clearFilters } = model;
+  const filtering = !!sessionQuery.trim() || sourceFilter !== "all";
 
-        <div className="aim-ses-tools">
-          <Input allowClear className="aim-input aim-input--sm" value={sessionQuery} prefix={<SearchOutlined />} placeholder="搜索会话" onChange={(event) => setSessionQuery(event.target.value)}/>
-          <Select className="aim-ses-source" classNames={{ popup: { root: "aim-select-popup" } }} size="small" value={sourceFilter} options={sourceOptions} aria-label="按会话来源筛选" onChange={setSourceFilter}/>
+  const confirmDeleteWorkspace = () => {
+    if (!activeWorkspace || !canDeleteWorkspace || hasMutation || treeLoading) return;
+    const workspace = activeWorkspace;
+    modal.confirm({
+      title: `删除“${workspace.name}”的全部会话？`,
+      content: <div className="aim-session-delete-summary">
+        <p>将删除这个项目下的 {workspace.sessions.length} 条本机会话，包含所有来源和当前筛选之外的记录。此操作不可恢复。</p>
+        <small>项目目录：{workspace.path}</small>
+      </div>,
+      okText: `删除 ${workspace.sessions.length} 条会话`, cancelText: "保留会话", okButtonProps: { danger: true },
+      onOk: () => deleteWorkspace(workspace),
+    });
+  };
+
+  return <div className="aim-sessions">
+    <aside className="aim-card aim-ses-side" ref={sessionSidebarRef} aria-label="项目会话导航"
+      onKeyDown={(event) => {
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+          event.preventDefault(); searchRef.current?.focus();
+        }
+      }}>
+      <header className="aim-library-header">
+        <div><h2>会话库</h2><span>{totalSessions.toLocaleString()} 条本机会话</span></div>
+        <Tooltip title="重新扫描本机会话">
+          <Button type="text" icon={<ReloadOutlined />} loading={treeLoading} disabled={hasMutation}
+            aria-label="重新扫描会话" onClick={() => void refreshTree()} />
+        </Tooltip>
+      </header>
+
+      <WorkspacePicker workspaces={workspaces} active={activeWorkspace} disabled={hasMutation} onSelect={openWorkspace} />
+
+      <div className="aim-ses-tools">
+        <Input ref={searchRef} allowClear className="aim-input" value={sessionQuery} prefix={<SearchOutlined />}
+          aria-label="搜索当前项目会话" placeholder="搜索标题、会话 ID…" disabled={hasMutation || !activeWorkspace}
+          onChange={(event) => setSessionQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.nativeEvent.isComposing) return;
+            if (event.key === "Escape") { setSessionQuery(""); event.stopPropagation(); }
+            if (event.key === "ArrowDown") {
+              const first = sessionListScrollRef.current?.querySelector<HTMLButtonElement>(".aim-ses-select");
+              if (first) { event.preventDefault(); first.focus(); }
+            }
+          }} />
+        <div className="aim-ses-filter-row">
+          <Select className="aim-ses-source" classNames={{ popup: { root: "aim-select-popup" } }} size="small"
+            value={sourceFilter} options={sourceOptions} aria-label="按会话来源筛选" onChange={setSourceFilter}
+            disabled={hasMutation || !activeWorkspace} />
+          {filtering && <Button type="text" size="small" onClick={clearFilters} disabled={hasMutation}>清除筛选</Button>}
         </div>
+      </div>
 
-        <VirtualSessionList groups={groupedSessions} scrollRef={sessionListScrollRef} loading={treeLoading} emptyText={activeWorkspace?.sessions.length ? "没有匹配的会话" : "当前项目没有会话"} resetKey={activeWorkspaceHash + ":" + sourceFilter + ":" + sessionQuery} renderSession={(summary) => (<SessionListItem summary={summary} active={sameSession(selectedSummary, summary)} mutatingKey={mutatingKey} onSelect={selectSession} onDelete={deleteSession}/>)}/>
+      <div className="aim-ses-result-bar">
+        <span aria-live="polite">{filtering ? `${visibleSessions.length} 条匹配` : `${visibleSessions.length} 条会话`}</span>
+        <span>最近更新</span>
+      </div>
+      <VirtualSessionList groups={groupedSessions} scrollRef={sessionListScrollRef} loading={treeLoading}
+        emptyText={!activeWorkspace ? "还没有本机会话" : filtering ? "没有匹配的会话" : "这个项目还没有会话"}
+        emptyAction={filtering ? <Button size="small" onClick={clearFilters}>清除筛选</Button> :
+          <Button size="small" loading={treeLoading} disabled={hasMutation} onClick={() => void refreshTree()}>重新扫描</Button>}
+        resetKey={`${activeWorkspaceHash}:${sourceFilter}:${sessionQuery}`}
+        renderSession={(summary) => <SessionListItem summary={summary} active={sameSession(selectedSummary, summary)}
+          mutatingKey={mutatingKey} onSelect={selectSession} onDelete={deleteSession} />} />
 
-        <footer className="aim-ses-foot">
-          {workspaceForDelete && (<Tooltip title={canDeleteWorkspace
-                ? "删除当前项目的全部会话"
-                : "项目包含只读索引或备份会话，不能整组删除"}>
-              <span>
-                <Popconfirm title="删除项目会话" description={"确定删除 “" + workspaceForDelete.name + "” 下的全部会话？此操作不可恢复。"} okText="全部删除" cancelText="取消" okButtonProps={{ danger: true }} disabled={!canDeleteWorkspace || hasMutation} onConfirm={() => deleteWorkspace(workspaceForDelete)}>
-                  <Button className="aim-act aim-act--sm aim-act--ghost aim-act--danger" danger disabled={!canDeleteWorkspace || (hasMutation
-                && mutatingKey !== "workspace:" + workspaceForDelete.hash)} loading={mutatingKey === "workspace:" + workspaceForDelete.hash} icon={<DeleteOutlined />}>
-                    删除项目
-                  </Button>
-                </Popconfirm>
-              </span>
-            </Tooltip>)}
-          <Button className="aim-act aim-act--sm aim-act--ghost" icon={<ReloadOutlined />} loading={treeLoading} disabled={hasMutation} onClick={() => void refreshTree()}>
-            重新扫描
-          </Button>
-        </footer>
-      </aside>
-
-      <SessionDetails model={model}/>
-    </div>);
+      <footer className="aim-ses-foot">
+        <span>↑ ↓ 浏览 · Enter 打开</span>
+        <Dropdown trigger={["click"]} menu={{ items: [{ key: "delete", icon: <DeleteOutlined />,
+          danger: true, label: "删除本项目全部会话", disabled: !canDeleteWorkspace || hasMutation || treeLoading,
+          onClick: confirmDeleteWorkspace }] }}>
+          <Button type="text" size="small" icon={<EllipsisOutlined />} aria-label="项目会话操作"
+            disabled={!activeWorkspace || hasMutation} />
+        </Dropdown>
+      </footer>
+    </aside>
+    <SessionDetails model={model} />
+  </div>;
 }

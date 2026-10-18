@@ -3,6 +3,7 @@ import { Layout, Spin } from "antd";
 import { Outlet } from "react-router-dom";
 import SideMenu from "./SideMenu";
 import AdminBanner from "./AdminBanner";
+import CleanupTaskStatus from "./CleanupTaskStatus";
 
 const { Content } = Layout;
 
@@ -20,6 +21,7 @@ export default function AppLayout() {
           }}
         >
           <AdminBanner />
+          <CleanupTaskStatus />
           <Suspense fallback={<div role="status" aria-label="正在加载页面"><Spin /></div>}>
             <Outlet />
           </Suspense>

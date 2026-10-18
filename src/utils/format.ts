@@ -46,7 +46,7 @@ export function fmtPct(value: MaybeNumber, empty = "--"): string {
 }
 
 export function fmtRpm(value: MaybeNumber, empty = "--"): string {
-  return isValidNumber(value) && value > 0 ? `${Math.round(value)} RPM` : empty;
+  return isValidNumber(value) && value >= 0 ? `${Math.round(value)} RPM` : empty;
 }
 
 export function maxValid(values: MaybeNumber[], options: { positiveOnly?: boolean } = {}) {

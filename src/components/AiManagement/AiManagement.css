@@ -392,10 +392,6 @@
   font-size: 12px;
 }
 
-.aim-input--sm.ant-input-affix-wrapper {
-  height: 28px;
-}
-
 .aim-seg {
   display: flex;
   flex: 0 0 auto;

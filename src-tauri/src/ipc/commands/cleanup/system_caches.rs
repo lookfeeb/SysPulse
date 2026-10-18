@@ -1,87 +1,85 @@
 use super::*;
 
-pub(super) fn scan_browser_cache() -> Option<CleanupCategory> {
-    let local = dirs::data_local_dir()?;
-    let mut browser_caches = Vec::new();
+pub(super) fn chromium_profile_cache_dirs(user_data: &Path) -> Vec<PathBuf> {
+    let mut caches = Vec::new();
+    let Some(root) = safe_cleanup_root(user_data) else {
+        return caches;
+    };
+    // Opera/Electron 使用直接配置目录，Chromium 也有用户数据根级 shader 缓存。
+    caches.extend(chromium_cache_dirs(root.clone()));
+    if let Ok(entries) = std::fs::read_dir(&root) {
+        for entry in entries.flatten() {
+            if scan_should_stop() {
+                break;
+            }
+            let profile = entry.path();
+            let Ok(metadata) = std::fs::symlink_metadata(&profile) else {
+                continue;
+            };
+            if !metadata.is_dir() || metadata_is_reparse_point(&metadata) {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name == "Default"
+                || name == "System Profile"
+                || name.starts_with("Profile ")
+                || profile.join("Preferences").is_file()
+            {
+                caches.extend(chromium_cache_dirs(profile));
+            }
+        }
+    }
+    caches
+        .into_iter()
+        .filter_map(|path| safe_cleanup_root(&path))
+        .collect()
+}
 
-    for user_data in [
-        local.join("Google").join("Chrome").join("User Data"),
-        local.join("Microsoft").join("Edge").join("User Data"),
+pub(super) fn browser_cache_dirs(local: &Path, roaming: Option<&Path>) -> Vec<PathBuf> {
+    let mut caches = Vec::new();
+    for relative in [
+        "Google/Chrome/User Data",
+        "Google/Chrome Beta/User Data",
+        "Google/Chrome SxS/User Data",
+        "Microsoft/Edge/User Data",
+        "Microsoft/Edge Beta/User Data",
+        "Microsoft/Edge Dev/User Data",
+        "BraveSoftware/Brave-Browser/User Data",
+        "Vivaldi/User Data",
+        "Chromium/User Data",
     ] {
-        if let Ok(entries) = std::fs::read_dir(&user_data) {
-            for entry in entries.flatten() {
-                let profile = entry.path();
-                if !profile.is_dir() {
-                    continue;
-                }
-                let name = entry.file_name().to_string_lossy().to_string();
-                if name == "Default" || name.starts_with("Profile ") {
-                    browser_caches.extend(chromium_cache_dirs(profile));
+        caches.extend(chromium_profile_cache_dirs(&local.join(relative)));
+    }
+    if let Some(roaming) = roaming {
+        for relative in [
+            "Opera Software/Opera Stable",
+            "Opera Software/Opera GX Stable",
+        ] {
+            caches.extend(chromium_profile_cache_dirs(&roaming.join(relative)));
+        }
+    }
+    if let Ok(profiles) = std::fs::read_dir(local.join("Mozilla/Firefox/Profiles")) {
+        for profile in profiles.flatten() {
+            let Ok(metadata) = std::fs::symlink_metadata(profile.path()) else {
+                continue;
+            };
+            if metadata_is_reparse_point(&metadata) || !metadata.is_dir() {
+                continue;
+            }
+            for name in ["cache2", "startupCache", "shader-cache"] {
+                if let Some(cache) = safe_cleanup_root(&profile.path().join(name)) {
+                    caches.push(cache);
                 }
             }
         }
     }
+    caches
+}
 
-    browser_caches.push(local.join("Mozilla").join("Firefox").join("Profiles"));
-
-    let mut size = 0u64;
-    let mut count = 0u64;
-    let mut paths = Vec::new();
-
-    for cache_dir in &browser_caches {
-        if !cache_dir.exists() {
-            continue;
-        }
-        // For Firefox, scan cache2 subdirs
-        if cache_dir.to_string_lossy().contains("Firefox") {
-            if let Ok(entries) = std::fs::read_dir(cache_dir) {
-                for entry in entries.flatten() {
-                    let cache2 = entry.path().join("cache2");
-                    if cache2.exists() {
-                        let (s, c) = dir_size(&cache2);
-                        if s > 0 {
-                            size += s;
-                            count += c;
-                            paths.push(PathDetail {
-                                path: cache2.to_string_lossy().to_string(),
-                                size_bytes: s,
-                                file_count: c,
-                                ..path_detail_identity(&cache2)
-                            });
-                        }
-                    }
-                }
-            }
-        } else {
-            let (s, c) = dir_size(cache_dir);
-            if s > 0 {
-                size += s;
-                count += c;
-                paths.push(PathDetail {
-                    path: cache_dir.to_string_lossy().to_string(),
-                    size_bytes: s,
-                    file_count: c,
-                    ..path_detail_identity(cache_dir)
-                });
-            }
-        }
-    }
-
-    if size == 0 {
-        return None;
-    }
-
-    Some(CleanupCategory {
-        id: "browser-cache".to_string(),
-        name: "浏览器缓存".to_string(),
-        description: "Chrome / Edge / Firefox Cache / Code Cache / GPUCache".to_string(),
-        size_bytes: size,
-        file_count: count,
-        paths,
-        risk_level: cleanup_policy("browser-cache").risk,
-        default_selected: cleanup_policy("browser-cache").default_selected,
-        min_age_days: cleanup_policy("browser-cache").min_age_days,
-    })
+pub(super) fn scan_browser_cache() -> Option<CleanupCategory> {
+    scan_existing_dirs_category("browser-cache", "浏览器缓存",
+        "Chrome / Edge / Brave / Vivaldi / Opera / Firefox 的磁盘、代码及 GPU 缓存（保留会话与站点数据）",
+        browser_cache_dirs(&dirs::data_local_dir()?, dirs::data_dir().as_deref()))
 }
 
 pub(super) fn scan_webview_cache() -> Option<CleanupCategory> {
@@ -95,18 +93,7 @@ pub(super) fn scan_webview_cache() -> Option<CleanupCategory> {
             .join("User Data"),
         local.join("Microsoft").join("WebView2").join("EBWebView"),
     ] {
-        if let Ok(entries) = std::fs::read_dir(&user_data) {
-            for entry in entries.flatten() {
-                let profile = entry.path();
-                if !profile.is_dir() {
-                    continue;
-                }
-                let name = entry.file_name().to_string_lossy().to_string();
-                if name == "Default" || name.starts_with("Profile ") {
-                    cache_dirs.extend(chromium_cache_dirs(profile));
-                }
-            }
-        }
+        cache_dirs.extend(chromium_profile_cache_dirs(&user_data));
     }
 
     scan_existing_dirs_category(
@@ -157,14 +144,32 @@ pub(super) fn scan_app_cache() -> Option<CleanupCategory> {
             "discordptb",
         ] {
             let root = roaming.join(app);
-            for name in ["Cache", "Code Cache", "GPUCache"].iter() {
+            for name in [
+                "Cache",
+                "Code Cache",
+                "GPUCache",
+                "DawnCache",
+                "DawnGraphiteCache",
+                "DawnWebGPUCache",
+            ]
+            .iter()
+            {
                 push_cache_dir(&mut cache_dirs, root.join(name));
             }
         }
     }
 
     let teams = local.join("Microsoft").join("Teams");
-    for name in ["Cache", "Code Cache", "GPUCache"].iter() {
+    for name in [
+        "Cache",
+        "Code Cache",
+        "GPUCache",
+        "DawnCache",
+        "DawnGraphiteCache",
+        "DawnWebGPUCache",
+    ]
+    .iter()
+    {
         push_cache_dir(&mut cache_dirs, teams.join(name));
     }
 

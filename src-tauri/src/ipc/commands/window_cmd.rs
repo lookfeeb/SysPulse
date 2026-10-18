@@ -76,10 +76,11 @@ pub fn spawn_overlay_tooltip_watchdog(app: AppHandle) {
             let config = state.config.snapshot();
             let snapshot = state.last_snapshot.read();
             let hw = state.last_hw_snapshot.read();
+            let fresh_hw = hw.as_ref().filter(|s| s.is_fresh());
             let text = if hit.key == "__all__" {
-                build_overlay_summary(&config.overlay.items, snapshot.as_ref(), hw.as_ref())
+                build_overlay_summary(&config.overlay.items, snapshot.as_ref(), fresh_hw)
             } else {
-                build_overlay_tooltip(&hit.key, snapshot.as_ref(), hw.as_ref())
+                build_overlay_tooltip(&hit.key, snapshot.as_ref(), fresh_hw)
             };
             let Some(text) = text else {
                 continue;
@@ -184,7 +185,8 @@ fn build_overlay_summary(
             OverlayItem::Cpu => Some(format!(
                 "CPU 占用：{}",
                 hw.and_then(|h| h.cpu.as_ref())
-                    .map(|cpu| format_percent(cpu.total_usage))
+                    .and_then(|cpu| cpu.total_usage)
+                    .map(format_percent)
                     .or_else(|| snapshot.map(|s| format_percent(s.cpu.usage_percent as f64)))
                     .unwrap_or_else(|| "--".into())
             )),
@@ -301,7 +303,12 @@ fn build_overlay_tooltip(
     let title = match key {
         "cpu" => {
             if let Some(cpu) = hw.and_then(|h| h.cpu.as_ref()) {
-                lines.push(format!("当前占用：{}", format_percent(cpu.total_usage)));
+                lines.push(format!(
+                    "当前占用：{}",
+                    cpu.total_usage
+                        .map(format_percent)
+                        .unwrap_or_else(|| "--".into())
+                ));
                 if !cpu.name.is_empty() {
                     lines.push(format!("型号：{}", cpu.name));
                 }

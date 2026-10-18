@@ -1,7 +1,7 @@
 import type { CleanupCategory, PathDetail } from "@/bindings";
 
 export const PROGRAMMING_CATEGORY_ID = "programming-cache";
-export const PROGRAMMING_CATEGORY_IDS = new Set([
+const PROGRAMMING_CATEGORY_IDS = new Set([
   "rust-target",
   "go-cache",
   "python-cache",
@@ -15,7 +15,7 @@ export type DisplayCategory = CleanupCategory & {
   childCategories?: CleanupCategory[];
 };
 
-export type SelectionState = {
+type SelectionState = {
   checked: boolean;
   indeterminate: boolean;
   checkedPathCount: number;
@@ -26,7 +26,7 @@ export type SelectionState = {
 
 export const MAX_PROJECT_ROOTS = 16;
 
-export type ScanButtonState = {
+type ScanButtonState = {
   action: "start" | "stop" | "wait";
   label: "开始扫描" | "停止扫描" | "正在停止";
   danger: boolean;
@@ -141,7 +141,7 @@ export function buildDisplayCategories(categories: CleanupCategory[]): DisplayCa
   ];
 }
 
-export function checkedPaths(paths: PathDetail[], excludedPaths: Set<string>): PathDetail[] {
+function checkedPaths(paths: PathDetail[], excludedPaths: Set<string>): PathDetail[] {
   return paths.filter((path) => !excludedPaths.has(normalizePathKey(path.path)));
 }
 

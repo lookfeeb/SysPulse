@@ -1,9 +1,11 @@
-import { App as AntdApp, Radio, Slider, Typography } from "antd";
+import { App as AntdApp, Radio, Select, Slider, Typography } from "antd";
 import { DashboardOutlined } from "@ant-design/icons";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { resetFanControl, setFanManual, setFanCurve } from "@/ipc";
 import { useHwStore } from "@/stores/hwStore";
 import type { FanHw, FanCurvePoint } from "@/bindings";
+
+import { defaultCpuFan, isCpuCoolingFan } from "./fanSelection";
 
 const { Text } = Typography;
 
@@ -63,47 +65,61 @@ export default function FanPanel({
   const [saving, setSaving] = useState(false);
   const [manualPwm, setManualPwm] = useState(40);
 
-  const cpuFan = useMemo(() => {
-    const byName = fans.find((f) => f.name.toLowerCase().includes("cpu"));
-    if (byName) return byName;
-    const withRpm = fans.find((f) => (f.rpm ?? 0) > 0);
-    return withRpm ?? fans[0] ?? null;
-  }, [fans]);
+  const [selectedFanId, setSelectedFanId] = useState<string | null>(null);
+  const operationRef = useRef(false);
+  const selectedFan = useMemo(() => selectedFanId
+    ? fans.find((fan) => fan.id === selectedFanId) ?? null
+    : defaultCpuFan(fans), [fans, selectedFanId]);
 
-  const entry = fanControl.entries.find((e) => e.fanId === cpuFan?.id);
+  const entry = fanControl.entries.find((e) => e.fanId === selectedFan?.id);
   const currentMode: FanMode = entry?.mode ?? "bios";
   // Optimistic local mode for instant UI feedback
   const [optimisticMode, setOptimisticMode] = useState<FanMode | null>(null);
   const displayMode: FanMode = optimisticMode ?? currentMode;
 
   useEffect(() => {
-    if (entry?.mode === "manual" && Number.isFinite(entry.manualPwm)) {
-      setManualPwm(Math.round(entry.manualPwm));
-    }
-  }, [entry?.manualPwm, entry?.mode]);
+    // Once identified, keep the same sensor even if another CPU-labelled fan appears.
+    if (!selectedFanId && selectedFan) setSelectedFanId(selectedFan.id);
+  }, [selectedFanId, selectedFan]);
 
-  if (!cpuFan) return null;
+  useEffect(() => {
+    setManualPwm(entry?.mode === "manual" && Number.isFinite(entry.manualPwm) ? Math.round(entry.manualPwm) : 40);
+    setOptimisticMode(null);
+  }, [selectedFan?.id, entry?.manualPwm, entry?.mode]);
 
-  const blocked = disabled || !isAdmin;
+  const selector = <Select aria-label="选择风扇传感器" placeholder="选择要查看的风扇"
+    style={{ width: "100%", marginBottom: 10 }} value={selectedFan?.id}
+    disabled={saving} showSearch={{ optionFilterProp: "label" }}
+    options={fans.map((fan) => ({ value: fan.id, label: `${fan.name}${fan.controllable ? "" : " · 只读"}` }))}
+    onChange={(id) => { if (!operationRef.current) setSelectedFanId(id); }} />;
+  if (!selectedFan) return <div style={{ padding: 14, borderRadius: 8, background: "#f9fafb" }}>
+    {selector}<Text type="secondary">{selectedFanId ? "所选传感器暂不可用，请等待恢复或重新选择。" : "未能唯一识别 CPU 风扇，请选择要查看的传感器。"}</Text>
+  </div>;
+
+  const blocked = disabled || !isAdmin || !selectedFan.controllable;
   const pwmBusy = blocked || saving;
-  const pwmPct = cpuFan.pwmPercent ?? 0;
+  const pwmPct = selectedFan.pwmPercent;
+  const pwmLevel = pwmPct ?? 0;
+  const cpuCurveSupported = isCpuCoolingFan(selectedFan);
 
   async function switchMode(mode: FanMode) {
-    if (!cpuFan) return;
+    if (!selectedFan || operationRef.current || (mode !== "bios" && blocked)
+      || (mode === "curve" && !cpuCurveSupported)) return;
+    operationRef.current = true;
     // Instant UI update
     setOptimisticMode(mode);
     setSaving(true);
     try {
       if (mode === "bios") {
-        const next = await resetFanControl(cpuFan.id);
+        const next = await resetFanControl(selectedFan.id);
         setFanControl(next);
         void message.success("已交给 BIOS 控制，风扇将在数秒内恢复固件曲线");
       } else if (mode === "curve") {
-        const next = await setFanCurve(cpuFan.id, OPTIMIZED_CURVE);
+        const next = await setFanCurve(selectedFan.id, OPTIMIZED_CURVE);
         setFanControl(next);
         void message.success("已启用温控曲线（≤40°C 静音，≥85°C 全速）");
       } else if (mode === "manual") {
-        const next = await setFanManual(cpuFan.id, manualPwm);
+        const next = await setFanManual(selectedFan.id, manualPwm);
         setFanControl(next);
         void message.success(`已设置手动 PWM ${manualPwm}%`);
       }
@@ -112,22 +128,27 @@ export default function FanPanel({
       // Rollback on failure
       setOptimisticMode(null);
     } finally {
+      operationRef.current = false;
       setSaving(false);
       setOptimisticMode(null);
     }
   }
 
   async function applyManualPwm(pwm: number) {
-    if (!cpuFan) return;
+    if (!selectedFan || blocked || operationRef.current) return;
+    const previousPwm = entry?.mode === "manual" ? entry.manualPwm : manualPwm;
     setManualPwm(pwm);
     if (currentMode === "manual") {
+      operationRef.current = true;
       setSaving(true);
       try {
-        const next = await setFanManual(cpuFan.id, pwm);
+        const next = await setFanManual(selectedFan.id, pwm);
         setFanControl(next);
       } catch (e) {
+        setManualPwm(previousPwm);
         void message.error(e instanceof Error ? e.message : String(e));
       } finally {
+        operationRef.current = false;
         setSaving(false);
       }
     }
@@ -142,16 +163,17 @@ export default function FanPanel({
         border: "1px solid #f0f0f0",
       }}
     >
+      {selector}
       {/* 顶部：风扇名 + 状态 + 模式切换 */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
         <DashboardOutlined style={{ fontSize: 18, color: "#3388cc" }} />
-        <div style={{ flex: 1 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
           <Text strong style={{ fontSize: 14 }}>
-            {cpuFan.name.split(" / ").pop()}
+            {selectedFan.name.split(" / ").pop()}
           </Text>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 4 }}>
+          <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 12, marginTop: 4 }}>
             <Text style={{ fontSize: 20, fontWeight: 700, color: "#3388cc", fontVariantNumeric: "tabular-nums" }}>
-              {cpuFan.rpm != null ? cpuFan.rpm : "--"}
+              {selectedFan.rpm != null ? Math.round(selectedFan.rpm) : "--"}
               <span style={{ fontSize: 12, fontWeight: 400, color: "#6b7280", marginLeft: 3 }}>RPM</span>
             </Text>
             <span
@@ -164,24 +186,27 @@ export default function FanPanel({
                 borderRadius: 10,
               }}
             >
-              {modeLabel(displayMode)}
+              {entry || selectedFan.controllable ? modeLabel(displayMode) : "只读"}
             </span>
             <Radio.Group
               value={displayMode}
               onChange={(e) => void switchMode(e.target.value)}
-              disabled={blocked}
+              disabled={disabled || !isAdmin || saving}
               size="small"
               optionType="button"
               buttonStyle="solid"
             >
-              <Radio.Button value="bios">BIOS 自动</Radio.Button>
-              <Radio.Button value="curve">温控曲线</Radio.Button>
-              <Radio.Button value="manual">手动</Radio.Button>
+              <Radio.Button value="bios" disabled={!selectedFan.controllable && !entry}>BIOS 自动</Radio.Button>
+              <Radio.Button value="curve" disabled={!selectedFan.controllable || !cpuCurveSupported}>CPU 温控</Radio.Button>
+              <Radio.Button value="manual" disabled={!selectedFan.controllable}>手动</Radio.Button>
             </Radio.Group>
           </div>
         </div>
       </div>
 
+      {!selectedFan.controllable && <Text type="secondary" style={{ display: "block", marginBottom: 10 }}>
+        未确认转速与控制通道关联，仅显示读数。
+      </Text>}
       {/* PWM 进度条 */}
       <div
         style={{
@@ -203,30 +228,30 @@ export default function FanPanel({
               left: 0,
               top: 0,
               height: "100%",
-              width: `${Math.round(pwmPct)}%`,
+              width: `${Math.round(pwmLevel)}%`,
               borderRadius: 5,
-              background: pwmPct >= 80
+              background: pwmLevel >= 80
                 ? "linear-gradient(90deg, #f97316, #ef4444)"
-                : pwmPct >= 50
+                : pwmLevel >= 50
                   ? "linear-gradient(90deg, #3388cc, #f97316)"
                   : "linear-gradient(90deg, #22c55e, #3388cc)",
               transition: "width 0.3s ease",
             }}
           />
           {/* Right-pointing arrow on the bar */}
-          <div
+          {pwmPct != null && <div
             style={{
               position: "absolute",
               top: "50%",
-              left: `${Math.round(pwmPct)}%`,
+              left: `${Math.round(pwmLevel)}%`,
               transform: "translate(-50%, -50%)",
               transition: "left 0.3s ease",
             }}
           >
             <svg width="12" height="12" viewBox="0 0 12 12" style={{ display: "block" }}>
-              <path d="M2 1L10 6L2 11z" fill={pwmPct >= 80 ? "#ef4444" : pwmPct >= 50 ? "#f97316" : "#3388cc"} />
+              <path d="M2 1L10 6L2 11z" fill={pwmLevel >= 80 ? "#ef4444" : pwmLevel >= 50 ? "#f97316" : "#3388cc"} />
             </svg>
-          </div>
+          </div>}
         </div>
         <Text
           style={{
@@ -235,10 +260,10 @@ export default function FanPanel({
             fontVariantNumeric: "tabular-nums",
             width: 40,
             textAlign: "right",
-            color: pwmPct >= 80 ? "#ef4444" : pwmPct >= 50 ? "#f97316" : "#3388cc",
+            color: pwmLevel >= 80 ? "#ef4444" : pwmLevel >= 50 ? "#f97316" : "#3388cc",
           }}
         >
-          {pwmPct.toFixed(0)}%
+          {pwmPct == null ? "—" : `${pwmPct.toFixed(0)}%`}
         </Text>
       </div>
 

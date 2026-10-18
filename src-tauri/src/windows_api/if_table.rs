@@ -29,10 +29,8 @@ const IF_ROW_FLAG_FILTER_INTERFACE: u8 = 0x02;
 #[derive(Debug, Clone)]
 pub struct IfRow {
     pub luid: u64,
-    pub index: u32,
     pub name: String,
     pub description: String,
-    pub if_type: u32,
     pub is_up: bool,
     pub is_loopback: bool,
     pub is_physical: bool,
@@ -41,7 +39,6 @@ pub struct IfRow {
     pub bytes_out: u64,
     pub in_speed_bps: u64,
     pub out_speed_bps: u64,
-    pub mtu: u32,
 }
 
 pub fn list_interfaces() -> Result<Vec<IfRow>> {
@@ -85,10 +82,8 @@ pub fn list_interfaces() -> Result<Vec<IfRow>> {
 
             out.push(IfRow {
                 luid: row.InterfaceLuid.Value,
-                index: row.InterfaceIndex,
                 name: alias,
                 description: desc,
-                if_type: row.Type,
                 is_up,
                 is_loopback,
                 is_physical,
@@ -97,7 +92,6 @@ pub fn list_interfaces() -> Result<Vec<IfRow>> {
                 bytes_out: row.OutOctets,
                 in_speed_bps: row.ReceiveLinkSpeed,
                 out_speed_bps: row.TransmitLinkSpeed,
-                mtu: row.Mtu,
             });
         }
 

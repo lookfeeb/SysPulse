@@ -19,7 +19,7 @@ use std::process::Stdio;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{broadcast, mpsc, oneshot, RwLock};
 use tokio::time::timeout;
@@ -47,6 +47,8 @@ pub struct HelperStatusEvent {
 
 #[derive(Debug, thiserror::Error)]
 pub enum HwClientError {
+    #[error("helper request queue is full")]
+    Busy,
     #[error("helper not running")]
     NotRunning,
     #[error("request timed out")]
@@ -85,6 +87,7 @@ struct InnerState {
     status_tx: broadcast::Sender<HelperStatusEvent>,
     /// helper executable path
     helper_path: PathBuf,
+    io_tasks: Mutex<Vec<tokio::task::AbortHandle>>,
 }
 
 #[derive(Debug)]
@@ -118,6 +121,7 @@ impl HwClient {
                 status: Mutex::new(HelperStatus::Starting),
                 status_tx,
                 helper_path,
+                io_tasks: Mutex::new(Vec::new()),
             }),
         }
     }
@@ -148,12 +152,9 @@ impl HwClient {
 
     pub async fn snapshot(&self) -> Result<HwSnapshot, HwClientError> {
         let resp = self.request_json("snapshot", None).await?;
-        Ok(serde_json::from_value(resp)?)
-    }
-
-    pub async fn heartbeat(&self) -> Result<(), HwClientError> {
-        self.request_json("heartbeat", None).await?;
-        Ok(())
+        let mut snapshot: HwSnapshot = serde_json::from_value(resp)?;
+        snapshot.received_at = Some(std::time::Instant::now());
+        Ok(snapshot)
     }
 
     pub async fn set_fan_manual(&self, fan_id: String, pwm: f64) -> Result<(), HwClientError> {
@@ -183,7 +184,17 @@ impl HwClient {
     }
 
     pub async fn reset_fans(&self) -> Result<(), HwClientError> {
-        self.request_json("reset_fans", None).await?;
+        let report = self.request_json("reset_fans", None).await?;
+        if report
+            .get("failed")
+            .and_then(Value::as_u64)
+            .is_some_and(|n| n > 0)
+        {
+            return Err(HwClientError::Helper {
+                code: "RESET_FAILED".into(),
+                message: "one or more fan controls could not be restored".into(),
+            });
+        }
         Ok(())
     }
 
@@ -229,7 +240,17 @@ impl HwClient {
 
         let id = self.inner.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
-        self.inner.pending.lock().insert(id, tx);
+        {
+            let mut pending = self.inner.pending.lock();
+            if pending.len() >= 32 {
+                return Err(HwClientError::Busy);
+            }
+            pending.insert(id, tx);
+        }
+        let _pending = PendingRequest {
+            state: &self.inner,
+            id,
+        };
 
         let req = HelperRequest {
             id,
@@ -237,12 +258,13 @@ impl HwClient {
             params,
         };
 
-        if writer_tx.send(req).await.is_err() {
-            self.inner.pending.lock().remove(&id);
-            return Err(HwClientError::NotRunning);
-        }
-
-        match timeout(REQ_TIMEOUT, rx).await {
+        // Include backpressure in the deadline; cancellation also drops the map entry.
+        match timeout(REQ_TIMEOUT, async {
+            writer_tx.send(req).await.map_err(|_| ())?;
+            rx.await.map_err(|_| ())
+        })
+        .await
+        {
             Ok(Ok(resp)) => {
                 self.inner.timeouts.store(0, Ordering::Relaxed);
                 mark_running_if_available(&self.inner);
@@ -263,6 +285,17 @@ impl HwClient {
                 Err(HwClientError::Timeout)
             }
         }
+    }
+}
+
+struct PendingRequest<'a> {
+    state: &'a InnerState,
+    id: u64,
+}
+
+impl Drop for PendingRequest<'_> {
+    fn drop(&mut self) {
+        self.state.pending.lock().remove(&self.id);
     }
 }
 
@@ -287,7 +320,7 @@ async fn supervisor_loop(state: Arc<InnerState>, mut rx: mpsc::Receiver<Supervis
         set_status(&state, HelperStatus::Starting, None);
         match spawn_one(&state).await {
             Ok(child) => {
-                attempt = 0;
+                let started = std::time::Instant::now();
                 match wait_for_exit_or_command(child, &mut rx).await {
                     SupervisorExit::Exited => {
                         clear_runtime(&state).await;
@@ -308,6 +341,10 @@ async fn supervisor_loop(state: Arc<InnerState>, mut rx: mpsc::Receiver<Supervis
                         *state.supervisor_tx.lock() = None;
                         return;
                     }
+                }
+                // A process that starts then crashes immediately is still a failed attempt.
+                if started.elapsed() >= Duration::from_secs(60) {
+                    attempt = 0;
                 }
             }
             Err(e) => {
@@ -335,17 +372,21 @@ async fn supervisor_loop(state: Arc<InnerState>, mut rx: mpsc::Receiver<Supervis
         }
 
         let backoff = Duration::from_secs(2u64.pow(attempt.min(4)));
-        tokio::select! {
-            _ = tokio::time::sleep(backoff) => {}
-            cmd = rx.recv() => {
-                match cmd {
-                    Some(SupervisorCmd::Shutdown) | None => {
-                        set_status(&state, HelperStatus::Unavailable, Some("shutdown".into()));
-                        *state.supervisor_tx.lock() = None;
-                        return;
-                    }
-                    Some(SupervisorCmd::Restart(reason)) => {
-                        tracing::debug!("coalescing helper restart while backing off: {reason}");
+        let delay = tokio::time::sleep(backoff);
+        tokio::pin!(delay);
+        loop {
+            tokio::select! {
+                _ = &mut delay => { break; }
+                cmd = rx.recv() => {
+                    match cmd {
+                        Some(SupervisorCmd::Shutdown) | None => {
+                            set_status(&state, HelperStatus::Unavailable, Some("shutdown".into()));
+                            *state.supervisor_tx.lock() = None;
+                            return;
+                        }
+                        Some(SupervisorCmd::Restart(reason)) => {
+                            tracing::debug!("coalescing helper restart while backing off: {reason}");
+                        }
                     }
                 }
             }
@@ -382,9 +423,11 @@ async fn spawn_one(state: &Arc<InnerState>) -> std::io::Result<Child> {
     *state.writer_tx.write().await = Some(writer_tx);
     state.timeouts.store(0, Ordering::Relaxed);
 
-    spawn_writer_task(stdin, writer_rx, state.clone());
-    spawn_stderr_task(stderr);
-    spawn_reader_task(stdout, state.clone());
+    state.io_tasks.lock().extend([
+        spawn_writer_task(stdin, writer_rx, state.clone()),
+        spawn_stderr_task(stderr),
+        spawn_reader_task(stdout, state.clone()),
+    ]);
 
     Ok(child)
 }
@@ -421,9 +464,12 @@ fn spawn_writer_task(
     mut stdin: ChildStdin,
     mut rx: mpsc::Receiver<HelperRequest>,
     state: Arc<InnerState>,
-) {
+) -> tokio::task::AbortHandle {
     tokio::spawn(async move {
         while let Some(req) = rx.recv().await {
+            if !state.pending.lock().contains_key(&req.id) {
+                continue;
+            }
             let json = match serde_json::to_string(&req) {
                 Ok(s) => s,
                 Err(e) => {
@@ -447,24 +493,27 @@ fn spawn_writer_task(
                 break;
             }
         }
-    });
+    })
+    .abort_handle()
 }
 
-fn spawn_stderr_task(stderr: tokio::process::ChildStderr) {
-    let reader = BufReader::new(stderr);
+fn spawn_stderr_task(stderr: tokio::process::ChildStderr) -> tokio::task::AbortHandle {
+    let mut reader = BufReader::new(stderr);
     tokio::spawn(async move {
-        let mut lines = reader.lines();
-        while let Ok(Some(line)) = lines.next_line().await {
+        while let Ok(Some(line)) = read_bounded_line(&mut reader, 16 * 1024).await {
             tracing::warn!(target: "hw_helper", "{line}");
         }
-    });
+    })
+    .abort_handle()
 }
 
-fn spawn_reader_task(stdout: tokio::process::ChildStdout, state: Arc<InnerState>) {
-    let reader = BufReader::new(stdout);
+fn spawn_reader_task(
+    stdout: tokio::process::ChildStdout,
+    state: Arc<InnerState>,
+) -> tokio::task::AbortHandle {
+    let mut reader = BufReader::new(stdout);
     tokio::spawn(async move {
-        let mut lines = reader.lines();
-        while let Ok(Some(line)) = lines.next_line().await {
+        while let Ok(Some(line)) = read_bounded_line(&mut reader, 1024 * 1024).await {
             if let Ok(resp) = serde_json::from_str::<HelperResponse>(&line) {
                 if resp.id < 0 {
                     tracing::warn!(target: "hw_helper", "bad-id response: {line}");
@@ -475,11 +524,7 @@ fn spawn_reader_task(stdout: tokio::process::ChildStdout, state: Arc<InnerState>
                     mark_running_if_available(&state);
                     let _ = sender.send(resp);
                 } else {
-                    // The helper responded, but we already timed out on this request.
-                    // This proves the helper is alive — reset the timeout counter to
-                    // prevent spurious restarts caused by transient slowness.
-                    state.timeouts.store(0, Ordering::Relaxed);
-                    mark_running_if_available(&state);
+                    // Late responses must not erase repeated deadline failures.
                     tracing::debug!(target: "hw_helper", "stray response id={id} (helper alive, was slow)");
                 }
                 continue;
@@ -493,13 +538,51 @@ fn spawn_reader_task(stdout: tokio::process::ChildStdout, state: Arc<InnerState>
             }
             tracing::warn!(target: "hw_helper", "unparseable line: {line}");
         }
-    });
+        request_supervisor_restart(&state, "helper stdout closed or exceeded protocol limit".into());
+    }).abort_handle()
 }
 
 async fn clear_runtime(state: &Arc<InnerState>) {
+    for task in state.io_tasks.lock().drain(..) {
+        task.abort();
+    }
     *state.writer_tx.write().await = None;
     clear_pending(state);
     state.timeouts.store(0, Ordering::Relaxed);
+}
+
+async fn read_bounded_line<R: AsyncBufRead + Unpin>(
+    reader: &mut R,
+    limit: usize,
+) -> std::io::Result<Option<String>> {
+    let mut bytes = Vec::new();
+    loop {
+        let available = reader.fill_buf().await?;
+        if available.is_empty() {
+            if bytes.is_empty() {
+                return Ok(None);
+            }
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "incomplete helper frame",
+            ));
+        }
+        let newline = available.iter().position(|b| *b == b'\n');
+        let count = newline.map_or(available.len(), |p| p + 1);
+        if count > limit.saturating_sub(bytes.len()) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "helper frame too large",
+            ));
+        }
+        bytes.extend_from_slice(&available[..count]);
+        reader.consume(count);
+        if newline.is_some() {
+            return String::from_utf8(bytes)
+                .map(Some)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e));
+        }
+    }
 }
 
 fn clear_pending(state: &Arc<InnerState>) {
@@ -509,7 +592,7 @@ fn clear_pending(state: &Arc<InnerState>) {
 }
 
 fn should_restart_after_timeouts(timeouts: i64) -> bool {
-    timeouts >= i64::from(MAX_TIMEOUTS_BEFORE_RESTART)
+    timeouts == i64::from(MAX_TIMEOUTS_BEFORE_RESTART)
 }
 
 fn request_supervisor_restart(state: &Arc<InnerState>, reason: String) {
@@ -553,11 +636,49 @@ fn mark_running_if_available(state: &Arc<InnerState>) {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn protocol_frames_are_bounded_and_must_be_complete() {
+        let mut valid = BufReader::with_capacity(2, &b"one\ntwo\n"[..]);
+        assert_eq!(
+            read_bounded_line(&mut valid, 4).await.unwrap().as_deref(),
+            Some("one\n")
+        );
+        assert_eq!(
+            read_bounded_line(&mut valid, 4).await.unwrap().as_deref(),
+            Some("two\n")
+        );
+        assert!(read_bounded_line(&mut valid, 4).await.unwrap().is_none());
+        let mut large = BufReader::with_capacity(2, &b"12345\n"[..]);
+        assert!(read_bounded_line(&mut large, 4).await.is_err());
+        let mut partial = BufReader::new(&b"123"[..]);
+        assert!(read_bounded_line(&mut partial, 4).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn cancelled_queued_requests_release_pending_entries() {
+        use futures_util::FutureExt;
+        let client = HwClient::new(PathBuf::new());
+        let (tx, _rx) = mpsc::channel(1);
+        tx.send(HelperRequest {
+            id: 0,
+            op: "occupied".into(),
+            params: None,
+        })
+        .await
+        .unwrap();
+        *client.inner.writer_tx.write().await = Some(tx);
+        let mut request = Box::pin(client.request_raw("snapshot", None));
+        assert!(request.as_mut().now_or_never().is_none());
+        assert_eq!(client.inner.pending.lock().len(), 1);
+        drop(request);
+        assert!(client.inner.pending.lock().is_empty());
+    }
+
     #[test]
     fn restart_threshold_uses_direct_timeout_count() {
         assert!(!should_restart_after_timeouts(0));
         assert!(!should_restart_after_timeouts(4));
         assert!(should_restart_after_timeouts(5));
-        assert!(should_restart_after_timeouts(6));
+        assert!(!should_restart_after_timeouts(6));
     }
 }

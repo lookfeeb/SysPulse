@@ -183,27 +183,15 @@ fn ewma(prev: f64, new_val: f64, alpha: f64) -> f64 {
     prev + alpha * (new_val - prev)
 }
 
-pub enum SamplerCmd {
-    Pause,
-    Resume,
-    Shutdown,
-}
-
 #[derive(Clone)]
 pub struct SamplerHandle {
-    cmd_tx: mpsc::Sender<SamplerCmd>,
+    shutdown_tx: mpsc::Sender<()>,
     pub bus: broadcast::Sender<Snapshot>,
 }
 
 impl SamplerHandle {
-    pub async fn pause(&self) {
-        let _ = self.cmd_tx.send(SamplerCmd::Pause).await;
-    }
-    pub async fn resume(&self) {
-        let _ = self.cmd_tx.send(SamplerCmd::Resume).await;
-    }
     pub async fn shutdown(&self) {
-        let _ = self.cmd_tx.send(SamplerCmd::Shutdown).await;
+        let _ = self.shutdown_tx.send(()).await;
     }
     pub fn subscribe(&self) -> broadcast::Receiver<Snapshot> {
         self.bus.subscribe()
@@ -211,7 +199,7 @@ impl SamplerHandle {
 }
 
 pub fn spawn(config: Arc<ConfigManager>, writer: WriterHandle) -> SamplerHandle {
-    let (cmd_tx, mut cmd_rx) = mpsc::channel(8);
+    let (shutdown_tx, mut shutdown_rx) = mpsc::channel(8);
     let (bus_tx, _) = broadcast::channel::<Snapshot>(32);
     let bus_for_task = bus_tx.clone();
     let mut cfg_rx = config.subscribe();
@@ -238,7 +226,6 @@ pub fn spawn(config: Arc<ConfigManager>, writer: WriterHandle) -> SamplerHandle 
             current_cfg.general.sample_interval_ms as u64
         };
         let mut tick = sampling_interval(current_interval_ms);
-        let mut paused = false;
         let mut adaptive_engine = AdaptiveEngine::new();
 
         // Per-luid prev totals to compute deltas for persistence (separate from
@@ -255,7 +242,7 @@ pub fn spawn(config: Arc<ConfigManager>, writer: WriterHandle) -> SamplerHandle 
 
         loop {
             tokio::select! {
-                _ = tick.tick(), if !paused => {
+                _ = tick.tick() => {
                     let snap = registry.sample(Instant::now(), &current_cfg);
 
                     // Adaptive interval: use EWMA engine to compute optimal interval
@@ -294,12 +281,9 @@ pub fn spawn(config: Arc<ConfigManager>, writer: WriterHandle) -> SamplerHandle 
                     }
                     current_cfg = new_cfg;
                 }
-                Some(cmd) = cmd_rx.recv() => {
-                    match cmd {
-                        SamplerCmd::Pause => { paused = true; tracing::info!("sampler paused"); }
-                        SamplerCmd::Resume => { paused = false; tracing::info!("sampler resumed"); }
-                        SamplerCmd::Shutdown => { tracing::info!("sampler shutdown"); break; }
-                    }
+                Some(()) = shutdown_rx.recv() => {
+                    tracing::info!("sampler shutdown");
+                    break;
                 }
                 else => { break; }
             }
@@ -307,7 +291,7 @@ pub fn spawn(config: Arc<ConfigManager>, writer: WriterHandle) -> SamplerHandle 
     });
 
     SamplerHandle {
-        cmd_tx,
+        shutdown_tx,
         bus: bus_tx,
     }
 }

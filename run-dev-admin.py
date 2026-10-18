@@ -28,7 +28,6 @@ def main() -> None:
     project_dir = ps_quote(PROJECT_DIR)
     # 透传当前用户的 PATH（含 node/npm/cargo/rustup 等），避免提权后 Administrator 账户找不到
     current_path = ps_quote(os.environ.get("PATH", ""))
-    clean_incremental = "--clean" in sys.argv[1:]
     ps_command = "; ".join(
         [
             f"$env:Path = {current_path} + ';' + $env:Path",
@@ -47,27 +46,9 @@ def main() -> None:
                 "}"
             ),
             (
-                "$names = @('syspulse', 'traffic-monitor'); "
-                "foreach ($name in $names) { "
-                "Get-Process $name -ErrorAction SilentlyContinue | "
+                "Get-Process syspulse -ErrorAction SilentlyContinue | "
                 "Where-Object { Test-ProjectProcess $_.Id } | "
                 "Stop-Process -Force -ErrorAction SilentlyContinue "
-                "}"
-            ),
-            *(
-                [
-                    (
-                        "$incremental = [System.IO.Path]::GetFullPath((Join-Path $project 'target\\debug\\incremental')); "
-                        "if (Test-Path -LiteralPath $incremental) { "
-                        "$prefix = $incremental.TrimEnd('\\') + '\\'; "
-                        "Get-ChildItem -LiteralPath $incremental -Directory -ErrorAction SilentlyContinue | "
-                        "Where-Object { $_.Name -like 'syspulse*' -and $_.FullName.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase) } | "
-                        "Remove-Item -Recurse -Force -ErrorAction SilentlyContinue "
-                        "}"
-                    )
-                ]
-                if clean_incremental
-                else []
             ),
             (
                 "$ports = @(5173, 5174); "

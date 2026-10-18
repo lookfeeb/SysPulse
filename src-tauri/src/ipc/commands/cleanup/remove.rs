@@ -42,7 +42,7 @@ pub(super) fn process_argument_path_keys(argument: &str) -> Vec<String> {
     values
 }
 
-pub(super) fn watched_processes(category_id: &str) -> Option<(&'static [&'static str], bool)> {
+pub(super) fn watched_processes(category_id: &str) -> Option<&'static [&'static str]> {
     let watched: &'static [&'static str] = match category_id {
         "browser-cache" => &["chrome", "msedge", "firefox", "brave", "opera"],
         "webview-cache" => &["msedgewebview2"],
@@ -67,17 +67,7 @@ pub(super) fn watched_processes(category_id: &str) -> Option<(&'static [&'static
         ],
         _ => return None,
     };
-    let block_anywhere = matches!(
-        category_id,
-        "rust-target"
-            | "node-cache"
-            | "python-cache"
-            | "go-cache"
-            | "cpp-cache"
-            | "dotnet-cache"
-            | "java-cache"
-    );
-    Some((watched, block_anywhere))
+    Some(watched)
 }
 
 pub(super) fn running_process_blockers_for_path(
@@ -85,10 +75,18 @@ pub(super) fn running_process_blockers_for_path(
     path: &str,
     processes: &[RunningProcessInfo],
 ) -> Vec<String> {
-    let Some((watched, block_anywhere)) = watched_processes(category_id) else {
+    let Some(watched) = watched_processes(category_id) else {
         return Vec::new();
     };
-    let normalized_path = normalize_path_key(path);
+    let cache_path = Path::new(path);
+    // 只有已验证的项目产物关联项目根，全局下载缓存只匹配实际缓存路径。
+    let project_root = project_cache_owner(category_id, cache_path);
+    let normalized_path = normalize_path_key(
+        &project_root
+            .as_deref()
+            .unwrap_or(cache_path)
+            .to_string_lossy(),
+    );
     let mut found = std::collections::BTreeSet::new();
     for process in processes {
         if !watched.contains(&process.stem.as_str()) {
@@ -97,16 +95,60 @@ pub(super) fn running_process_blockers_for_path(
         let uses_path = process
             .command_paths
             .iter()
-            .any(|part| part.len() > 3 && paths_overlap_keys(part, &normalized_path))
+            .any(|part| path_is_within_key(part, &normalized_path))
             || process
                 .cwd
                 .as_ref()
-                .is_some_and(|cwd| paths_overlap_keys(cwd, &normalized_path));
-        if block_anywhere || uses_path {
+                .is_some_and(|cwd| path_is_within_key(cwd, &normalized_path));
+        if uses_path {
             found.insert(process.name.clone());
         }
     }
     found.into_iter().collect()
+}
+
+pub(super) fn path_is_within_key(path: &str, root: &str) -> bool {
+    path == root
+        || path
+            .strip_prefix(root)
+            .is_some_and(|suffix| suffix.starts_with('\\'))
+}
+
+pub(super) fn project_cache_owner(category: &str, path: &Path) -> Option<PathBuf> {
+    let name = path.file_name()?.to_string_lossy().to_lowercase();
+    let is_project_cache = match category {
+        "rust-target" => is_verified_rust_target(path, &name),
+        "cpp-cache" => is_verified_cpp_build_dir(path, &name),
+        "python-cache" => is_verified_python_project_cache(path, &name),
+        "node-cache" | "dotnet-cache" | "java-cache" => {
+            verified_extra_project_cache(path, &name) == Some(category)
+        }
+        _ => false,
+    };
+    if !is_project_cache {
+        return None;
+    }
+    path.ancestors()
+        .skip(1)
+        .take(8)
+        .find(|parent| directory_has_project_marker(parent))
+        .map(Path::to_path_buf)
+}
+
+pub(super) fn record_cleanup_io_error(
+    errors: &mut Vec<String>,
+    path: &Path,
+    error: &std::io::Error,
+) {
+    if errors.len() < MAX_SCAN_WARNINGS {
+        let reason = match error.raw_os_error() {
+            Some(32 | 33) => "文件正在使用，已跳过".to_string(),
+            _ => error.to_string(),
+        };
+        errors.push(format!("{}: {}", path.display(), reason));
+    } else if errors.len() == MAX_SCAN_WARNINGS {
+        errors.push("还有其他文件未能处理，仅展示前 80 条文件异常；未处理文件均已保留".into());
+    }
 }
 
 pub(super) fn paths_overlap_keys(left: &str, right: &str) -> bool {
@@ -149,9 +191,11 @@ pub(super) fn remove_dir_contents_with_progress(
         dir,
         progress,
         file_policy,
-        0,
-        DIRECTORY_SCAN_MAX_DEPTH,
-        false,
+        CleanupWalk {
+            depth: 0,
+            max_depth: DIRECTORY_SCAN_MAX_DEPTH,
+            remove_root: false,
+        },
         errors,
         diagnostics,
     )
@@ -169,24 +213,35 @@ pub(super) fn remove_dir_tree_with_progress(
         dir,
         progress,
         file_policy,
-        depth,
-        max_depth,
-        true,
+        CleanupWalk {
+            depth,
+            max_depth,
+            remove_root: true,
+        },
         errors,
         diagnostics,
     )
+}
+
+struct CleanupWalk {
+    depth: u32,
+    max_depth: u32,
+    remove_root: bool,
 }
 
 fn walk_dir_with_progress(
     dir: &Path,
     progress: &mut CleanProgress<'_>,
     file_policy: CleanupFilePolicy,
-    depth: u32,
-    max_depth: u32,
-    remove_root: bool,
+    walk: CleanupWalk,
     errors: &mut Vec<String>,
     diagnostics: &mut PathCleanupDiagnostics,
 ) -> std::io::Result<(u64, u64)> {
+    let CleanupWalk {
+        depth,
+        max_depth,
+        remove_root,
+    } = walk;
     if depth > max_depth {
         errors.push(format!("{}: 超过最大清理深度 {}", dir.display(), max_depth));
         return Ok((0, 0));
@@ -219,7 +274,7 @@ fn walk_dir_with_progress(
                 diagnostics.record(&path, decision);
                 continue;
             }
-            let (s, c) = remove_dir_tree_with_progress(
+            let result = remove_dir_tree_with_progress(
                 &path,
                 progress,
                 file_policy,
@@ -227,9 +282,14 @@ fn walk_dir_with_progress(
                 max_depth,
                 errors,
                 diagnostics,
-            )?;
-            freed += s;
-            count += c;
+            );
+            match result {
+                Ok((s, c)) => {
+                    freed += s;
+                    count += c;
+                }
+                Err(error) => record_cleanup_io_error(errors, &path, &error),
+            }
         } else {
             let decision = file_policy.file_decision(&meta);
             if decision != CleanupPolicyDecision::Allow {
@@ -239,13 +299,16 @@ fn walk_dir_with_progress(
             let size = file_details(&path, &meta)
                 .map(|value| value.2)
                 .unwrap_or_else(|| meta.len());
-            if std::fs::remove_file(&path).is_ok() {
-                freed += size;
-                count += 1;
-                progress.add_result(1, size, 1);
-            } else {
-                errors.push(format!("{}: 删除文件失败", path.display()));
-                progress.fail(1);
+            match std::fs::remove_file(&path) {
+                Ok(()) => {
+                    freed += size;
+                    count += 1;
+                    progress.add_result(1, size, 1);
+                }
+                Err(error) => {
+                    record_cleanup_io_error(errors, &path, &error);
+                    progress.fail(1);
+                }
             }
         }
     }

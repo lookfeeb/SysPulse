@@ -77,14 +77,6 @@ impl McpConfig {
         dirs::home_dir().map(|h| h.join(".kiro").join("settings").join("mcp.json"))
     }
 
-    /// 获取项目级 MCP 配置文件路径
-    pub fn project_config_path(project_dir: &str) -> PathBuf {
-        PathBuf::from(project_dir)
-            .join(".kiro")
-            .join("settings")
-            .join("mcp.json")
-    }
-
     pub fn load_from_path(path: &Path) -> Result<Self, String> {
         if !path.exists() {
             return Ok(Self::default());
@@ -112,59 +104,10 @@ impl McpConfig {
         Self::load_from_path(&path)
     }
 
-    /// 读取有效配置：user -> workspace -> powers（后者覆盖前者）
-    pub fn load_merged(project_dir: Option<&str>) -> Result<Self, String> {
-        let user_path = Self::config_path().ok_or("无法获取用户目录")?;
-        let user_config = Self::load_from_path(&user_path)?;
-
-        let workspace_config = if let Some(pd) = project_dir {
-            let ws_path = Self::project_config_path(pd);
-            Self::load_from_path(&ws_path)?
-        } else {
-            Self::default()
-        };
-
-        let mut merged_servers = user_config.mcp_servers.clone();
-        for (name, server) in workspace_config.mcp_servers {
-            merged_servers.insert(name, server);
-        }
-
-        if let Some(powers) = user_config.powers.as_ref() {
-            for (name, server) in &powers.mcp_servers {
-                merged_servers.insert(
-                    name.clone(),
-                    McpServer::Url(McpServerUrl {
-                        url: server.url.clone(),
-                        disabled: server.disabled,
-                        disabled_tools: server.disabled_tools.clone(),
-                        extra: server.extra.clone(),
-                    }),
-                );
-            }
-        }
-
-        Ok(Self {
-            mcp_servers: merged_servers,
-            powers: user_config.powers,
-            extra: user_config.extra,
-        })
-    }
-
     /// 保存用户级配置文件
     pub fn save(&self) -> Result<(), String> {
         let path = Self::config_path().ok_or("无法获取用户目录")?;
         self.save_to_path(&path)
-    }
-}
-
-impl From<PowerMcpServer> for McpServerUrl {
-    fn from(value: PowerMcpServer) -> Self {
-        Self {
-            url: value.url,
-            disabled: value.disabled,
-            disabled_tools: value.disabled_tools,
-            extra: value.extra,
-        }
     }
 }
 

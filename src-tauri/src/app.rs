@@ -21,19 +21,11 @@ pub struct AppState {
     pub sampler: SamplerHandle,
     pub writer: WriterHandle,
     pub last_snapshot: Arc<RwLock<Option<Snapshot>>>,
-    pub session: Arc<RwLock<SessionTraffic>>,
     pub hw_client: Arc<HwClient>,
     pub hw_sampler: HwSamplerHandle,
     pub last_hw_snapshot: Arc<RwLock<Option<HwSnapshot>>>,
     pub fan_control: hw::FanControlManager,
     pub fan_watchdog_token: tokio_util::sync::CancellationToken,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct SessionTraffic {
-    pub started_at: i64,
-    pub bytes_recv: u64,
-    pub bytes_sent: u64,
 }
 
 pub fn setup(app: &mut App) -> std::result::Result<(), Box<dyn std::error::Error>> {
@@ -57,10 +49,6 @@ pub fn setup(app: &mut App) -> std::result::Result<(), Box<dyn std::error::Error
     // 4. Sampler
     let sampler = sampler::spawn(config.clone(), writer.clone());
 
-    let session = Arc::new(RwLock::new(SessionTraffic {
-        started_at: chrono::Local::now().timestamp_millis(),
-        ..Default::default()
-    }));
     let last_snapshot = Arc::new(RwLock::new(None));
 
     // 5. Forward broadcast snapshots → webview events + tray + state cache
@@ -68,19 +56,8 @@ pub fn setup(app: &mut App) -> std::result::Result<(), Box<dyn std::error::Error
         let app_handle = app.handle().clone();
         let mut rx = sampler.subscribe();
         let last_snapshot = last_snapshot.clone();
-        let session = session.clone();
         tauri::async_runtime::spawn(async move {
             while let Ok(snap) = rx.recv().await {
-                // Update session counters from per-second deltas (bytes)
-                {
-                    let mut s = session.write();
-                    let interval_ms = snap.network.sample_interval_ms.max(1) as u64;
-                    let secs = interval_ms as f64 / 1000.0;
-                    let drecv = (snap.network.total.bytes_recv_per_sec as f64 * secs) as u64;
-                    let dsent = (snap.network.total.bytes_sent_per_sec as f64 * secs) as u64;
-                    s.bytes_recv = s.bytes_recv.saturating_add(drecv);
-                    s.bytes_sent = s.bytes_sent.saturating_add(dsent);
-                }
                 *last_snapshot.write() = Some(snap.clone());
                 emit_stats(&app_handle, &snap);
                 tray::maybe_update_tray_stats(&app_handle, &snap);
@@ -122,8 +99,14 @@ pub fn setup(app: &mut App) -> std::result::Result<(), Box<dyn std::error::Error
         let app_handle = app.handle().clone();
         let mut status_rx = hw_client.subscribe_status();
         tauri::async_runtime::spawn(async move {
-            while let Ok(ev) = status_rx.recv().await {
-                let _ = app_handle.emit("hw:helper-status", &ev);
+            loop {
+                match status_rx.recv().await {
+                    Ok(ev) => {
+                        let _ = app_handle.emit("hw:helper-status", &ev);
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
             }
         });
     }
@@ -135,9 +118,18 @@ pub fn setup(app: &mut App) -> std::result::Result<(), Box<dyn std::error::Error
         let mut hw_rx = hw_sampler.subscribe();
         let last_hw = last_hw_snapshot.clone();
         tauri::async_runtime::spawn(async move {
-            while let Ok(snap) = hw_rx.recv().await {
-                *last_hw.write() = Some(snap.clone());
-                let _ = app_handle.emit("hw:update", &snap);
+            loop {
+                match hw_rx.recv().await {
+                    Ok(snap) => {
+                        if !snap.is_fresh() {
+                            continue;
+                        }
+                        *last_hw.write() = Some(snap.clone());
+                        let _ = app_handle.emit("hw:update", &snap);
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
             }
         });
     }
@@ -163,7 +155,6 @@ pub fn setup(app: &mut App) -> std::result::Result<(), Box<dyn std::error::Error
         sampler,
         writer,
         last_snapshot,
-        session,
         hw_client,
         hw_sampler,
         last_hw_snapshot,

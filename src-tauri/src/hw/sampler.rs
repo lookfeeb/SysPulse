@@ -3,23 +3,21 @@ use crate::hw::snapshot::HwSnapshot;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
-use tokio::time::{interval, MissedTickBehavior};
+use tokio::time::{sleep_until, Instant};
 
-pub enum HwSamplerCmd {
-    Pause,
-    Resume,
-    Shutdown,
+fn next_sample_delay(failures: u32) -> Duration {
+    Duration::from_secs(1u64 << failures.min(3))
 }
 
 #[derive(Clone)]
 pub struct HwSamplerHandle {
-    cmd_tx: mpsc::Sender<HwSamplerCmd>,
+    shutdown_tx: mpsc::Sender<()>,
     pub bus: broadcast::Sender<HwSnapshot>,
 }
 
 impl HwSamplerHandle {
     pub async fn shutdown(&self) {
-        let _ = self.cmd_tx.send(HwSamplerCmd::Shutdown).await;
+        let _ = self.shutdown_tx.send(()).await;
     }
     pub fn subscribe(&self) -> broadcast::Receiver<HwSnapshot> {
         self.bus.subscribe()
@@ -31,19 +29,17 @@ impl HwSamplerHandle {
 /// reported through helper status/logs and do not overwrite the last good UI
 /// snapshot with empty data.
 pub fn spawn(client: Arc<HwClient>) -> HwSamplerHandle {
-    let (cmd_tx, mut cmd_rx) = mpsc::channel::<HwSamplerCmd>(8);
+    let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(8);
     let (bus_tx, _) = broadcast::channel::<HwSnapshot>(16);
     let bus_clone = bus_tx.clone();
 
     tauri::async_runtime::spawn(async move {
-        let mut tick = interval(Duration::from_secs(1));
-        tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
-        let mut paused = false;
+        let mut next = Instant::now();
         let mut consecutive_failures: u32 = 0;
 
         loop {
             tokio::select! {
-                _ = tick.tick(), if !paused => {
+                _ = sleep_until(next) => {
                     match client.snapshot().await {
                         Ok(snap) => {
                             consecutive_failures = 0;
@@ -57,13 +53,11 @@ pub fn spawn(client: Arc<HwClient>) -> HwSamplerHandle {
                             }
                         }
                     }
+                    // Rest after completion: slow hardware never causes catch-up bursts.
+                    next = Instant::now() + next_sample_delay(consecutive_failures);
                 }
-                Some(cmd) = cmd_rx.recv() => {
-                    match cmd {
-                        HwSamplerCmd::Pause => { paused = true; }
-                        HwSamplerCmd::Resume => { paused = false; }
-                        HwSamplerCmd::Shutdown => { break; }
-                    }
+                Some(()) = shutdown_rx.recv() => {
+                    break;
                 }
                 else => { break; }
             }
@@ -71,7 +65,19 @@ pub fn spawn(client: Arc<HwClient>) -> HwSamplerHandle {
     });
 
     HwSamplerHandle {
-        cmd_tx,
+        shutdown_tx,
         bus: bus_tx,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn failed_collection_backs_off_with_a_bound_and_success_resets() {
+        assert_eq!(next_sample_delay(0), Duration::from_secs(1));
+        assert_eq!(next_sample_delay(1), Duration::from_secs(2));
+        assert_eq!(next_sample_delay(2), Duration::from_secs(4));
+        assert_eq!(next_sample_delay(u32::MAX), Duration::from_secs(8));
     }
 }
