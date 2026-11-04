@@ -1,4 +1,4 @@
-// 外部 AI 历史会话解析：Codex / Claude / Antigravity / Gemini CLI
+// 外部 AI 历史会话解析：Claude / Antigravity / Gemini CLI
 // 统一映射到既有 SessionSummary / IdeSession 模型，作为新的 source 接入会话管理。
 // 详见 session-history-parsing.md。
 
@@ -20,12 +20,6 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension};
 #[path = "external_sessions/file_cache.rs"]
 mod file_cache;
 use file_cache::*;
-#[path = "external_sessions/codex_pages.rs"]
-mod codex_pages;
-use codex_pages::load_codex_file_page;
-#[path = "external_sessions/codex_metadata_cache.rs"]
-mod codex_metadata_cache;
-use codex_metadata_cache::*;
 
 const MAX_TITLE_CHARS: usize = 72;
 const CACHE_TTL: Duration = Duration::from_secs(5);
@@ -44,7 +38,6 @@ pub(crate) fn lock_session_mutations() -> anyhow::Result<std::sync::MutexGuard<'
 
 /// 失效缓存（刷新按钮强制重扫）
 pub fn invalidate_cache() {
-    clear_codex_metadata_cache();
     if let Ok(mut cache) = CACHE.lock() {
         CACHE_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         *cache = None;
@@ -76,14 +69,6 @@ struct SourceDef {
 }
 
 static SOURCES: &[SourceDef] = &[
-    SourceDef {
-        prefix: "codex:",
-        source: "codex",
-        root: codex_root,
-        layout: Layout::File { depth: 8 },
-        parse: parse_codex,
-        scan: scan_codex_summary,
-    },
     SourceDef {
         prefix: "claude:",
         source: "claude",
@@ -137,15 +122,6 @@ pub fn handles(hash: &str) -> bool {
 
 fn home() -> Option<PathBuf> {
     dirs::home_dir()
-}
-fn codex_home() -> Option<PathBuf> {
-    std::env::var_os("CODEX_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| home().map(|h| h.join(".codex")))
-}
-fn codex_root() -> Option<PathBuf> {
-    codex_home().map(|h| h.join("sessions"))
 }
 fn claude_home() -> Option<PathBuf> {
     std::env::var_os("CLAUDE_CONFIG_DIR")
@@ -306,26 +282,8 @@ use antigravity_parsing::*;
 #[cfg(test)]
 #[path = "external_sessions/antigravity/tests.rs"]
 mod antigravity_tests;
-#[path = "external_sessions/codex/parsing.rs"]
-mod codex_parsing;
-use codex_parsing::*;
-#[path = "external_sessions/codex/metadata.rs"]
-mod codex_metadata;
-use codex_metadata::*;
-#[path = "external_sessions/codex/catalog.rs"]
-mod codex_catalog;
-use codex_catalog::*;
-#[path = "external_sessions/codex/loading.rs"]
-mod codex_loading;
-use codex_loading::*;
-#[path = "external_sessions/codex/deletion.rs"]
-mod codex_deletion;
-use codex_deletion::*;
 #[path = "external_sessions/claude/parsing.rs"]
 mod claude_parsing;
-#[cfg(test)]
-#[path = "external_sessions/codex/tests.rs"]
-mod codex_delete_tests;
 use claude_parsing::*;
 #[path = "external_sessions/claude/loading.rs"]
 mod claude_loading;
@@ -354,6 +312,18 @@ mod mutation_lock_tests {
     use super::lock_session_mutations;
     use std::sync::mpsc;
     use std::time::Duration;
+
+    #[test]
+    fn removed_source_cannot_be_loaded_revealed_or_deleted() {
+        let hash = "codex:C:/workspace";
+        assert!(!super::handles(hash));
+        assert!(super::load_session(hash, "thread.jsonl").is_err());
+        assert!(super::load_session_page(hash, "@index/thread", 1, 10).is_err());
+        assert!(super::file_path(hash, "@archive/thread").is_err());
+        assert!(super::delete_session(hash, "thread.jsonl").is_err());
+        assert!(super::delete_workspace(hash).is_err());
+        assert!(super::SOURCES.iter().all(|source| source.source != "codex"));
+    }
 
     #[test]
     fn session_mutation_lock_serializes_concurrent_deletes() {

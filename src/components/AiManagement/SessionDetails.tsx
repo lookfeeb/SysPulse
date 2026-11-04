@@ -7,7 +7,7 @@ import type { SessionModel } from "./useSessionManager";
 export default function SessionDetails({ model }: {
     model: SessionModel;
 }) {
-    const { canRevealSelected, changeMessagePage, conversationPanelRef, conversationScrollRef, copiedMessageKey, copyMessage, deleteSession, exportSession, hasMutation, indexOnlySelected, messagePage, mutatingKey, pagedMessages, readonlySelected, revealSession, selectedSummary, session, sessionLoading, totalMessageCount, totalPages } = model;
+    const { canRevealSelected, changeMessagePage, conversationPanelRef, conversationScrollRef, copiedMessageKey, copyMessage, deleteSession, exportSession, hasMutation, messagePage, mutatingKey, pagedMessages, readonlySelected, revealSession, selectedSummary, session, sessionLoading, totalMessageCount, totalPages } = model;
     return (<section className="aim-card aim-conv" ref={conversationPanelRef} aria-labelledby="aim-conv-title">
         <header className="aim-conv-hd">
           <div className="aim-conv-l1">
@@ -17,9 +17,7 @@ export default function SessionDetails({ model }: {
             {sessionLoading && session && <Spin size="small" />}
             {selectedSummary && (<>
                 <Tooltip title={!canRevealSelected
-                ? (indexOnlySelected
-                    ? "正文文件已不存在，只能查看恢复内容或清理残留索引"
-                    : "该索引会话没有独立正文文件")
+                ? "该索引会话没有独立正文文件"
                 : "在资源管理器中定位会话文件"}>
                   <span>
                     <Button className="aim-act aim-act--sm" aria-label="定位文件" icon={<FolderOpenOutlined />} disabled={!canRevealSelected || (hasMutation && mutatingKey !== "reveal")} loading={mutatingKey === "reveal"} onClick={() => void revealSession()}>
@@ -49,10 +47,8 @@ export default function SessionDetails({ model }: {
                     导出
                   </Button>
                 </Dropdown>
-                {!readonlySelected && (<Popconfirm title={indexOnlySelected ? "清理残留索引" : "删除会话"} description={indexOnlySelected
-                    ? "正文文件已经不存在。将清理 Codex 中残留的索引和数据库记录，此操作不可恢复。"
-                    : "确定删除当前会话？此操作不可恢复。"} okText={indexOnlySelected ? "清理索引" : "删除"} cancelText="取消" okButtonProps={{ danger: true }} disabled={hasMutation} onConfirm={() => deleteSession(selectedSummary)}>
-                    <Button className="aim-act aim-act--sm aim-act--icon aim-act--danger" danger disabled={hasMutation} aria-label={indexOnlySelected ? "清理残留索引" : "删除当前会话"} icon={<DeleteOutlined />}/>
+                {!readonlySelected && (<Popconfirm title="删除会话" description="确定删除当前会话？此操作不可恢复。" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} disabled={hasMutation} onConfirm={() => deleteSession(selectedSummary)}>
+                    <Button className="aim-act aim-act--sm aim-act--icon aim-act--danger" danger disabled={hasMutation} aria-label="删除当前会话" icon={<DeleteOutlined />}/>
                   </Popconfirm>)}
               </>)}
           </div>
@@ -62,7 +58,6 @@ export default function SessionDetails({ model }: {
                 {sourceMeta(selectedSummary.source).label}
               </span>
               {readonlySelected && (<span className="aim-chip aim-chip--mute"><LockOutlined />只读</span>)}
-              {indexOnlySelected && (<span className="aim-chip aim-chip--warn"><DatabaseOutlined />仅索引</span>)}
               <span className="aim-conv-meta">
                 <MessageOutlined /><b>{totalMessageCount}</b> 条消息
               </span>

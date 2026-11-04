@@ -1,12 +1,14 @@
 import { PROGRAMMING_CATEGORY_ID, cleanupCategorySelection, normalizePathKey } from "@/routes/cleanupSelection";
 import { fmtBytes } from "@/utils/format";
+import { displayPath } from "@/utils/path";
 import { CloseOutlined, CodeOutlined, FolderOpenOutlined, ThunderboltOutlined } from "@ant-design/icons";
-import { openPath } from "@tauri-apps/plugin-opener";
-import { Button, Checkbox, Empty, Modal, Tag } from "antd";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { App, Button, Checkbox, Empty, Modal, Tag } from "antd";
 import type { CleanupModel } from "./useCleanupModel";
 export default function CleanupDetailModal({ model }: {
     model: CleanupModel;
 }) {
+    const { message } = App.useApp();
     const { activeDetailCategory, activeDetailSelection, busy, categoryIcon, closeDetail, compactNumber, detailAllSelection, detailCat, detailCategories, detailSelectedFiles, detailSelectedPaths, detailSelectedSize, detailToolchains, discoveredToolchains, excludedPaths, riskMeta, selected, setActiveToolchainId, setCategoriesChecked, sourceLabel, toggleCategory, togglePath, visibleDetailPaths } = model;
     return (<Modal title={null} closable={false} open={!!detailCat} onCancel={closeDetail} footer={null} width={1100} centered className="cleanup-review-modal" styles={{ container: { padding: 0, overflow: "hidden" }, body: { padding: 0 } }}>
         {detailCat && activeDetailCategory && (<div className="cleanup-review-shell">
@@ -98,14 +100,15 @@ export default function CleanupDetailModal({ model }: {
 
                 <div className="cleanup-review-paths">
                   {visibleDetailPaths.length > 0 ? visibleDetailPaths.map((path) => {
+                const readablePath = displayPath(path.path);
                 const checked = selected.has(activeDetailCategory.id)
                     && !excludedPaths.has(normalizePathKey(path.path));
                 return (<article className={`cleanup-review-path${checked ? " is-selected" : ""}`} key={path.path}>
                         <Checkbox checked={checked} disabled={busy} onChange={() => togglePath(activeDetailCategory, path)}/>
                         <div className="cleanup-review-path-main">
-                          <button type="button" title={path.path} onClick={() => void openPath(path.path).catch(() => undefined)}>
+                          <button type="button" title={`在文件管理器中定位：${readablePath}`} onClick={() => void revealItemInDir(path.path).catch(() => message.error("无法定位此目录，请检查目录是否仍存在或有访问权限"))}>
                             <span className="cleanup-review-folder"><FolderOpenOutlined /></span>
-                            <span>{path.path}</span>
+                            <span>{readablePath}</span>
                           </button>
                           <small title={path.matchedRule}>命中规则：{path.matchedRule}</small>
                         </div>

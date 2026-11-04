@@ -1,3 +1,22 @@
+fn sqlite_table_names(conn: &Connection) -> anyhow::Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "select name from sqlite_master where type = 'table' and name not like 'sqlite_%'",
+    )?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+fn normalize_workspace(value: &str) -> String {
+    let value = value
+        .strip_prefix(r"\\?\UNC\")
+        .map(|rest| format!(r"\\{rest}"))
+        .unwrap_or_else(|| value.strip_prefix(r"\\?\").unwrap_or(value).to_string());
+    value
+        .replace('/', "\\")
+        .trim_end_matches('\\')
+        .to_ascii_lowercase()
+}
+
 fn iso_secs(s: &str) -> Option<i64> {
     chrono::DateTime::parse_from_rfc3339(s)
         .ok()
@@ -403,8 +422,7 @@ mod external_session_size_tests {
         let id = "11111111-1111-4111-8111-111111111111";
         let header = format!(
             "{{\"type\":\"session_meta\",\"cwd\":\"C:\\\\Workspace\\\\Unlimited\",\"payload\":{{\"id\":\"{id}\",\"cwd\":\"C:\\\\Workspace\\\\Unlimited\"}}}}\n\
-             {{\"type\":\"user\",\"cwd\":\"C:\\\\Workspace\\\\Unlimited\",\"sessionId\":\"{id}\",\"message\":{{\"content\":\"Claude 大会话\"}}}}\n\
-             {{\"type\":\"event_msg\",\"payload\":{{\"type\":\"user_message\",\"message\":\"Codex 大会话\"}}}}\n"
+             {{\"type\":\"user\",\"cwd\":\"C:\\\\Workspace\\\\Unlimited\",\"sessionId\":\"{id}\",\"message\":{{\"content\":\"Claude 大会话\"}}}}\n"
         );
         let padding = format!(
             "{{\"type\":\"padding\",\"value\":\"{}\"}}\n",
@@ -421,10 +439,6 @@ mod external_session_size_tests {
 
         let file_size = fs::metadata(&path).unwrap().len() as usize;
         assert!(file_size > PREVIOUS_LIMIT_BYTES);
-
-        let codex = scan_codex_summary(&path).expect("Codex 大会话应被扫描");
-        assert_eq!(codex.cwd, r"C:\Workspace\Unlimited");
-        assert_eq!(codex.title, "Codex 大会话");
 
         let claude = scan_claude_summary(&path).expect("Claude 大会话应被扫描");
         assert_eq!(claude.cwd, r"C:\Workspace\Unlimited");

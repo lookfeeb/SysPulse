@@ -146,6 +146,9 @@ async scanCleanup(args: ScanCleanupArgs | null) : Promise<ScanResult> {
 async cancelCleanupScan() : Promise<boolean> {
     return await TAURI_INVOKE("cancel_cleanup_scan");
 },
+async cancelCleanup() : Promise<boolean> {
+    return await TAURI_INVOKE("cancel_cleanup");
+},
 async exportCleanupScan(args: ExportCleanupArgs) : Promise<ExportCleanupResult> {
     return await TAURI_INVOKE("export_cleanup_scan", { args });
 },
@@ -188,7 +191,8 @@ export type AiWorkspaceArgs = { workspaceHash: string }
 export type AppConfig = { schemaVersion: number; general: GeneralConfig; overlay: OverlayConfig; network: NetworkConfig; history: HistoryConfig }
 export type AppInfo = { name: string; version: string; os: string; arch: string; configDir: string; logsDir: string; dbFile: string }
 export type CleanArgs = { scanId: string; categoryIds: string[]; excludedPaths: string[]; confirmCaution: boolean; confirmAdvanced: boolean }
-export type CleanResult = { freedBytes: number; deletedFiles: number; errors: string[] }
+export type CleanPathReport = { path: string; category: string; deletedFiles: number; freedBytes: number; changedFiles: number; missingFiles: number; busyFiles: number; failedFiles: number; cancelledFiles: number; examples: string[] }
+export type CleanResult = { freedBytes: number; deletedFiles: number; skippedFiles: number; cancelled: boolean; paths: CleanPathReport[]; errors: string[] }
 export type CleanupCategory = { id: string; name: string; description: string; sizeBytes: number; fileCount: number; paths: PathDetail[]; riskLevel: CleanupRisk; defaultSelected: boolean; minAgeDays: number | null }
 export type CleanupRisk = "safe" | "caution" | "advanced"
 export type CpuHw = { name: string; packageTempC: number | null; perCoreTempsC?: (number | null)[]; perCoreUsage?: (number | null)[]; totalUsage: number | null; frequencyMhz: number | null; powerW: number | null }
@@ -217,7 +221,7 @@ export type HelperStatusEvent = { status: HelperStatus; reason?: string | null }
 export type HistoryConfig = { retainDays: number }
 export type HistoryGranularity = "day" | "month"
 export type HistoryQuery = { from: string; to: string; granularity?: HistoryGranularity; iface: string | null }
-export type HwSnapshot = { timestampMs: number; cpu: CpuHw | null; gpus?: GpuHw[]; memory: MemoryHw | null; disks?: DiskHw[]; motherboard: MotherboardHw | null; fans?: FanHw[] }
+export type HwSnapshot = { timestampMs: number; sampleAgeMs?: number; storageAgeMs?: number; cpu: CpuHw | null; gpus?: GpuHw[]; memory: MemoryHw | null; disks?: DiskHw[]; motherboard: MotherboardHw | null; fans?: FanHw[] }
 export type InterfaceStats = { luid: number; name: string; description: string; isUp: boolean; isPhysical: boolean; bytesSentTotal: number; bytesRecvTotal: number; acceptedBytesSentTotal: number; acceptedBytesRecvTotal: number; bytesSentPerSec: number; bytesRecvPerSec: number }
 export type IpcError = { code: string; message: string }
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>

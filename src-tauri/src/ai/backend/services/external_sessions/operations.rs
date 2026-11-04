@@ -23,19 +23,8 @@ pub fn load_session_page(
     page: usize,
     page_size: usize,
 ) -> anyhow::Result<SessionPage> {
-    let d = def_for(hash).ok_or_else(|| anyhow::anyhow!("未知的会话来源"))?;
-    let root = (d.root)().ok_or_else(|| anyhow::anyhow!("无法定位会话目录"))?;
+    def_for(hash).ok_or_else(|| anyhow::anyhow!("未知的会话来源"))?;
     if is_virtual_session(session_id) {
-        if d.source == "codex" {
-            return load_codex_virtual_session_page(
-                d,
-                &root,
-                session_id,
-                hash,
-                page,
-                page_size,
-            );
-        }
         return Ok(SessionPage::from_session(
             load_session(hash, session_id)?,
             page,
@@ -45,28 +34,6 @@ pub fn load_session_page(
 
     let (d, path) = locate(hash, session_id).ok_or_else(|| anyhow::anyhow!("非法的会话路径"))?;
     match d.layout {
-        Layout::File { .. } if d.source == "codex" => {
-            let metadata = if let Some(id) = codex_id_from_path(&path)? {
-                codex_metadata_for_id(&root, &id)?
-            } else {
-                None
-            };
-            let cwd_fallback = metadata
-                .as_ref()
-                .and_then(|meta| (!meta.cwd.is_empty()).then(|| meta.cwd.clone()));
-            let title_override = metadata.as_ref().and_then(|meta| {
-                (!meta.title.trim().is_empty()).then(|| codex_meta_title(meta))
-            });
-            load_codex_file_page(
-                d,
-                &path,
-                session_id,
-                page,
-                page_size,
-                cwd_fallback,
-                title_override,
-            )
-        }
         Layout::File { .. } if d.source == "claude" => {
             load_claude_file_page(d, &path, session_id, page, page_size)
         }
@@ -86,7 +53,6 @@ pub fn load_session(hash: &str, session_id: &str) -> anyhow::Result<IdeSession> 
     let root = (d.root)().ok_or_else(|| anyhow::anyhow!("无法定位会话目录"))?;
     if is_virtual_session(session_id) {
         return match d.source {
-            "codex" => load_codex_virtual_session(d, &root, session_id, hash),
             "claude" => load_claude_history_session(d, &root, session_id, hash),
             "antigravity" => load_antigravity_summary_session(d, &root, session_id, hash),
             "antigravity-ide" => load_antigravity_ide_index_session(d, session_id, hash),
@@ -147,21 +113,6 @@ pub fn load_session(hash: &str, session_id: &str) -> anyhow::Result<IdeSession> 
     }
 
     let parsed = match d.layout {
-        Layout::File { .. } if d.source == "codex" => {
-            let mut parsed = parse_codex_file(&path)?;
-            if let Some(id) = codex_id_from_path(&path)? {
-                if let Some(meta) = codex_metadata_for_id(&root, &id)? {
-                    let meta_title = codex_meta_title(&meta);
-                    if parsed.cwd.is_empty() {
-                        parsed.cwd = meta.cwd;
-                    }
-                    if !meta.title.trim().is_empty() {
-                        parsed.title = meta_title;
-                    }
-                }
-            }
-            parsed
-        }
         Layout::File { .. } if d.source == "claude" => parse_claude_file(&path)?,
         Layout::File { .. } => {
             let content =
@@ -223,17 +174,7 @@ fn history_item(role: &str, text: String, idx: usize) -> HistoryItem {
 
 pub fn file_path(hash: &str, session_id: &str) -> anyhow::Result<String> {
     if is_virtual_session(session_id) {
-        let d = def_for(hash).ok_or_else(|| anyhow::anyhow!("未知的会话来源"))?;
-        if d.source == "codex" {
-            let root = (d.root)().ok_or_else(|| anyhow::anyhow!("无法定位会话目录"))?;
-            if let Some(path) = codex_archive_session_path(&root, session_id) {
-                let value = path.to_string_lossy().to_string();
-                return Ok(value
-                    .strip_prefix(r"\\?\")
-                    .map(str::to_string)
-                    .unwrap_or(value));
-            }
-        }
+        def_for(hash).ok_or_else(|| anyhow::anyhow!("未知的会话来源"))?;
         return Err(anyhow::anyhow!(
             "该会话仅来自历史索引，没有可打开的正文文件"
         ));
@@ -260,7 +201,6 @@ fn delete_session_unlocked(hash: &str, session_id: &str) -> anyhow::Result<()> {
     if is_virtual_session(session_id) {
         let root = (d.root)().ok_or_else(|| anyhow::anyhow!("无法定位会话目录"))?;
         let result = match d.source {
-            "codex" => delete_codex_virtual_session(&root, session_id),
             "claude" => delete_claude_session(&root, None, session_id),
             _ => Err(anyhow::anyhow!(
                 "该来源仅提供只读索引，未执行删除"
@@ -278,11 +218,6 @@ fn delete_session_unlocked(hash: &str, session_id: &str) -> anyhow::Result<()> {
     let root = (d.root)().ok_or_else(|| anyhow::anyhow!("无法定位会话目录"))?;
     if d.source == "claude" {
         let result = delete_claude_session(&root, Some(&path), session_id);
-        invalidate_cache();
-        return result;
-    }
-    if d.source == "codex" {
-        let result = delete_codex_session(&root, &path);
         invalidate_cache();
         return result;
     }
@@ -314,11 +249,6 @@ fn delete_workspace_unlocked(hash: &str) -> anyhow::Result<()> {
     }
     let root = (d.root)().ok_or_else(|| anyhow::anyhow!("无法定位会话目录"))?;
     let workspace = hash.strip_prefix(d.prefix).unwrap_or_default();
-    if d.source == "codex" {
-        let result = delete_codex_workspace(&root, workspace);
-        invalidate_cache();
-        return result;
-    }
     if d.source == "claude" {
         let result = delete_claude_workspace(d, &root, hash);
         invalidate_cache();

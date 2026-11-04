@@ -9,7 +9,7 @@ import { getHwSnapshot, getHelperStatus, getFanControlState } from "@/ipc";
 import { useHwStore } from "./hwStore";
 
 const snapshot = (timestampMs: number): HwSnapshot => ({
-  timestampMs, cpu: { name: "CPU", packageTempC: 60, perCoreUsage: Array(128).fill(20),
+  timestampMs, sampleAgeMs: 0, storageAgeMs: 0, cpu: { name: "CPU", packageTempC: 60, perCoreUsage: Array(128).fill(20),
     perCoreTempsC: Array(128).fill(60), totalUsage: 20, frequencyMhz: 3000, powerW: 40 },
   gpus: [], memory: null, disks: [], motherboard: null, fans: [],
 });
@@ -22,7 +22,7 @@ const deferred = <T,>() => {
 beforeEach(() => {
   vi.restoreAllMocks();
   vi.clearAllMocks();
-  useHwStore.setState({ current: null, history: [], helperStatus: "starting", stale: true, lastReceivedAt: null });
+  useHwStore.setState({ current: null, history: [], helperStatus: "starting", stale: true, storageStale: true, lastReceivedAt: null });
 });
 
 describe("hardware snapshots", () => {
@@ -39,7 +39,7 @@ describe("hardware snapshots", () => {
     useHwStore.getState().setSnapshot(snapshot(1));
     const state = useHwStore.getState();
     useHwStore.getState().setSnapshot(snapshot(1));
-    expect(useHwStore.getState()).toBe(state);
+    expect(useHwStore.getState().history).toBe(state.history);
   });
 
   it("expires readings using monotonic receipt time and recovers", () => {
@@ -47,10 +47,28 @@ describe("hardware snapshots", () => {
     useHwStore.getState().setSnapshot(snapshot(1));
     clock.mockReturnValue(5101);
     useHwStore.getState().checkFreshness();
-    expect(useHwStore.getState().current).toBeNull();
+    expect(useHwStore.getState().current?.cpu?.packageTempC).toBe(60);
     expect(useHwStore.getState().stale).toBe(true);
+    clock.mockReturnValue(30101);
+    useHwStore.getState().checkFreshness();
+    expect(useHwStore.getState().current).toBeNull();
     useHwStore.getState().setSnapshot(snapshot(2));
     expect(useHwStore.getState().stale).toBe(false);
+  });
+
+  it("expires sensor groups independently while preserving real zero readings", () => {
+    const clock = vi.spyOn(performance, "now").mockReturnValue(0);
+    useHwStore.getState().setSnapshot({ ...snapshot(1), storageAgeMs: 29500,
+      fans: [{ id: "fan", name: "CPU", rpm: 0, pwmPercent: null, controllable: false }],
+      disks: [{ index: 0, model: "disk", bus: "", health: "", identifier: "disk",
+        tempC: 35, readBytesPerSec: 0, writeBytesPerSec: 0, totalBytes: 100, usedBytes: 10 }] });
+    expect(useHwStore.getState().storageStale).toBe(true);
+    expect(useHwStore.getState().stale).toBe(false);
+    clock.mockReturnValue(1000);
+    useHwStore.getState().checkFreshness();
+    expect(useHwStore.getState().current?.disks).toEqual([]);
+    expect(useHwStore.getState().current?.cpu?.packageTempC).toBe(60);
+    expect(useHwStore.getState().current?.fans?.[0]?.rpm).toBe(0);
   });
 
   it("invalidates data immediately on helper restart", () => {

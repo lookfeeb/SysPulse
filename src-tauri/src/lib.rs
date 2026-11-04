@@ -20,7 +20,17 @@ pub use ipc::commands::export_bindings;
 /// Application entry point invoked by the bin shim in `main.rs`.
 pub fn run() {
     logging::init();
-    tracing::info!("SysPulse starting up");
+    tracing::info!(
+        pid = std::process::id(),
+        version = env!("CARGO_PKG_VERSION"),
+        "SysPulse starting up"
+    );
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        tracing::error!(thread = ?std::thread::current().name(), location = ?info.location(),
+            backtrace = %std::backtrace::Backtrace::force_capture(), "Rust panic");
+        previous(info);
+    }));
 
     let single_instance = tauri_plugin_single_instance::init(|app, _argv, _cwd| {
         if let Err(e) = app::on_second_instance(app) {
@@ -56,10 +66,38 @@ pub fn run() {
 
     let result = builder
         .on_window_event(app::on_window_event)
-        .run(tauri::generate_context!());
+        .build(tauri::generate_context!());
 
-    if let Err(e) = result {
-        tracing::error!(error = %e, "tauri runtime exited with error");
-        std::process::exit(1);
+    match result {
+        Ok(application) => application.run(|_, event| match event {
+            tauri::RunEvent::ExitRequested { code, api, .. } => {
+                let explicit = app::is_shutting_down();
+                tracing::info!(?code, explicit, "runtime exit requested");
+                // Losing native windows must not shut down a tray application.
+                if code.is_none() && !explicit {
+                    api.prevent_exit();
+                }
+                #[cfg(windows)]
+                if let Some(code) = code.filter(|_| explicit) {
+                    // Popup-menu shutdown can leave Tao waiting in GetMessageW
+                    // after RequestExit with no visible windows. Wake its own
+                    // message pump with WM_QUIT; LoopDestroyed and Tauri cleanup
+                    // still run normally. Cleanup has already completed above.
+                    unsafe {
+                        windows::Win32::UI::WindowsAndMessaging::PostQuitMessage(code);
+                    }
+                }
+            }
+            tauri::RunEvent::Exit => {
+                #[cfg(windows)]
+                windows_api::taskbar::stop_overlay_z_order_watch();
+                tracing::info!("SysPulse runtime exited");
+            }
+            _ => {}
+        }),
+        Err(e) => {
+            tracing::error!(error = %e, "tauri runtime failed to start");
+            std::process::exit(1);
+        }
     }
 }

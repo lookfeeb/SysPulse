@@ -9,12 +9,12 @@ import ProjectRootsModal from "./cleanup/ProjectRootsModal";
 import { useCleanupModel } from "./cleanup/useCleanupModel";
 export default function CleanupPage() {
     const model = useCleanupModel();
-    const { lastCleanResult, phase } = model;
+    const { lastCleanResult } = model;
     const { Text, canClean, categories, categoryColumns, categoryRows, cleanProgress, cleaning, cleanupCache, compactNumber, heroScanDetail, heroScanState, onClean, onScanButton, openDetail, progressMeta, projectRoots, scanButton, scanIncomplete, scanProgress, scanning, selectedAdvanced, selectedCaution, selectedFiles, selectedPathCount, setProjectManagerOpen, totalPathCount, totalSelected } = model;
     const totalSize = cleanupCache?.totalSizeBytes ?? 0;
     const selectedPercent = totalSize > 0 ? Math.min(100, totalSelected / totalSize * 100) : 0;
     return (<div className="cleanup-page">
-      {scanIncomplete && categories.length > 0 && (<Alert type="warning" showIcon title="扫描结果不完整" description="请重新完成扫描后再清理。" />)}
+      {scanIncomplete && (<Alert type="warning" showIcon title="扫描结果不完整" description="请重新完成扫描后再清理。" />)}
 
       <section className="cleanup-overview" aria-label="磁盘清理概览">
         <header className="cleanup-overview-header">
@@ -25,26 +25,26 @@ export default function CleanupPage() {
         </header>
         <div className="cleanup-overview-body">
           <div className="cleanup-space-summary">
-            <span className="cleanup-space-label">{scanning ? "正在统计空间" : "发现可清理空间"}</span>
+            <span className="cleanup-space-label">{scanning ? "正在统计空间" : !cleanupCache && lastCleanResult ? "本次清理结果" : "发现可清理空间"}</span>
             {cleanupCache ? <>
               <strong className="cleanup-space-value">{fmtBytes(totalSize)}</strong>
               <div className="cleanup-space-track" role="img" aria-label={`已选空间占比 ${Math.round(selectedPercent)}%`}><i style={{ width: `${selectedPercent}%` }} /></div>
               <div className="cleanup-space-caption"><span>已选 <b>{fmtBytes(totalSelected)}</b></span><span>{compactNumber(selectedPathCount)} 条路径 · {compactNumber(selectedFiles)} 个文件</span></div>
             </> : <div className="cleanup-space-empty">
               <span className="cleanup-space-empty-icon" aria-hidden="true"><ScanOutlined /></span>
-              <div><strong>{scanning ? "正在发现可释放空间" : "让磁盘轻装上阵"}</strong><p>{scanning ? "扫描完成后显示空间统计" : "扫描后查看可释放的磁盘空间"}</p></div>
+              <div><strong>{scanning ? "正在发现可释放空间" : lastCleanResult ? `已清理 ${fmtBytes(lastCleanResult.freedBytes)}` : "让磁盘轻装上阵"}</strong><p>{scanning ? "扫描完成后显示空间统计" : lastCleanResult ? "详细结果已保留，可重新扫描检查剩余空间" : "扫描后查看可释放的磁盘空间"}</p></div>
             </div>}
           </div>
           <div className="cleanup-scan-summary">
-            <div className="cleanup-scan-state" aria-live="polite"><span className={`cleanup-state-dot${scanning || cleaning ? " is-busy" : scanIncomplete ? " is-warning" : ""}`} /><strong>{cleaning ? "清理进行中" : phase === "refreshing" ? "正在刷新结果" : scanning ? "扫描进行中" : cleanupCache ? "扫描快照" : "准备就绪"}</strong><span>{scanning || cleaning ? "后台运行中" : cleanupCache ? heroScanState : "等待首次扫描"}</span></div>
+            <div className="cleanup-scan-state" aria-live="polite"><span className={`cleanup-state-dot${scanning || cleaning ? " is-busy" : scanIncomplete ? " is-warning" : ""}`} /><strong>{cleaning ? "清理进行中" : scanning ? "扫描进行中" : cleanupCache ? "扫描快照" : lastCleanResult ? "清理已结束" : "准备就绪"}</strong><span>{scanning || cleaning ? "后台运行中" : cleanupCache ? heroScanState : lastCleanResult ? "可重新扫描" : "等待首次扫描"}</span></div>
             <p className="cleanup-scan-description" title={heroScanDetail}>{scanning || cleaning ? heroScanDetail : "扫描与清理可在后台继续，切换页面不会中断。"}</p>
             <div className="cleanup-scan-metrics"><span><b>{compactNumber(scanning ? scanProgress?.scannedPaths ?? 0 : cleanupCache?.scannedPaths ?? 0)}</b> 已检查项</span><span><b>{cleanupCache ? `${(cleanupCache.durationMs / 1000).toFixed(1)} s` : "—"}</b> 扫描用时</span></div>
-            <Button className="cleanup-scan-button" type="primary" danger={scanButton.danger} icon={scanning ? <StopOutlined /> : <ScanOutlined />} disabled={scanButton.disabled} onClick={onScanButton}>{scanButton.label}</Button>
+            <Button className="cleanup-scan-button" type="primary" danger={scanButton.danger} icon={scanning || cleaning ? <StopOutlined /> : <ScanOutlined />} disabled={scanButton.disabled} onClick={onScanButton}>{scanButton.label}</Button>
           </div>
         </div>
       </section>
 
-      {cleanProgress && !(cleanProgress.done && lastCleanResult?.errors.length) && (<Card size="small" style={{ borderRadius: 10 }} styles={{ body: { padding: "12px 16px" } }}>
+      {cleanProgress && !cleanProgress.done && (<Card size="small" style={{ borderRadius: 10 }} styles={{ body: { padding: "12px 16px" } }}>
           <div className="cleanup-clean-status">
             <div style={{ minWidth: 0 }}>
               <Text strong>{cleanProgress.done ? lastCleanResult?.errors.length ? "清理结束，部分内容已跳过" : "清理完成" : cleanProgress.currentCategory || "正在清理"}</Text>

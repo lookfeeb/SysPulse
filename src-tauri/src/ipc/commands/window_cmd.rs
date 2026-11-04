@@ -56,6 +56,9 @@ pub fn spawn_overlay_tooltip_watchdog(app: AppHandle) {
 
         loop {
             interval.tick().await;
+            if crate::app::is_shutting_down() {
+                break;
+            }
             let hovered = overlay_tooltip_hit_test(&app);
             let next_key = hovered.as_ref().map(|hit| hit.key.as_str());
             let changed = next_key != active_key.as_deref();
@@ -622,7 +625,7 @@ mod tooltip_tests {
 pub fn show_config_window(app: AppHandle) -> Result<(), IpcError> {
     if let Some(w) = app.get_webview_window(CONFIG_LABEL) {
         w.show().map_err(AppError::Tauri)?;
-        w.unminimize().ok();
+        w.unminimize().map_err(AppError::Tauri)?;
         w.set_focus().map_err(AppError::Tauri)?;
     }
     Ok(())
@@ -640,10 +643,11 @@ pub fn hide_config_window(app: AppHandle) -> Result<(), IpcError> {
 pub fn apply_overlay_config(app: &AppHandle, cfg: &OverlayConfig) -> Result<(), AppError> {
     let _ = cfg;
     if let Some(w) = app.get_webview_window(OVERLAY_LABEL) {
-        w.set_always_on_top(false).map_err(AppError::Tauri)?;
+        w.set_always_on_top(true).map_err(AppError::Tauri)?;
         w.set_ignore_cursor_events(false).map_err(AppError::Tauri)?;
         w.show().map_err(AppError::Tauri)?;
         let _ = dock_overlay_now(app);
+        watch_overlay_z_order(app, &w)?;
     }
     Ok(())
 }
@@ -704,6 +708,10 @@ pub fn dock_overlay_now(app: &AppHandle) -> Result<(), AppError> {
         let layout = crate::windows_api::taskbar::find_taskbar_layout()
             .ok_or_else(|| AppError::NotFound("Shell_TrayWnd".into()))?;
         if let Some(w) = app.get_webview_window(OVERLAY_LABEL) {
+            // Repair Z order even when the size and position already match.
+            crate::windows_api::taskbar::ensure_overlay_above_taskbar(
+                windows::Win32::Foundation::HWND(w.hwnd()?.0 as _),
+            )?;
             let size = w.outer_size().map_err(AppError::Tauri)?;
             let (win_w, win_h) = crate::windows_api::taskbar::dock_size(
                 &layout,
@@ -718,25 +726,14 @@ pub fn dock_overlay_now(app: &AppHandle) -> Result<(), AppError> {
             if let Some(rect) = current_window_rect(&w) {
                 let current_w = rect.right - rect.left;
                 let current_h = rect.bottom - rect.top;
-                if rect.left == x
-                    && rect.top == y
-                    && current_w == win_w
-                    && current_h == win_h
-                    && overlay_is_taskbar_child(&w, layout.hwnd)
-                {
+                if rect.left == x && rect.top == y && current_w == win_w && current_h == win_h {
                     return Ok(());
                 }
             }
-            match dock_overlay_as_taskbar_child(&w, &layout, x, y, win_w, win_h) {
-                Ok(()) => {}
-                Err(e) => {
-                    tracing::warn!(?e, "taskbar child dock failed; falling back to topmost");
-                    restore_overlay_popup_style(&w).ok();
-                    w.set_position(PhysicalPosition::new(x, y))
-                        .map_err(AppError::Tauri)?;
-                    force_overlay_topmost(&w)?;
-                }
-            }
+            // Keep the WebView owned by SysPulse. Explorer can destroy and
+            // recreate Shell_TrayWnd during a shell crash, DPI change or update.
+            w.set_position(PhysicalPosition::new(x, y))
+                .map_err(AppError::Tauri)?;
         }
     }
     #[cfg(not(windows))]
@@ -756,26 +753,15 @@ fn current_window_rect(w: &tauri::WebviewWindow) -> Option<RECT> {
     Some(rect)
 }
 
-#[cfg(windows)]
-fn overlay_is_taskbar_child(
-    w: &tauri::WebviewWindow,
-    taskbar: windows::Win32::Foundation::HWND,
-) -> bool {
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::WindowsAndMessaging::GetParent;
-
-    let Ok(hwnd) = w.hwnd() else {
-        return false;
-    };
-    unsafe { GetParent(HWND(hwnd.0 as _)).ok() == Some(taskbar) }
-}
-
 pub fn spawn_taskbar_overlay_z_order_watchdog(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             interval.tick().await;
+            if crate::app::is_shutting_down() {
+                break;
+            }
             if let Err(e) = restore_taskbar_overlay(&app) {
                 tracing::debug!(?e, "taskbar overlay z-order watchdog skipped");
             }
@@ -785,8 +771,7 @@ pub fn spawn_taskbar_overlay_z_order_watchdog(app: AppHandle) {
 
 fn restore_taskbar_overlay(app: &AppHandle) -> Result<(), AppError> {
     if let Some(w) = get_or_create_overlay_window(app)? {
-        w.set_always_on_top(false).ok();
-        w.set_ignore_cursor_events(false).ok();
+        w.set_always_on_top(true).map_err(AppError::Tauri)?;
         if !w.is_visible().unwrap_or(false) {
             w.show().map_err(AppError::Tauri)?;
         }
@@ -814,137 +799,26 @@ fn get_or_create_overlay_window(app: &AppHandle) -> Result<Option<tauri::Webview
         .map_err(AppError::Tauri)?
         .build()
         .map_err(AppError::Tauri)?;
+    watch_overlay_z_order(app, &w)?;
     Ok(Some(w))
 }
 
-#[cfg(windows)]
-fn force_overlay_topmost(w: &tauri::WebviewWindow) -> Result<(), AppError> {
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::WindowsAndMessaging::{
-        SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-    };
-
-    let hwnd = HWND(w.hwnd().map_err(AppError::Tauri)?.0 as _);
-    unsafe {
-        SetWindowPos(
-            hwnd,
-            HWND_TOPMOST,
-            0,
-            0,
-            0,
-            0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-        )
-        .map_err(AppError::Windows)?;
+fn watch_overlay_z_order(app: &AppHandle, w: &tauri::WebviewWindow) -> Result<(), AppError> {
+    #[cfg(windows)]
+    {
+        let hwnd = w.hwnd()?.0 as isize;
+        app.run_on_main_thread(move || {
+            if crate::app::is_shutting_down() {
+                return;
+            }
+            if let Err(error) = crate::windows_api::taskbar::watch_overlay_z_order(
+                windows::Win32::Foundation::HWND(hwnd as *mut _),
+            ) {
+                tracing::warn!(?error, "overlay z-order event hooks unavailable");
+            }
+        })?;
     }
-    Ok(())
-}
-
-#[cfg(not(windows))]
-fn force_overlay_topmost(_w: &tauri::WebviewWindow) -> Result<(), AppError> {
-    Ok(())
-}
-
-#[cfg(windows)]
-fn dock_overlay_as_taskbar_child(
-    w: &tauri::WebviewWindow,
-    layout: &crate::windows_api::taskbar::TaskbarLayout,
-    screen_x: i32,
-    screen_y: i32,
-    width: i32,
-    height: i32,
-) -> Result<(), AppError> {
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::WindowsAndMessaging::{
-        GetWindowLongPtrW, SetParent, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE,
-        HWND_TOP, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_SHOWWINDOW, WS_CHILD, WS_CLIPSIBLINGS,
-        WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
-    };
-
-    let hwnd = HWND(w.hwnd().map_err(AppError::Tauri)?.0 as _);
-    unsafe {
-        let style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
-        let wanted_style = (style | WS_CHILD.0 | WS_CLIPSIBLINGS.0) & !WS_POPUP.0;
-        if wanted_style != style {
-            SetWindowLongPtrW(hwnd, GWL_STYLE, wanted_style as isize);
-        }
-
-        let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
-        let wanted_ex_style =
-            (ex_style | WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0) & !WS_EX_APPWINDOW.0;
-        if wanted_ex_style != ex_style {
-            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, wanted_ex_style as isize);
-        }
-
-        SetParent(hwnd, layout.hwnd).map_err(AppError::Windows)?;
-        let x = screen_x - layout.bar.x;
-        let y = screen_y - layout.bar.y;
-        SetWindowPos(
-            hwnd,
-            HWND_TOP,
-            x,
-            y,
-            width,
-            height,
-            SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_SHOWWINDOW,
-        )
-        .map_err(AppError::Windows)?;
-    }
-    Ok(())
-}
-
-#[cfg(not(windows))]
-fn dock_overlay_as_taskbar_child(
-    _w: &tauri::WebviewWindow,
-    _layout: &crate::windows_api::taskbar::TaskbarLayout,
-    _screen_x: i32,
-    _screen_y: i32,
-    _width: i32,
-    _height: i32,
-) -> Result<(), AppError> {
-    Ok(())
-}
-
-#[cfg(windows)]
-fn restore_overlay_popup_style(w: &tauri::WebviewWindow) -> Result<(), AppError> {
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::WindowsAndMessaging::{
-        GetWindowLongPtrW, SetParent, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE,
-        HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, WS_CHILD,
-        WS_EX_NOACTIVATE, WS_POPUP,
-    };
-
-    let hwnd = HWND(w.hwnd().map_err(AppError::Tauri)?.0 as _);
-    unsafe {
-        SetParent(hwnd, HWND::default()).map_err(AppError::Windows)?;
-
-        let style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
-        let wanted_style = (style | WS_POPUP.0) & !WS_CHILD.0;
-        if wanted_style != style {
-            SetWindowLongPtrW(hwnd, GWL_STYLE, wanted_style as isize);
-        }
-
-        let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
-        let wanted_ex_style = ex_style & !WS_EX_NOACTIVATE.0;
-        if wanted_ex_style != ex_style {
-            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, wanted_ex_style as isize);
-        }
-
-        SetWindowPos(
-            hwnd,
-            HWND_TOPMOST,
-            0,
-            0,
-            0,
-            0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
-        )
-        .map_err(AppError::Windows)?;
-    }
-    Ok(())
-}
-
-#[cfg(not(windows))]
-fn restore_overlay_popup_style(_w: &tauri::WebviewWindow) -> Result<(), AppError> {
+    #[cfg(not(windows))]
+    let _ = (app, w);
     Ok(())
 }

@@ -124,7 +124,7 @@ public static class FanControl
         var pending = new Stack<IHardware>(host.Inner.Hardware);
         while (pending.TryPop(out var hw))
         {
-            if (!seen.Add(hw)) continue;
+            if (!seen.Add(hw) || hw.HardwareType == HardwareType.Storage) continue;
             yield return hw;
             foreach (var sub in hw.SubHardware) pending.Push(sub);
         }

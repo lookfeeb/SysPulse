@@ -5,7 +5,7 @@ import { App as AntdApp } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { bindPanelWheelRouting } from "./panelWheel";
 import { buildWorkspaceViews, nextSessionAfterRemoval, resolveTreeSelection } from "./sessionNavigation";
-import { canRevealSession, isCodexIndexSession, isReadOnlySession, } from "./sessionCapabilities";
+import { canRevealSession, isReadOnlySession, } from "./sessionCapabilities";
 import "./SessionManager.css";
 const EMPTY_TREE: AiSessionTree = {
     workspaces: [],
@@ -219,7 +219,7 @@ export function useSessionManager() {
                 if (neighbor) void loadSessionPage(neighbor, 1, true);
             }
             if (await loadTree(true, false)) {
-                void message.success(isCodexIndexSession(summary) ? "残留索引已清理" : "会话已删除");
+                void message.success("会话已删除");
             }
             else {
                 void message.warning("会话已删除，但列表刷新失败");
@@ -356,7 +356,6 @@ export function useSessionManager() {
         }
     };
     const readonlySelected = selectedSummary ? isReadOnlySession(selectedSummary) : false;
-    const indexOnlySelected = selectedSummary ? isCodexIndexSession(selectedSummary) : false;
     const canRevealSelected = selectedSummary ? canRevealSession(selectedSummary) : false;
     const totalMessageCount = session?.totalMessages ?? selectedSummary?.messageCount ?? 0;
     const workspaceForDelete = activeWorkspace
@@ -368,6 +367,6 @@ export function useSessionManager() {
     const hasMutation = mutatingKey !== null;
     const totalPages = session ? Math.ceil(session.totalMessages / session.pageSize) : 1;
     const retrySession = () => selectedRef.current ? loadSessionPage(selectedRef.current, messagePageRef.current, true) : Promise.resolve(false);
-    return { activeWorkspace, activeWorkspaceHash, canDeleteWorkspace, canRevealSelected, changeMessagePage, conversationPanelRef, conversationScrollRef, copiedMessageKey, copyMessage, deleteSession, deleteWorkspace, exportSession, groupedSessions, hasMutation, indexOnlySelected, messagePage, mutatingKey, openWorkspace, pagedMessages, readonlySelected, refreshTree, revealSession, selectSession, selectedSummary, session, sessionListScrollRef, sessionLoading, sessionSidebarRef, totalMessageCount, totalPages, treeLoading, workspaceForDelete, workspaces, visibleSessions, retrySession };
+    return { activeWorkspace, activeWorkspaceHash, canDeleteWorkspace, canRevealSelected, changeMessagePage, conversationPanelRef, conversationScrollRef, copiedMessageKey, copyMessage, deleteSession, deleteWorkspace, exportSession, groupedSessions, hasMutation, messagePage, mutatingKey, openWorkspace, pagedMessages, readonlySelected, refreshTree, revealSession, selectSession, selectedSummary, session, sessionListScrollRef, sessionLoading, sessionSidebarRef, totalMessageCount, totalPages, treeLoading, workspaceForDelete, workspaces, visibleSessions, retrySession };
 }
 export type SessionModel = ReturnType<typeof useSessionManager>;

@@ -56,18 +56,13 @@ fn collect_source(d: &SourceDef) -> Vec<SessionSummary> {
         return Vec::new();
     };
     let root_available = root.is_dir()
-        || (matches!(d.source, "codex" | "claude") && root.parent().is_some_and(Path::is_dir))
-        || (d.source == "codex"
-            && codex_archive_root(&root).is_some_and(|path| path.is_dir()));
+        || (d.source == "claude" && root.parent().is_some_and(Path::is_dir));
     if !root_available {
         return Vec::new();
     }
     let mut out = Vec::new();
     match d.layout {
         Layout::File { depth } => {
-            if d.source == "codex" {
-                return collect_codex_source(d, &root, depth);
-            }
             if d.source == "claude" {
                 return collect_claude_source(d, &root, depth);
             }

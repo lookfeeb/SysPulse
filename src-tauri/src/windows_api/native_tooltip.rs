@@ -1,8 +1,6 @@
 //! Native tracking tooltip for the taskbar-docked overlay.
 //!
-//! The overlay WebView is reparented into `Shell_TrayWnd` as a `WS_CHILD`.
-//! Browser and WebView tooltip popups are unreliable in that configuration, so
-//! detailed hover data is rendered by the Windows common-controls tooltip.
+//! Detailed hover data is rendered by a Windows common-controls tooltip.
 
 use std::sync::{Mutex, OnceLock};
 use windows::core::{w, PWSTR};

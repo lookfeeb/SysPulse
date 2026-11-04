@@ -57,7 +57,7 @@ pub fn setup(app: &mut App) -> std::result::Result<(), Box<dyn std::error::Error
         let mut rx = sampler.subscribe();
         let last_snapshot = last_snapshot.clone();
         tauri::async_runtime::spawn(async move {
-            while let Ok(snap) = rx.recv().await {
+            while let Some(snap) = recv_latest(&mut rx).await {
                 *last_snapshot.write() = Some(snap.clone());
                 emit_stats(&app_handle, &snap);
                 tray::maybe_update_tray_stats(&app_handle, &snap);
@@ -71,7 +71,7 @@ pub fn setup(app: &mut App) -> std::result::Result<(), Box<dyn std::error::Error
         let mut cfg_rx = config.subscribe();
         let mut prev_overlay = Some(config.snapshot().overlay);
         tauri::async_runtime::spawn(async move {
-            while let Ok(cfg) = cfg_rx.recv().await {
+            while let Some(cfg) = recv_latest(&mut cfg_rx).await {
                 emit_config_changed(&app_handle, &cfg);
                 if Some(&cfg.overlay) != prev_overlay.as_ref() {
                     if let Err(e) = apply_overlay_config(&app_handle, &cfg.overlay) {
@@ -121,11 +121,11 @@ pub fn setup(app: &mut App) -> std::result::Result<(), Box<dyn std::error::Error
             loop {
                 match hw_rx.recv().await {
                     Ok(snap) => {
-                        if !snap.is_fresh() {
+                        if !snap.is_connected() {
                             continue;
                         }
                         *last_hw.write() = Some(snap.clone());
-                        let _ = app_handle.emit("hw:update", &snap);
+                        let _ = app_handle.emit("hw:update", &snap.for_display());
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
@@ -231,22 +231,27 @@ fn resolve_helper_path(app: &App) -> PathBuf {
         .join("hw-helper.exe")
 }
 
-fn apply_initial_window_state(app: &App, _cfg: &crate::config::AppConfig) {
-    if let Some(w) = app.get_webview_window("overlay") {
-        // Taskbar-docked mode: always_on_top is managed by dock logic
-        let _ = w.set_always_on_top(false);
-
-        let _ = w.show();
-        let _ = w.set_ignore_cursor_events(false);
+fn apply_initial_window_state(app: &App, cfg: &crate::config::AppConfig) {
+    // Startup and later settings changes must install the same positioning
+    // and native event handling; a separate show-only path misses the hooks.
+    if let Err(error) = apply_overlay_config(app.handle(), &cfg.overlay) {
+        tracing::warn!(?error, "apply initial overlay state failed");
     }
 }
 
 pub fn on_second_instance(app: &AppHandle) -> Result<()> {
     if let Some(w) = app.get_webview_window("config") {
-        let _ = w.show();
-        let _ = w.set_focus();
+        w.show()?;
+        w.unminimize()?;
+        w.set_focus()?;
     }
     Ok(())
+}
+
+static SHUTTING_DOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn is_shutting_down() -> bool {
+    SHUTTING_DOWN.load(std::sync::atomic::Ordering::SeqCst)
 }
 
 pub fn request_quit(app: AppHandle) {
@@ -256,6 +261,10 @@ pub fn request_quit(app: AppHandle) {
 }
 
 pub async fn quit_gracefully(app: AppHandle) {
+    if SHUTTING_DOWN.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    tracing::info!("explicit shutdown requested");
     let cleanup = app.try_state::<AppState>().map(|state| {
         state.fan_watchdog_token.cancel();
         (
@@ -270,7 +279,7 @@ pub async fn quit_gracefully(app: AppHandle) {
     if let Some((fan_control, hw_client, writer, sampler, hw_sampler)) = cleanup {
         // Run cleanup with a hard 2s deadline. Operations are parallelized
         // so a stuck hw-helper doesn't block DB flush or sampler shutdown.
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), async move {
+        let cleanup_result = tokio::time::timeout(std::time::Duration::from_secs(2), async move {
             tokio::join!(
                 async {
                     crate::hw::fan_control::reset_all_best_effort(&fan_control, &hw_client).await;
@@ -290,23 +299,57 @@ pub async fn quit_gracefully(app: AppHandle) {
             );
         })
         .await;
+        if cleanup_result.is_err() {
+            tracing::warn!("shutdown cleanup exceeded deadline");
+        }
     }
 
     app.exit(0);
-
-    // Final safety net: if app.exit didn't terminate the process (e.g. a
-    // background task is blocking the runtime), force-kill after 500ms.
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-    std::process::exit(0);
 }
 
 pub fn on_window_event(window: &tauri::Window, event: &WindowEvent) {
+    if matches!(event, WindowEvent::Destroyed) {
+        #[cfg(windows)]
+        if window.label() == "overlay" {
+            crate::windows_api::taskbar::stop_overlay_z_order_watch();
+        }
+        tracing::warn!(
+            label = window.label(),
+            shutting_down = is_shutting_down(),
+            "window destroyed"
+        );
+    }
     if window.label() != "config" {
         return;
     }
     if let WindowEvent::CloseRequested { api, .. } = event {
         // Hide instead of closing — keeps app running in tray.
-        api.prevent_close();
-        let _ = window.hide();
+        if !is_shutting_down() {
+            api.prevent_close();
+            let _ = window.hide();
+        }
+    }
+}
+
+// A slow UI must not permanently unsubscribe on a broadcast overflow.
+async fn recv_latest<T: Clone>(rx: &mut tokio::sync::broadcast::Receiver<T>) -> Option<T> {
+    loop {
+        match rx.recv().await {
+            Ok(value) => return Some(value),
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+        }
+    }
+}
+#[cfg(test)]
+mod event_tests {
+    #[tokio::test]
+    async fn saturated_subscriber_continues_receiving() {
+        let (tx, mut rx) = tokio::sync::broadcast::channel(1);
+        tx.send(1).unwrap();
+        tx.send(2).unwrap();
+        assert_eq!(super::recv_latest(&mut rx).await, Some(2));
+        tx.send(3).unwrap();
+        assert_eq!(super::recv_latest(&mut rx).await, Some(3));
     }
 }

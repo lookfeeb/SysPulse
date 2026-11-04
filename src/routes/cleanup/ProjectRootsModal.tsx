@@ -1,6 +1,7 @@
 import { MAX_PROJECT_ROOTS, normalizePathKey, removeProjectRoot } from "@/routes/cleanupSelection";
 import { CheckCircleOutlined, CloseOutlined, DeleteOutlined, EditOutlined, FolderAddOutlined, FolderOpenOutlined, SafetyCertificateOutlined } from "@ant-design/icons";
-import { openPath } from "@tauri-apps/plugin-opener";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { displayPath } from "@/utils/path";
 import { App, Button, Modal, Popconfirm, Tooltip } from "antd";
 import type { CleanupModel } from "./useCleanupModel";
 import "./ProjectRootsModal.css";
@@ -29,12 +30,13 @@ export default function ProjectRootsModal({ model }: { model: CleanupModel }) {
         </div>
         <div className="project-scope-list">
           {projectRoots.length ? projectRoots.map((root, index) => {
-            const name = root.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || root;
+            const readableRoot = displayPath(root);
+            const name = readableRoot.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || readableRoot;
             return <article className="project-scope-root" key={normalizePathKey(root)}>
               <span className="project-scope-root-icon"><FolderOpenOutlined /></span>
               <div className="project-scope-root-copy">
                 <strong>{name}</strong>
-                <Tooltip title={root} placement="topLeft"><button type="button" title={`打开 ${root}`} onClick={() => void openPath(root).catch(() => message.error("无法打开此目录，请检查路径是否存在"))}>{root}</button></Tooltip>
+                <Tooltip title={readableRoot} placement="topLeft"><button type="button" title={`在文件管理器中定位：${readableRoot}`} onClick={() => void revealItemInDir(root).catch(() => message.error("无法定位此目录，请检查目录是否仍存在或有访问权限"))}>{readableRoot}</button></Tooltip>
               </div>
               <div className="project-scope-root-actions">
                 <Tooltip title="替换目录"><Button type="text" size="small" icon={<EditOutlined />} aria-label={`替换目录 ${root}`} disabled={busy} onClick={() => void onReplaceProjectRoot(index)} /></Tooltip>

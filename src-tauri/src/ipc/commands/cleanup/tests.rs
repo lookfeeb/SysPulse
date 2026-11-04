@@ -272,6 +272,7 @@ fn advanced_category_requires_explicit_confirmation() {
 
 fn complete_test_scan() -> ScanResult {
     ScanResult {
+        plan: Arc::default(),
         scan_id: "scan-1".into(),
         categories: Vec::new(),
         total_size_bytes: 0,
@@ -293,6 +294,130 @@ fn complete_test_scan() -> ScanResult {
     }
 }
 
+#[cfg(windows)]
+#[test]
+fn inventory_clean_preserves_changed_new_and_busy_files_without_skipping_siblings() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let diagnostics = Arc::new(ScanDiagnostics::default());
+    let _guard = install_test_scan_diagnostics(diagnostics.clone());
+    CLEAN_CANCEL_REQUESTED.store(false, Ordering::SeqCst);
+    SCAN_CANCEL_REQUESTED.store(false, Ordering::SeqCst);
+    let root = temp_root("inventory");
+    let sub = root.join("changing-directory");
+    fs::create_dir_all(&sub).unwrap();
+    for name in ["old.tmp", "changed.tmp", "busy.tmp"] {
+        fs::write(sub.join(name), b"original").unwrap();
+    }
+    let category =
+        scan_existing_dirs_category("app-cache", "test", "test", vec![root.clone()]).unwrap();
+    let scan = ScanResult {
+        plan: diagnostics.plan.clone(),
+        categories: vec![category],
+        ..complete_test_scan()
+    };
+    // Updating the directory and adding a backdated file must not suppress old.tmp
+    // or let the new file enter the authorized inventory.
+    fs::write(sub.join("new.tmp"), b"new").unwrap();
+    File::options()
+        .write(true)
+        .open(sub.join("new.tmp"))
+        .unwrap()
+        .set_times(
+            FileTimes::new().set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(86400)),
+        )
+        .unwrap();
+    fs::write(sub.join("changed.tmp"), b"new contents").unwrap();
+    let busy = File::options()
+        .read(true)
+        .share_mode(0)
+        .open(sub.join("busy.tmp"))
+        .unwrap();
+    let result = do_clean(None, scan, &["app-cache".into()], &[]);
+    assert_eq!(result.deleted_files, 1, "{result:?}");
+    assert_eq!(result.skipped_files, 2, "{result:?}");
+    assert_eq!(result.paths[0].changed_files, 1);
+    assert_eq!(result.paths[0].busy_files, 1);
+    assert!(!sub.join("old.tmp").exists());
+    assert!(sub.join("new.tmp").exists());
+    assert!(sub.join("changed.tmp").exists());
+    drop(busy);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn inventory_rejects_root_replacement_and_backdated_file_replacement() {
+    let diagnostics = Arc::new(ScanDiagnostics::default());
+    let _guard = install_test_scan_diagnostics(diagnostics.clone());
+    SCAN_CANCEL_REQUESTED.store(false, Ordering::SeqCst);
+    let root = temp_root("inventory-replacement");
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("cache.bin");
+    fs::write(&path, b"first").unwrap();
+    let category =
+        scan_existing_dirs_category("app-cache", "test", "test", vec![root.clone()]).unwrap();
+    let detail = &category.paths[0];
+    let file = diagnostics
+        .plan
+        .lock()
+        .unwrap()
+        .under(Path::new(&detail.path))
+        .next()
+        .unwrap()
+        .clone();
+    fs::rename(&path, root.join("original.bin")).unwrap();
+    fs::write(&path, b"other").unwrap();
+    File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_times(FileTimes::new().set_modified(file.modified))
+        .unwrap();
+    assert_eq!(
+        delete_planned_file(detail, &file).unwrap(),
+        DeleteOutcome::Changed
+    );
+    let previous = root.with_extension("previous");
+    fs::rename(&root, &previous).unwrap();
+    fs::create_dir_all(&root).unwrap();
+    fs::write(&path, b"other").unwrap();
+    assert_eq!(
+        delete_planned_file(detail, &file).unwrap(),
+        DeleteOutcome::Changed
+    );
+    assert!(path.exists());
+    fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(previous).unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn inventory_cancel_and_selective_thumbnail_rules_preserve_user_files() {
+    let diagnostics = Arc::new(ScanDiagnostics::default());
+    let _guard = install_test_scan_diagnostics(diagnostics.clone());
+    SCAN_CANCEL_REQUESTED.store(false, Ordering::SeqCst);
+    let root = temp_root("inventory-thumbnails");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("thumbcache_test.db"), b"cache").unwrap();
+    fs::write(root.join("UsrClass.dat"), b"keep").unwrap();
+    let category = scan_thumbnail_cache(&root).unwrap();
+    let scan = ScanResult {
+        plan: diagnostics.plan.clone(),
+        categories: vec![category],
+        ..complete_test_scan()
+    };
+    CLEAN_CANCEL_REQUESTED.store(true, Ordering::SeqCst);
+    let cancelled = do_clean(None, scan.clone(), &["thumbnails".into()], &[]);
+    CLEAN_CANCEL_REQUESTED.store(false, Ordering::SeqCst);
+    assert!(cancelled.cancelled);
+    assert_eq!(cancelled.deleted_files, 0);
+    assert_eq!(cancelled.paths[0].cancelled_files, 1);
+    let result = do_clean(None, scan, &["thumbnails".into()], &[]);
+    assert_eq!(result.deleted_files, 1, "{result:?}");
+    assert!(root.join("UsrClass.dat").exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn cancelled_or_incomplete_scan_is_never_cleanable() {
     let base = complete_test_scan();
@@ -309,6 +434,73 @@ fn cancelled_or_incomplete_scan_is_never_cleanable() {
         scan_id: String::new(),
         ..base
     }));
+}
+
+#[cfg(windows)]
+#[test]
+fn inventory_exclusion_applies_beneath_selected_ancestor_and_hardlinks_preserve_data() {
+    let diagnostics = Arc::new(ScanDiagnostics::default());
+    let _guard = install_test_scan_diagnostics(diagnostics.clone());
+    CLEAN_CANCEL_REQUESTED.store(false, Ordering::SeqCst);
+    SCAN_CANCEL_REQUESTED.store(false, Ordering::SeqCst);
+    let root = temp_root("inventory-exclude");
+    let cache = root.join("cache");
+    let excluded = cache.join("keep");
+    fs::create_dir_all(&excluded).unwrap();
+    fs::write(excluded.join("keep.bin"), b"user data").unwrap();
+    fs::write(root.join("source.bin"), b"source").unwrap();
+    fs::hard_link(root.join("source.bin"), cache.join("link.bin")).unwrap();
+    let category = scan_existing_dirs_category(
+        "app-cache",
+        "test",
+        "test",
+        vec![cache.clone(), excluded.clone()],
+    )
+    .unwrap();
+    let scan = ScanResult {
+        plan: diagnostics.plan.clone(),
+        categories: vec![category],
+        ..complete_test_scan()
+    };
+    let exclusions = normalize_excluded_paths(
+        &scan,
+        &[fs::canonicalize(&excluded)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned()],
+    );
+    assert_eq!(exclusions.len(), 1);
+    let result = do_clean(None, scan, &["app-cache".into()], &exclusions);
+    assert_eq!(result.deleted_files, 1, "{result:?}");
+    assert_eq!(result.freed_bytes, 0); // Another link retains the allocation.
+    assert_eq!(fs::read(root.join("source.bin")).unwrap(), b"source");
+    assert!(excluded.join("keep.bin").exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn inventory_missing_parent_is_reported_as_missing() {
+    let diagnostics = Arc::new(ScanDiagnostics::default());
+    let _guard = install_test_scan_diagnostics(diagnostics.clone());
+    CLEAN_CANCEL_REQUESTED.store(false, Ordering::SeqCst);
+    SCAN_CANCEL_REQUESTED.store(false, Ordering::SeqCst);
+    let root = temp_root("inventory-missing");
+    let child = root.join("child");
+    fs::create_dir_all(&child).unwrap();
+    fs::write(child.join("cache.bin"), b"cache").unwrap();
+    let category =
+        scan_existing_dirs_category("app-cache", "test", "test", vec![root.clone()]).unwrap();
+    let scan = ScanResult {
+        plan: diagnostics.plan.clone(),
+        categories: vec![category],
+        ..complete_test_scan()
+    };
+    fs::remove_dir_all(child).unwrap();
+    let result = do_clean(None, scan, &["app-cache".into()], &[]);
+    assert_eq!(result.paths[0].missing_files, 1, "{result:?}");
+    assert_eq!(result.paths[0].failed_files, 0);
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -418,6 +610,7 @@ fn export_document_records_category_and_path_selection() {
         file_id: Some(2),
     };
     let scan = ScanResult {
+        plan: Arc::default(),
         scan_id: "scan-export".into(),
         categories: vec![CleanupCategory {
             id: "node-cache".into(),
@@ -463,6 +656,7 @@ fn export_document_records_category_and_path_selection() {
 #[test]
 fn export_document_omits_unselected_categories() {
     let scan = ScanResult {
+        plan: Arc::default(),
         scan_id: "scan-export-filter".into(),
         categories: vec![CleanupCategory {
             id: "rust-target".into(),
@@ -669,31 +863,79 @@ fn process_argument_paths_extract_equals_values() {
 }
 
 #[test]
-fn partial_path_progress_only_fills_unprocessed_items() {
-    assert_eq!(remaining_path_items(10, 13, 8), 5);
-    assert_eq!(remaining_path_items(10, 25, 8), 0);
-    assert_eq!(remaining_path_items(10, 9, 8), 8);
+fn browser_without_profile_arguments_blocks_only_its_own_caches() {
+    let browser = vec![RunningProcessInfo {
+        name: "vivaldi.exe".into(),
+        stem: "vivaldi".into(),
+        command_paths: Vec::new(),
+        cwd: None,
+    }];
+    assert_eq!(
+        running_process_blockers_for_path(
+            "browser-cache",
+            r"C:\Users\tester\AppData\Local\Vivaldi\User Data\Default\Cache",
+            &browser
+        ),
+        vec!["vivaldi.exe"]
+    );
+    assert!(running_process_blockers_for_path(
+        "browser-cache",
+        r"C:\Users\tester\AppData\Local\Google\Chrome\User Data\Default\Cache",
+        &browser
+    )
+    .is_empty());
+    let custom = vec![RunningProcessInfo {
+        name: "chrome.exe".into(),
+        stem: "chrome".into(),
+        command_paths: process_argument_path_keys(r"--user-data-dir=D:\BrowserProfile"),
+        cwd: None,
+    }];
+    assert_eq!(
+        running_process_blockers_for_path(
+            "browser-cache",
+            r"D:\BrowserProfile\Default\Cache",
+            &custom
+        ),
+        vec!["chrome.exe"]
+    );
 }
 
+#[cfg(windows)]
 #[test]
-fn cleanup_root_identity_rejects_replaced_directory() {
-    let root = temp_root("identity");
-    fs::create_dir_all(&root).unwrap();
-    let detail = PathDetail {
-        path: root.to_string_lossy().to_string(),
-        size_bytes: 0,
-        file_count: 0,
-        ..path_detail_identity(&root)
-    };
-    assert!(revalidate_cleanup_root(&detail).is_some());
-
-    let old = root.with_extension("old");
-    fs::rename(&root, &old).unwrap();
-    fs::create_dir_all(&root).unwrap();
-    assert!(revalidate_cleanup_root(&detail).is_none());
-
+fn inventory_refuses_replaced_ancestor_junction() {
+    let diagnostics = Arc::new(ScanDiagnostics::default());
+    let _guard = install_test_scan_diagnostics(diagnostics.clone());
+    SCAN_CANCEL_REQUESTED.store(false, Ordering::SeqCst);
+    let root = temp_root("junction");
+    let cache = root.join("cache");
+    let child = cache.join("child");
+    let outside = root.join("outside");
+    fs::create_dir_all(&child).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+    fs::write(child.join("file.bin"), b"cache").unwrap();
+    fs::write(outside.join("file.bin"), b"user data").unwrap();
+    let category = scan_existing_dirs_category("app-cache", "test", "test", vec![cache]).unwrap();
+    let detail = &category.paths[0];
+    let file = diagnostics
+        .plan
+        .lock()
+        .unwrap()
+        .under(Path::new(&detail.path))
+        .next()
+        .unwrap()
+        .clone();
+    fs::rename(&child, root.join("original")).unwrap();
+    let status = std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; New-Item -ItemType Junction -Path $env:SYSPULSE_TEST_LINK -Target $env:SYSPULSE_TEST_TARGET | Out-Null"])
+        .env("SYSPULSE_TEST_LINK", &child).env("SYSPULSE_TEST_TARGET", &outside)
+        .status().unwrap();
+    assert!(status.success());
+    let outcome = delete_planned_file(detail, &file);
+    // Remove just the junction before the test tree; never traverse its target.
+    fs::remove_dir(&child).unwrap();
+    assert_eq!(outcome.unwrap(), DeleteOutcome::Changed);
+    assert_eq!(fs::read(outside.join("file.bin")).unwrap(), b"user data");
     fs::remove_dir_all(root).unwrap();
-    fs::remove_dir_all(old).unwrap();
 }
 
 #[test]
@@ -749,67 +991,6 @@ fn project_discovery_skips_dangerous_and_duplicate_roots() {
     ];
     deduplicate_paths(&mut paths);
     assert_eq!(paths.len(), 1);
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn cleanup_policy_rejects_files_modified_after_scan() {
-    let root = temp_root("post-scan");
-    fs::create_dir_all(&root).unwrap();
-    let file_path = root.join("new.tmp");
-    fs::write(&file_path, b"new").unwrap();
-    let metadata = fs::metadata(&file_path).unwrap();
-    let policy = CleanupFilePolicy {
-        min_age_days: None,
-        scanned_at: Some(SystemTime::UNIX_EPOCH),
-    };
-    assert_eq!(
-        policy.file_decision(&metadata),
-        CleanupPolicyDecision::ChangedAfterScan
-    );
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn cleanup_policy_uses_scan_time_for_age_eligibility() {
-    let root = temp_root("age-at-scan");
-    fs::create_dir_all(&root).unwrap();
-    let file_path = root.join("became-old.tmp");
-    fs::write(&file_path, b"cache").unwrap();
-    let scanned_at = SystemTime::now() + Duration::from_secs(1);
-    let modified = scanned_at - Duration::from_secs(6 * 24 * 60 * 60);
-    File::options()
-        .write(true)
-        .open(&file_path)
-        .unwrap()
-        .set_times(FileTimes::new().set_modified(modified))
-        .unwrap();
-    let policy = CleanupFilePolicy {
-        min_age_days: Some(7),
-        scanned_at: Some(scanned_at),
-    };
-    assert_eq!(
-        policy.file_decision(&fs::metadata(&file_path).unwrap()),
-        CleanupPolicyDecision::NotEligibleAtScan
-    );
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn cleanup_policy_keeps_age_filter_at_delete_time() {
-    let root = temp_root("delete-age");
-    fs::create_dir_all(&root).unwrap();
-    let file_path = root.join("recent.tmp");
-    fs::write(&file_path, b"recent").unwrap();
-    let metadata = fs::metadata(&file_path).unwrap();
-    let policy = CleanupFilePolicy {
-        min_age_days: Some(7),
-        scanned_at: Some(SystemTime::now() + Duration::from_secs(1)),
-    };
-    assert_eq!(
-        policy.file_decision(&metadata),
-        CleanupPolicyDecision::NotEligibleAtScan
-    );
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -1013,88 +1194,6 @@ fn scanner_handles_many_small_files_and_deep_directories() {
     let (_size, count) = dir_size(&root);
     assert_eq!(count, 2_000);
     assert!(started.elapsed() < Duration::from_secs(10));
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn sandbox_cleanup_deletes_only_scanned_files() {
-    let root = temp_root("sandbox-clean");
-    fs::create_dir_all(&root).unwrap();
-    let scanned = root.join("scanned.tmp");
-    let newer = root.join("newer.tmp");
-    fs::write(&scanned, b"scanned").unwrap();
-    fs::write(&newer, b"newer").unwrap();
-
-    let scanned_time = SystemTime::now() - Duration::from_secs(30);
-    let future_time = SystemTime::now() + Duration::from_secs(30);
-    File::options()
-        .write(true)
-        .open(&scanned)
-        .unwrap()
-        .set_times(FileTimes::new().set_modified(scanned_time))
-        .unwrap();
-    File::options()
-        .write(true)
-        .open(&newer)
-        .unwrap()
-        .set_times(FileTimes::new().set_modified(future_time))
-        .unwrap();
-
-    let policy = CleanupFilePolicy {
-        min_age_days: None,
-        scanned_at: Some(SystemTime::now()),
-    };
-    let mut deleted = 0;
-    for entry in fs::read_dir(&root).unwrap().flatten() {
-        let metadata = entry.metadata().unwrap();
-        if policy.file_decision(&metadata) == CleanupPolicyDecision::Allow {
-            fs::remove_file(entry.path()).unwrap();
-            deleted += 1;
-        }
-    }
-    assert_eq!(deleted, 1);
-    assert!(!scanned.exists());
-    assert!(newer.exists());
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn cleanup_policy_rejects_directories_created_after_scan() {
-    let root = temp_root("new-directory");
-    fs::create_dir_all(&root).unwrap();
-    let policy = CleanupFilePolicy {
-        min_age_days: None,
-        scanned_at: Some(SystemTime::UNIX_EPOCH),
-    };
-    assert_eq!(
-        policy.directory_decision(&fs::metadata(&root).unwrap()),
-        CleanupPolicyDecision::ChangedAfterScan
-    );
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[cfg(windows)]
-#[test]
-fn cleanup_policy_rejects_new_file_with_backdated_modified_time() {
-    let root = temp_root("backdated-new-file");
-    fs::create_dir_all(&root).unwrap();
-    let scanned_at = SystemTime::now() - Duration::from_secs(10);
-    let file_path = root.join("new.tmp");
-    fs::write(&file_path, b"new").unwrap();
-    File::options()
-        .write(true)
-        .open(&file_path)
-        .unwrap()
-        .set_times(FileTimes::new().set_modified(scanned_at - Duration::from_secs(10)))
-        .unwrap();
-    let policy = CleanupFilePolicy {
-        min_age_days: None,
-        scanned_at: Some(scanned_at),
-    };
-    assert_eq!(
-        policy.file_decision(&fs::metadata(&file_path).unwrap()),
-        CleanupPolicyDecision::ChangedAfterScan
-    );
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -1353,53 +1452,6 @@ fn browser_profiles_include_custom_and_alternative_browsers_but_exclude_user_dat
     let paths = browser_cache_dirs(&local, Some(&roaming));
     assert_eq!(paths.len(), 4);
     assert!(!paths.iter().any(|path| path.ends_with("Local Storage")));
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[cfg(windows)]
-#[test]
-fn cleanup_skips_locked_file_and_continues_other_files() {
-    use std::os::windows::fs::OpenOptionsExt;
-    let root = temp_root("locked-file");
-    fs::create_dir_all(root.join("nested")).unwrap();
-    let locked = root.join("nested/locked.tmp");
-    fs::write(&locked, "locked").unwrap();
-    fs::write(root.join("free.tmp"), "free").unwrap();
-    let handle = fs::OpenOptions::new()
-        .read(true)
-        .share_mode(1)
-        .open(&locked)
-        .unwrap();
-    let mut progress = CleanProgress {
-        app: None,
-        total_items: 2,
-        processed_items: 0,
-        current_category: String::new(),
-        current_path: None,
-        freed_bytes: 0,
-        deleted_files: 0,
-        failed_items: 0,
-        last_emit: Instant::now(),
-    };
-    let mut errors = Vec::new();
-    let mut diagnostics = PathCleanupDiagnostics::default();
-    remove_dir_contents_with_progress(
-        &root,
-        &mut progress,
-        CleanupFilePolicy {
-            min_age_days: None,
-            scanned_at: None,
-        },
-        &mut errors,
-        &mut diagnostics,
-    )
-    .unwrap();
-    assert!(locked.is_file());
-    assert!(!root.join("free.tmp").exists());
-    assert_eq!(progress.deleted_files, 1);
-    assert_eq!(progress.failed_items, 1);
-    assert!(errors.iter().any(|error| error.contains("文件正在使用")));
-    drop(handle);
     fs::remove_dir_all(root).unwrap();
 }
 

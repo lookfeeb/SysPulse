@@ -202,3 +202,5 @@ body {
 .hidden {
   display: none !important;
 }
+
+.sensor-delayed { opacity: .72; text-decoration: underline dotted; text-underline-offset: 3px; }

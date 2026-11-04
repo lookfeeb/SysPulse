@@ -12,8 +12,8 @@ pub fn get_hw_snapshot(state: State<'_, AppState>) -> Result<Option<HwSnapshot>,
         .last_hw_snapshot
         .read()
         .as_ref()
-        .filter(|s| s.is_fresh())
-        .cloned())
+        .filter(|s| s.is_connected())
+        .map(HwSnapshot::for_display))
 }
 
 #[tauri::command]

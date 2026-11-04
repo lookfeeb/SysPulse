@@ -3,6 +3,7 @@ use super::*;
 // ─── Scan logic ─────────────────────────────────────────────────────────────
 
 pub(super) struct ScanDiagnostics {
+    pub(super) plan: Arc<Mutex<FilePlan>>,
     pub(super) scanned_paths: AtomicU64,
     pub(super) skipped_paths: AtomicU64,
     pub(super) ignored_paths: AtomicU64,
@@ -19,6 +20,7 @@ pub(super) struct ScanDiagnostics {
 impl Default for ScanDiagnostics {
     fn default() -> Self {
         Self {
+            plan: Arc::new(Mutex::new(FilePlan::default())),
             scanned_paths: AtomicU64::new(0),
             skipped_paths: AtomicU64::new(0),
             ignored_paths: AtomicU64::new(0),
@@ -246,18 +248,8 @@ pub(super) fn do_scan(custom_project_roots: Vec<PathBuf>, colony: ColonyConfig) 
                     std::env::var("TMP")
                         .ok()
                         .and_then(|s| validate_temp_dir(Path::new(&s))),
-                    Some(PathBuf::from(r"C:\Windows\Temp")),
+                    std::env::var_os("SystemRoot").map(|root| PathBuf::from(root).join("Temp")),
                 ],
-            )
-        },
-        || {
-            scan_dir_category(
-                "win-update",
-                "Windows 更新缓存",
-                "已下载的 Windows 更新包",
-                &[Some(PathBuf::from(
-                    r"C:\Windows\SoftwareDistribution\Download",
-                ))],
             )
         },
         || scan_rust_targets(&[]),
@@ -397,6 +389,7 @@ pub(super) fn finalize_scan_result(
     let cancelled = SCAN_CANCEL_REQUESTED.load(Ordering::SeqCst);
 
     ScanResult {
+        plan: diagnostics.plan.clone(),
         scan_id: String::new(),
         categories,
         total_size_bytes,
@@ -475,7 +468,6 @@ pub(super) fn cleanup_policy(id: &str) -> CleanupPolicy {
 pub(super) fn category_matched_rule(id: &str) -> &'static str {
     match id {
         "win-temp" => "临时目录 + 保留期",
-        "win-update" => "Windows Update 下载目录",
         "rust-target" => "Cargo.toml + target 构建产物标记",
         "node-cache" => "包管理器缓存目录",
         "python-cache" => "Python 工具缓存或项目标记",

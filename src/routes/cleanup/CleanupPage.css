@@ -847,6 +847,17 @@
   min-width: 0;
 }
 
+.cleanup-review-path-main > button:hover > span:last-child,
+.cleanup-review-path-main > button:focus-visible > span:last-child {
+  text-decoration: underline;
+}
+
+.cleanup-review-path-main > button:focus-visible {
+  outline: 2px solid #2684cf;
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
 .cleanup-review-path-main > small {
   display: block;
   margin: 4px 0 0 34px;
@@ -1171,3 +1182,15 @@
   .cleanup-overview-body { grid-template-columns: minmax(0, 1fr); }
   .cleanup-scan-summary { border-left: 0; border-top: 1px solid #edf1f5; }
 }
+
+.cleanup-report { background: var(--ant-color-bg-container, #fff); border: 1px solid var(--ant-color-border-secondary, #eee); border-radius: 12px; padding: 16px 20px; }
+.cleanup-report > header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.cleanup-report > header > .anticon { color: #159c88; }
+.cleanup-report > header b { color: #008d88; }
+.cleanup-report > p { color: #667085; font-size: 12px; margin: 10px 0; }
+.cleanup-report summary { cursor: pointer; font-size: 12px; color: #526478; }
+.cleanup-report-paths { max-height: 320px; overflow: auto; margin-top: 12px; }
+.cleanup-report-paths article { padding: 12px 0; border-top: 1px solid #edf0f3; }
+.cleanup-report-path { overflow-wrap: anywhere; color: #667085; font-size: 12px; margin: 4px 0; }
+.cleanup-report-counts { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; }
+.cleanup-report li { overflow-wrap: anywhere; font-size: 12px; }

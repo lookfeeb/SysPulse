@@ -5,6 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { fmtFreq, fmtPct, fmtRpm, fmtSpeed, fmtTemp, maxValid, sumValid } from "@/utils/format";
 import { expandOrderedItems, overlayPairFor } from "@/utils/overlayItems";
 import type { OverlayItem } from "@/bindings";
+import { sensorAge, visibleHardware } from "@/utils/hardwareFreshness";
 
 interface InterfaceStats {
   bytesSentPerSec: number;
@@ -24,6 +25,8 @@ interface DiskHw {
 }
 
 interface HwSnapshot {
+  sampleAgeMs?: number;
+  storageAgeMs?: number;
   cpu?: { packageTempC: number | null; frequencyMhz: number | null } | null;
   gpus?: { tempC: number | null; usagePercent: number | null }[];
   disks?: DiskHw[];
@@ -285,7 +288,7 @@ async function runMenuAction(action: string) {
       });
     }
   } catch (e) {
-    console.warn("context menu action failed", e);
+    console.warn("overlay action failed", e);
   }
 }
 
@@ -312,6 +315,13 @@ async function createContextMenu(root: HTMLElement) {
 
 async function main() {
   const root = document.getElementById("root") as HTMLElement;
+  // Bind before asynchronous initialization so opening the main window never
+  // depends on menu creation, configuration loading or sensor subscriptions.
+  document.body.addEventListener("dblclick", (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    void runMenuAction("settings");
+  });
   await createContextMenu(root);
 
   let config: OverlayConfig | null = null;
@@ -359,7 +369,16 @@ async function main() {
   });
 
   let lastHardwareAt: number | null = null;
+  let lastHardware: HwSnapshot = {};
   const renderHardware = (h: HwSnapshot) => {
+    const elapsed = lastHardwareAt == null ? 0 : performance.now() - lastHardwareAt;
+    const delayed = sensorAge(h.sampleAgeMs, elapsed) > 5000;
+    const diskDelayed = sensorAge(h.storageAgeMs, elapsed) > 5000;
+    h = visibleHardware(h, elapsed);
+    for (const element of [valCpuTemp, valCpuFreq, valGpuTemp, valGpuUsage, valFanRpm, valMbTemp]) {
+      if (element) { element.classList.toggle("sensor-delayed", delayed); element.setAttribute("aria-label", delayed ? "采集延迟，最近读数" : "实时读数"); }
+    }
+    for (const element of [valDiskR, valDiskW, valDiskTemp]) element?.classList.toggle("sensor-delayed", diskDelayed);
     const changed = [
       setText(valCpuTemp, fmtTemp(h.cpu?.packageTempC)),
       setText(valCpuFreq, fmtFreq(h.cpu?.frequencyMhz)),
@@ -382,19 +401,18 @@ async function main() {
 
   await listen<HwSnapshot>("hw:update", (e) => {
     lastHardwareAt = performance.now();
+    lastHardware = e.payload;
     renderHardware(e.payload);
   });
   await listen<{ status: string }>("hw:helper-status", (e) => {
     if (e.payload.status !== "running") {
       lastHardwareAt = null;
+      lastHardware = {};
       renderHardware({});
     }
   });
   const freshnessTimer = setInterval(() => {
-    if (lastHardwareAt != null && performance.now() - lastHardwareAt > 5000) {
-      lastHardwareAt = null;
-      renderHardware({});
-    }
+    if (lastHardwareAt != null) renderHardware(lastHardware);
   }, 1000);
   window.addEventListener("beforeunload", () => clearInterval(freshnessTimer), { once: true });
 
@@ -405,14 +423,6 @@ async function main() {
     autoFitWindow(root, { allowShrink: true });
   });
 
-  // Double-click → open config window.
-  document.body.addEventListener("dblclick", async () => {
-    try {
-      await invoke("show_config_window");
-    } catch (e) {
-      console.warn("show_config_window failed", e);
-    }
-  });
 }
 
 void main();

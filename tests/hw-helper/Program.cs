@@ -26,10 +26,56 @@ IHardware Device(HardwareType type, ISensor[] sensors, IHardware[]? children = n
     });
 HwSnapshot Build(params IHardware[] devices) => SnapshotBuilder.Build(devices, new WmiCache());
 
+Test("mailbox reads do not wait for blocked collection and preserve sample age", () => {
+    var mailbox = new SnapshotMailbox();
+    Check(mailbox.Read().Snapshot == null);
+    var sample = new HwSnapshot { TimestampMs = 123, Cpu = new CpuHw { PackageTempC = 73 }, Fans = new() { new FanHw { Rpm = 0 } } };
+    var started = System.Diagnostics.Stopwatch.GetTimestamp() - 6 * System.Diagnostics.Stopwatch.Frequency;
+    mailbox.Publish(sample, started);
+    using var release = new ManualResetEventSlim();
+    var blockedCollection = Task.Run(() => { release.Wait(); mailbox.Publish(new HwSnapshot { TimestampMs = 124 }, System.Diagnostics.Stopwatch.GetTimestamp()); });
+    var timer = System.Diagnostics.Stopwatch.StartNew();
+    for (var i = 0; i < 1000; i++) {
+        var (current, age) = mailbox.Read();
+        Check(current?.Cpu?.PackageTempC == 73 && current.Fans[0].Rpm == 0 && age >= 6000);
+    }
+    release.Set();
+    Check(blockedCollection.Wait(3000));
+    Check(timer.ElapsedMilliseconds < 3000);
+    Check(mailbox.Read().Snapshot?.TimestampMs == 124);
+});
 Test("finite ranges", () => {
     foreach (var value in new double?[] { null, double.NaN, double.PositiveInfinity, -1, 151 })
         Check(SnapshotBuilder.Range(value, 0, 150) == null);
     Check(SnapshotBuilder.Range(0, 0, 150) == 0 && SnapshotBuilder.Range(150, 0, 150) == 150);
+});
+Test("blocked disk cannot stall CPU, fans, snapshot reads or orderly shutdown", () => {
+    using var diskEntered = new ManualResetEventSlim();
+    using var releaseDisk = new ManualResetEventSlim();
+    int cpuUpdates = 0;
+    var cpu = Device(HardwareType.Cpu, [Sensor("CPU Package", SensorType.Temperature, 62)],
+        updated: () => Interlocked.Increment(ref cpuUpdates));
+    var board = Device(HardwareType.SuperIO, [Sensor("CPU Fan", SensorType.Fan, 1400)]);
+    var disk = Device(HardwareType.Storage, [], updated: () => { diskEntered.Set(); releaseDisk.Wait(); });
+    var gate = new object();
+    using var sampler = new HardwareSampler([cpu, board, disk], gate, () => new WmiCache());
+    try {
+        Check(diskEntered.Wait(5000));
+        Check(SpinWait.SpinUntil(() => Volatile.Read(ref cpuUpdates) >= 2, 10000));
+        lock (gate) {
+            var timer = System.Diagnostics.Stopwatch.StartNew();
+            for (int i = 0; i < 1000; i++) {
+                var snapshot = sampler.Read();
+                Check(snapshot.Cpu?.PackageTempC == 62 && snapshot.Fans.Single().Rpm == 1400);
+                Check(snapshot.SampleAgeMs < 5000 && snapshot.StorageAgeMs == long.MaxValue);
+            }
+            Check(timer.ElapsedMilliseconds < 1000);
+        }
+        var stopping = Task.Run(sampler.Dispose);
+        Check(!stopping.Wait(100)); // Closing LHM before this finishes would race the driver.
+        releaseDisk.Set();
+        Check(stopping.Wait(5000));
+    } finally { releaseDisk.Set(); }
 });
 Test("request protocol bounds and incomplete frames", () => {
     using var input = new StringReader("one\ntwo\n");

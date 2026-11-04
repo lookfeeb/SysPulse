@@ -10,7 +10,13 @@ node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5175
 
 打开 `http://127.0.0.1:5175/tests/ui/index.html`。类型检查命令为 `npx --no-install tsc -p tests/ui/tsconfig.json`；其他检查见[项目 README](../../README.md)。
 
+执行以下控制台脚本前，若刚修改源码触发了 HMR，请重启 Vite 并刷新页面。热更新入口可能带有 `?t=...`；再导入不带时间戳的 fixture 会重新执行 mockIPC、重置监听，导致验收状态失真。
+
 ## 场景
+
+`?cleanup-paths` 使用带扩展前缀的盘符与 UNC 路径；路径显示应去掉前缀，点击后 `cleanupFixture.revealCalls` 保存原始路径，勾选不变。设置 `cleanupFixture.failNextReveal = true` 可检查定位失败提示。
+
+`/tests/ui/overlay.html` 加载真实悬浮窗，暂挂菜单初始化。导入 `overlayFixture`（`/tests/ui/overlay-fixture.ts`）检查 `showCalls`：单击不增加、双击增加一次；调用 `finishMenu()` 后仍然有效，右键增加 `popupCalls`。
 
 | 地址参数 | 数据与检查重点 |
 | --- | --- |
@@ -43,8 +49,8 @@ const { cleanupFixture } = await import('/tests/ui/fixtures.ts');
 
 1. 点击开始扫描，调用 `await cleanupFixture.progress(123)`；切到概览，再调用 `await cleanupFixture.progress(456)`。返回清理页仍为扫描中，`scanCalls` 为 1。
 2. 调用 `cleanupFixture.finishScan()`；确认模拟清理后切页，`cleanCalls` 为 1。
-3. 调用 `cleanupFixture.finishClean()`，进入后台刷新；返回清理页显示释放 512 B、跳过锁定文件的紧凑报告。
-4. 再调用 `cleanupFixture.finishScan()`，刷新完成且报告保留；展开说明检查路径换行与滚动。`finishScan(true)` 可模拟取消结果。
+3. 调用 `cleanupFixture.finishClean()`；返回清理页显示已清理 512 B、保留锁定文件的分目录报告。不会自动发起第二次扫描。
+4. 再次主动扫描后报告仍保留；清理期间点击“停止清理”应保存部分结果。`finishScan(true)` 可模拟扫描取消结果。
 
 ## 硬件控制
 
@@ -53,7 +59,7 @@ const { hardwareFixture } = await import('/tests/ui/fixtures.ts');
 await hardwareFixture.publish();
 ```
 
-CPU 温度应为 62°C，缺失占用显示未知；等待 6 秒后旧读数清空，再次发布后恢复。
+CPU 温度应为 62°C，缺失占用显示未知；等待 6 秒后读数标记为延迟并停用风扇控制，超过 30 秒显示未知，再次发布后恢复。
 
 `publish(fans)` 接受模拟 `FanHw[]`；`fanWrites` 记录请求，`fanWriteDelayMs` 控制延迟，`failNextFanWrite` 注入失败。检查只有唯一明确 CPU 风扇时才默认选择、0/未知/高速读数可区分、控制关联未知时只读、传感器消失不自动替换，以及重复操作去重和失败回退。所有写入仅修改模拟状态。
 

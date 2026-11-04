@@ -49,6 +49,7 @@ pub(super) static CLEANUP_STATE: AtomicU8 = AtomicU8::new(CleanupTaskKind::Idle 
 pub(super) static LAST_SCAN: OnceLock<Mutex<Option<CachedScan>>> = OnceLock::new();
 pub(super) static NEXT_SCAN_ID: AtomicU64 = AtomicU64::new(1);
 pub(super) static SCAN_CANCEL_REQUESTED: AtomicBool = AtomicBool::new(false);
+pub(super) static CLEAN_CANCEL_REQUESTED: AtomicBool = AtomicBool::new(false);
 pub(super) static ACTIVE_SCAN_DIAGNOSTICS: OnceLock<Mutex<Option<Arc<ScanDiagnostics>>>> =
     OnceLock::new();
 pub(super) static ACTIVE_SCAN_APP: OnceLock<Mutex<Option<AppHandle>>> = OnceLock::new();

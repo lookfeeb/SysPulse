@@ -10,6 +10,10 @@ pub struct HwSnapshot {
     #[specta(skip)]
     pub received_at: Option<std::time::Instant>,
     pub timestamp_ms: i64,
+    #[serde(default)]
+    pub sample_age_ms: u64,
+    #[serde(default)]
+    pub storage_age_ms: u64,
     pub cpu: Option<CpuHw>,
     #[serde(default)]
     #[specta(optional = false)]
@@ -41,9 +45,53 @@ pub struct CpuHw {
 }
 
 impl HwSnapshot {
+    /// Account for time spent in the backend cache before handing data to a
+    /// new UI subscriber. Reading the cache must not rejuvenate the sample.
+    pub fn for_display(&self) -> Self {
+        let now = std::time::Instant::now();
+        let elapsed = self.received_at.map_or(u64::MAX, |at| {
+            now.saturating_duration_since(at)
+                .as_millis()
+                .min(u128::from(u64::MAX)) as u64
+        });
+        let mut snapshot = self.clone();
+        snapshot.sample_age_ms = snapshot.sample_age_ms.saturating_add(elapsed);
+        snapshot.storage_age_ms = snapshot.storage_age_ms.saturating_add(elapsed);
+        snapshot.received_at = Some(now);
+        snapshot
+    }
+
     pub fn is_fresh(&self) -> bool {
+        self.received_at.is_some_and(|at| {
+            self.sample_age_ms
+                .saturating_add(at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64)
+                <= 5000
+        })
+    }
+
+    pub fn is_connected(&self) -> bool {
         self.received_at
             .is_some_and(|at| at.elapsed() <= std::time::Duration::from_secs(5))
+    }
+}
+
+#[cfg(test)]
+mod freshness_tests {
+    use super::*;
+    #[test]
+    fn cached_snapshot_preserves_age_for_display_and_control() {
+        let sample = HwSnapshot {
+            received_at: Some(std::time::Instant::now() - std::time::Duration::from_secs(3)),
+            sample_age_ms: 3000,
+            storage_age_ms: 28000,
+            ..Default::default()
+        };
+        let display = sample.for_display();
+        assert!(display.sample_age_ms >= 6000);
+        assert!(display.storage_age_ms >= 31000);
+        assert!(!display.is_fresh());
+        assert_eq!(sample.sample_age_ms, 3000);
+        assert!(!HwSnapshot::default().for_display().is_fresh());
     }
 }
 

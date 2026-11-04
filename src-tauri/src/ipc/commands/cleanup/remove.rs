@@ -9,7 +9,14 @@ pub(super) struct RunningProcessInfo {
 }
 
 pub(super) fn running_process_snapshot() -> Vec<RunningProcessInfo> {
-    let system = sysinfo::System::new_all();
+    let mut system = sysinfo::System::new();
+    system.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::All,
+        true,
+        sysinfo::ProcessRefreshKind::nothing()
+            .with_cmd(sysinfo::UpdateKind::OnlyIfNotSet)
+            .with_cwd(sysinfo::UpdateKind::OnlyIfNotSet),
+    );
     system
         .processes()
         .values()
@@ -44,7 +51,7 @@ pub(super) fn process_argument_path_keys(argument: &str) -> Vec<String> {
 
 pub(super) fn watched_processes(category_id: &str) -> Option<&'static [&'static str]> {
     let watched: &'static [&'static str] = match category_id {
-        "browser-cache" => &["chrome", "msedge", "firefox", "brave", "opera"],
+        "browser-cache" => &["chrome", "msedge", "firefox", "brave", "opera", "vivaldi"],
         "webview-cache" => &["msedgewebview2"],
         "app-cache" => &[
             "discord", "slack", "teams", "ms-teams", "code", "cursor", "vscodium",
@@ -88,14 +95,32 @@ pub(super) fn running_process_blockers_for_path(
             .to_string_lossy(),
     );
     let mut found = std::collections::BTreeSet::new();
+    let browser_owner = if category_id == "browser-cache" {
+        [
+            (r"\google\chrome\", "chrome"),
+            (r"\microsoft\edge\", "msedge"),
+            (r"\mozilla\firefox\", "firefox"),
+            (r"\bravesoftware\", "brave"),
+            (r"\opera software\", "opera"),
+            (r"\vivaldi\", "vivaldi"),
+        ]
+        .into_iter()
+        .find_map(|(marker, name)| normalized_path.contains(marker).then_some(name))
+    } else {
+        None
+    };
     for process in processes {
         if !watched.contains(&process.stem.as_str()) {
             continue;
         }
-        let uses_path = process
-            .command_paths
-            .iter()
-            .any(|part| path_is_within_key(part, &normalized_path))
+        // A normal browser launch need not expose its profile/cache directory
+        // in argv. Conservatively retain that browser's known cache roots.
+        let uses_path = browser_owner == Some(process.stem.as_str())
+            || process.command_paths.iter().any(|part| {
+                path_is_within_key(part, &normalized_path)
+                    || (category_id == "browser-cache"
+                        && paths_overlap_keys(part, &normalized_path))
+            })
             || process
                 .cwd
                 .as_ref()
@@ -135,22 +160,6 @@ pub(super) fn project_cache_owner(category: &str, path: &Path) -> Option<PathBuf
         .map(Path::to_path_buf)
 }
 
-pub(super) fn record_cleanup_io_error(
-    errors: &mut Vec<String>,
-    path: &Path,
-    error: &std::io::Error,
-) {
-    if errors.len() < MAX_SCAN_WARNINGS {
-        let reason = match error.raw_os_error() {
-            Some(32 | 33) => "文件正在使用，已跳过".to_string(),
-            _ => error.to_string(),
-        };
-        errors.push(format!("{}: {}", path.display(), reason));
-    } else if errors.len() == MAX_SCAN_WARNINGS {
-        errors.push("还有其他文件未能处理，仅展示前 80 条文件异常；未处理文件均已保留".into());
-    }
-}
-
 pub(super) fn paths_overlap_keys(left: &str, right: &str) -> bool {
     left == right
         || left
@@ -178,143 +187,4 @@ pub(super) fn paths_overlap(left: &Path, right: &Path) -> bool {
     let left = normalize_path_key(&left.to_string_lossy());
     let right = normalize_path_key(&right.to_string_lossy());
     paths_overlap_keys(&left, &right)
-}
-
-pub(super) fn remove_dir_contents_with_progress(
-    dir: &Path,
-    progress: &mut CleanProgress<'_>,
-    file_policy: CleanupFilePolicy,
-    errors: &mut Vec<String>,
-    diagnostics: &mut PathCleanupDiagnostics,
-) -> std::io::Result<(u64, u64)> {
-    walk_dir_with_progress(
-        dir,
-        progress,
-        file_policy,
-        CleanupWalk {
-            depth: 0,
-            max_depth: DIRECTORY_SCAN_MAX_DEPTH,
-            remove_root: false,
-        },
-        errors,
-        diagnostics,
-    )
-}
-pub(super) fn remove_dir_tree_with_progress(
-    dir: &Path,
-    progress: &mut CleanProgress<'_>,
-    file_policy: CleanupFilePolicy,
-    depth: u32,
-    max_depth: u32,
-    errors: &mut Vec<String>,
-    diagnostics: &mut PathCleanupDiagnostics,
-) -> std::io::Result<(u64, u64)> {
-    walk_dir_with_progress(
-        dir,
-        progress,
-        file_policy,
-        CleanupWalk {
-            depth,
-            max_depth,
-            remove_root: true,
-        },
-        errors,
-        diagnostics,
-    )
-}
-
-struct CleanupWalk {
-    depth: u32,
-    max_depth: u32,
-    remove_root: bool,
-}
-
-fn walk_dir_with_progress(
-    dir: &Path,
-    progress: &mut CleanProgress<'_>,
-    file_policy: CleanupFilePolicy,
-    walk: CleanupWalk,
-    errors: &mut Vec<String>,
-    diagnostics: &mut PathCleanupDiagnostics,
-) -> std::io::Result<(u64, u64)> {
-    let CleanupWalk {
-        depth,
-        max_depth,
-        remove_root,
-    } = walk;
-    if depth > max_depth {
-        errors.push(format!("{}: 超过最大清理深度 {}", dir.display(), max_depth));
-        return Ok((0, 0));
-    }
-    let mut freed = 0u64;
-    let mut count = 0u64;
-
-    for entry in std::fs::read_dir(dir)? {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(error) => {
-                errors.push(format!("{}: 读取目录项失败: {}", dir.display(), error));
-                continue;
-            }
-        };
-        let path = entry.path();
-        let meta = match std::fs::symlink_metadata(&path) {
-            Ok(meta) => meta,
-            Err(error) => {
-                errors.push(format!("{}: 读取元数据失败: {}", path.display(), error));
-                continue;
-            }
-        };
-        if metadata_is_reparse_point(&meta) {
-            continue;
-        }
-        if meta.is_dir() {
-            let decision = file_policy.directory_decision(&meta);
-            if decision != CleanupPolicyDecision::Allow {
-                diagnostics.record(&path, decision);
-                continue;
-            }
-            let result = remove_dir_tree_with_progress(
-                &path,
-                progress,
-                file_policy,
-                depth + 1,
-                max_depth,
-                errors,
-                diagnostics,
-            );
-            match result {
-                Ok((s, c)) => {
-                    freed += s;
-                    count += c;
-                }
-                Err(error) => record_cleanup_io_error(errors, &path, &error),
-            }
-        } else {
-            let decision = file_policy.file_decision(&meta);
-            if decision != CleanupPolicyDecision::Allow {
-                diagnostics.record(&path, decision);
-                continue;
-            }
-            let size = file_details(&path, &meta)
-                .map(|value| value.2)
-                .unwrap_or_else(|| meta.len());
-            match std::fs::remove_file(&path) {
-                Ok(()) => {
-                    freed += size;
-                    count += 1;
-                    progress.add_result(1, size, 1);
-                }
-                Err(error) => {
-                    record_cleanup_io_error(errors, &path, &error);
-                    progress.fail(1);
-                }
-            }
-        }
-    }
-
-    if remove_root {
-        let _ = std::fs::remove_dir(dir);
-    }
-    Ok((freed, count))
 }

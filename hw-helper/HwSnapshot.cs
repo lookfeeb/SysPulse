@@ -10,6 +10,8 @@ namespace SysPulse.HwHelper;
 public sealed class HwSnapshot
 {
     [JsonPropertyName("timestampMs")] public long TimestampMs { get; set; }
+    [JsonPropertyName("sampleAgeMs")] public long SampleAgeMs { get; set; }
+    [JsonPropertyName("storageAgeMs")] public long StorageAgeMs { get; set; }
     [JsonPropertyName("cpu")] public CpuHw? Cpu { get; set; }
     [JsonPropertyName("gpus")] public List<GpuHw> Gpus { get; set; } = new();
     [JsonPropertyName("memory")] public MemoryHw? Memory { get; set; }

@@ -93,7 +93,7 @@ function relativeScanTime(scannedAtMs: number, nowMs: number): string {
 export function useCleanupModel() {
     const { message } = AntdApp.useApp();
     const { scan: cleanupCache, phase, consumed, cancelRequested, scanProgress, cleanProgress, lastCleanResult } = useCleanupStore();
-    const scanning = phase === "scanning" || phase === "refreshing";
+    const scanning = phase === "scanning";
     const cleaning = phase === "cleaning";
     const categories = cleanupCache?.categories ?? [];
     const [selected, setSelected] = useState<Set<string>>(() => restoreSelected(cleanupCache?.categories ?? []));
@@ -135,7 +135,7 @@ export function useCleanupModel() {
     const selectedPathCount = categories.reduce((sum, category) => sum + cleanablePaths(category, selected, excludedPaths).length, 0);
     const totalPathCount = categories.reduce((sum, category) => sum + category.paths.length, 0);
     const canClean = selectedPathCount > 0 && !!scanId && !scanIncomplete && !busy;
-    const scanButton = scanButtonState({ scanning, cancelRequested, cleaning, exporting: false });
+    const scanButton = cleaning ? { label: cancelRequested ? "正在停止…" : "停止清理", action: "stop" as const, danger: true, disabled: cancelRequested } : scanButtonState({ scanning, cancelRequested, cleaning, exporting: false });
     const saveSelected = (next: Set<string>) => writeStoredStringList(SELECTED_STORAGE_KEY, next);
     const saveExcludedPaths = (next: Set<string>) => writeStoredStringList(EXCLUDED_PATHS_STORAGE_KEY, next);
     const invalidateScan = () => {
@@ -191,7 +191,7 @@ export function useCleanupModel() {
                 .map((path) => path.path),
             confirmCaution: selectedCaution,
             confirmAdvanced: selectedAdvanced,
-        }, projectRoots);
+        });
     };
     const chooseProjectRoot = async (): Promise<string | null> => {
         const chosen = await open({ directory: true, multiple: false, title: "选择项目工作区" });

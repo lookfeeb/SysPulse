@@ -179,9 +179,6 @@
   font-size: 8px;
   font-weight: 700;
 }
-.aim-ses-logo[data-source="codex"] {
-  background: #178b79;
-}
 .aim-ses-logo[data-source="claude"] {
   background: #bd682e;
 }

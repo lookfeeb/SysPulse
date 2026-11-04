@@ -5,10 +5,10 @@ import { emit } from "@tauri-apps/api/event";
 
 // Only this test entry imports the mock. No native commands or real files are accessed.
 const config: AppConfig = { schemaVersion: 1, general: { sampleIntervalMs: 1000, adaptiveInterval: false }, overlay: { items: [] }, network: { monitorMode: "all", monitorInterfaces: [], includeLoopback: false, includeVirtual: false }, history: { retainDays: 30 } };
-let sessions: AiSessionSummary[] = Array.from({length: 10000}, (_, i) => ({ sessionId: `fixture-${i}`, title: `验收会话 ${String(i).padStart(5, '0')}`, sessionType: 'codex', source: i % 2 ? 'claude' : 'codex', workspaceHash: 'fixture-workspace', workspaceDirectory: 'C:/Synthetic/Fixture', messageCount: 80, fileSize: 1000, createdAt: Date.now() - i * 1000, modifiedAt: Date.now() - i * 1000 }));
+let sessions: AiSessionSummary[] = Array.from({length: 10000}, (_, i) => ({ sessionId: `fixture-${i}`, title: `验收会话 ${String(i).padStart(5, '0')}`, sessionType: i % 2 ? 'claude' : 'gemini', source: i % 2 ? 'claude' : 'gemini', workspaceHash: 'fixture-workspace', workspaceDirectory: 'C:/Synthetic/Fixture', messageCount: 80, fileSize: 1000, createdAt: Date.now() - i * 1000, modifiedAt: Date.now() - i * 1000 }));
 let sessionWorkspaces = ['fixture-workspace'];
 if (new URLSearchParams(location.search).has('session-sidebar')) {
-  sessionWorkspaces = ['project-a', 'project-b', 'codex:C:/Synthetic/Empty', 'project-readonly'];
+  sessionWorkspaces = ['project-a', 'project-b', 'claude:C:/Synthetic/Empty', 'project-readonly'];
   sessions = sessions.slice(0, 30).map((s, i) => ({...s, workspaceHash:'project-a', workspaceDirectory:'C:/Synthetic/Work/SysPulse',
     title: i === 0 ? 'codex://threads/01a14a07-57f0-7ff0-adcd-58f5f2da1011改进硬件数据采集与会话管理的交互体验' : i === 1 ? '长标题'.repeat(45) + '尾部检索目标' : `项目会话 ${i}：检查请求、切换与分页`,
     modifiedAt:Date.now()-i*3600000 }));
@@ -22,6 +22,13 @@ export const sessionFixture = {
 };
 const scan: ScanResult = {scanId: 'fixture-scan', categories: [{id:'node-cache',name:'Node 缓存（测试）',description:'内存模拟数据',sizeBytes:1024,fileCount:2,riskLevel:'safe',defaultSelected:true,minAgeDays:7,paths:[{path:'C:/Synthetic/Fixture/cache',sizeBytes:1024,fileCount:2,matchedRule:'fixture',source:'fixture',volumeSerial:1,fileId:1}]}],totalSizeBytes:1024,totalFileCount:2,scannedAtMs:Date.now(),durationMs:100,scannedPaths:1,skippedPaths:0,ignoredPaths:0,hotspotCount:0,scoutWorkers:1,engineerWorkers:1,scoutTasks:1,engineerTasks:1,projectRoots:[],warnings:[],complete:true,cancelled:false};
 const failConfig = new URLSearchParams(location.search).has('config-failure');
+if (new URLSearchParams(location.search).has('cleanup-paths')) {
+  scan.categories[0].paths = [
+    String.raw`\\?\C:\Synthetic\中文 项目\target`,
+    String.raw`\\?\UNC\server\share\项目\cache`,
+  ].map(path => ({...scan.categories[0].paths[0], path, sizeBytes:512, fileCount:1}));
+  scan.scannedPaths = 2;
+}
 const backgroundCleanup = new URLSearchParams(location.search).has('cleanup-background');
 let pendingScan: ((result: ScanResult) => void) | null = null;
 let pendingClean: ((result: CleanResult) => void) | null = null;
@@ -44,6 +51,8 @@ export const hardwareFixture = {
 };
 export const cleanupFixture = {
   directoryChoices: [] as string[],
+  revealCalls: [] as string[][],
+  failNextReveal: false,
   scanCalls: 0,
   cleanCalls: 0,
   async progress(scannedPaths: number) {
@@ -56,10 +65,10 @@ export const cleanupFixture = {
     resolve?.({...scan,scanId:`fixture-scan-${this.scanCalls}`,scannedAtMs:Date.now(),
       complete:!cancelled,cancelled});
   },
-  finishClean() {
+  finishClean(cancelled = false) {
     const resolve = pendingClean;
     pendingClean = null;
-    resolve?.({freedBytes:512,deletedFiles:1,errors:['C:/Synthetic/Fixture/cache/locked.tmp: 文件正在使用，已跳过']});
+    resolve?.({freedBytes:512,deletedFiles:1,skippedFiles:1,cancelled,errors:[],paths:[{category:'应用缓存',path:'C:/Synthetic/Fixture/cache',freedBytes:512,deletedFiles:1,changedFiles:0,missingFiles:0,busyFiles:cancelled?0:1,failedFiles:0,cancelledFiles:cancelled?1:0,examples:[]}]});
   },
 };
 let configAttempts = 0;
@@ -73,6 +82,13 @@ mockWindows('config');
 mockIPC(async (cmd, payload) => {
   const args = (payload as { args?: Record<string, any> } | undefined)?.args ?? {};
   switch (cmd) {
+    case 'plugin:opener|reveal_item_in_dir':
+      cleanupFixture.revealCalls.push((payload as {paths:string[]}).paths);
+      if (cleanupFixture.failNextReveal) {
+        cleanupFixture.failNextReveal = false;
+        throw new Error('模拟目录已不存在');
+      }
+      return null;
     case 'get_config':
       if (failConfig && ++configAttempts <= 2) throw new Error('模拟配置读取失败');
       await new Promise(resolve => setTimeout(resolve, 300));
@@ -118,7 +134,7 @@ mockIPC(async (cmd, payload) => {
       const summary = sessions.find(s=>s.sessionId===args.sessionId && s.workspaceHash===args.workspaceHash)!;
       await new Promise(r=>setTimeout(r, sessionFixture.loadDelayMs || (args.sessionId==='fixture-1' ? 300 : 20)));
       if (sessionFixture.failNextLoad) { sessionFixture.failNextLoad=false; throw new Error('模拟会话正文读取失败'); }
-      return {sessionId:summary.sessionId,title:summary.title,sessionType:'codex',workspaceDirectory:summary.workspaceDirectory,conversationSummary:null,totalMessages:80,page:args.page,pageSize:args.pageSize,history:Array.from({length:Math.min(args.pageSize,80-(args.page-1)*args.pageSize)},(_,i)=>({message:{role:i%2?'assistant':'user',id:`${args.page}-${i}`,isHidden:false,content:[{type:'text',text:`${summary.title} 正文 ${(args.page-1)*args.pageSize+i+1}`}]}}))};
+      return {sessionId:summary.sessionId,title:summary.title,sessionType:summary.source,workspaceDirectory:summary.workspaceDirectory,conversationSummary:null,totalMessages:80,page:args.page,pageSize:args.pageSize,history:Array.from({length:Math.min(args.pageSize,80-(args.page-1)*args.pageSize)},(_,i)=>({message:{role:i%2?'assistant':'user',id:`${args.page}-${i}`,isHidden:false,content:[{type:'text',text:`${summary.title} 正文 ${(args.page-1)*args.pageSize+i+1}`}]}}))};
     }
     case 'ai_delete_session': sessionFixture.deleteCalls++; sessions = sessions.filter(s=>s.sessionId!==args.sessionId || s.workspaceHash!==args.workspaceHash); return null;
     case 'ai_delete_workspace': sessionFixture.deleteCalls++; sessions = sessions.filter(s=>s.workspaceHash!==args.workspaceHash); sessionWorkspaces=sessionWorkspaces.filter(hash=>hash!==args.workspaceHash); return null;
@@ -126,11 +142,12 @@ mockIPC(async (cmd, payload) => {
     case 'scan_cleanup':
       cleanupFixture.scanCalls++;
       return backgroundCleanup ? new Promise<ScanResult>(resolve => { pendingScan = resolve; }) : scan;
+    case 'cancel_cleanup': cleanupFixture.finishClean(true); return true;
     case 'cancel_cleanup_scan': cleanupFixture.finishScan(true); return true;
     case 'clean_categories':
       cleanupFixture.cleanCalls++;
       return backgroundCleanup ? new Promise<CleanResult>(resolve => { pendingClean = resolve; })
-        : {freedBytes:1024,deletedFiles:2,errors:[]};
+        : {freedBytes:1024,deletedFiles:2,skippedFiles:0,cancelled:false,paths:[],errors:[]};
     default: throw new Error(`隔离验收未实现命令: ${cmd}`);
   }
 }, { shouldMockEvents: true });

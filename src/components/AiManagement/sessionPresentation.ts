@@ -3,7 +3,6 @@ import type { AiHistoryItem, AiSessionSummary } from "@/bindings";
 const SOURCE_META: Record<string, { label: string; color: string }> = {
   ide: { label: "Kiro IDE", color: "blue" },
   cli: { label: "Kiro CLI", color: "purple" },
-  codex: { label: "Codex", color: "green" },
   claude: { label: "Claude", color: "orange" },
   antigravity: { label: "Gemini", color: "cyan" },
   "antigravity-backup": { label: "AG 备份", color: "geekblue" },

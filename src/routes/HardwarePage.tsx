@@ -9,6 +9,7 @@ export default function HardwarePage() {
   const { message } = AntdApp.useApp();
   const snap = useHwStore((s) => s.current);
   const stale = useHwStore((s) => s.stale);
+  const storageStale = useHwStore((s) => s.storageStale);
   const helperStatus = useHwStore((s) => s.helperStatus);
   const helperReason = useHwStore((s) => s.helperReason);
   const fanControl = useHwStore((s) => s.fanControl);
@@ -37,8 +38,8 @@ export default function HardwarePage() {
   return (
     <Space vertical size={16} style={{ width: "100%" }}>
       {/* 状态提示 */}
-      {helperStatus === "running" && stale && (
-        <Alert type="warning" showIcon title="等待新的硬件读数" description="采集尚未完成或数据已过期，收到新读数后自动恢复。" />
+      {helperStatus === "running" && (stale || storageStale) && (
+        <Alert type="warning" showIcon title={stale ? "硬件采集延迟" : "磁盘采集延迟"} description="暂时显示最近一次读数，超过 30 秒显示未知；自动风扇控制不使用延迟读数。" />
       )}
       {helperStatus === "unavailable" && (
         <Alert

@@ -26,6 +26,10 @@ use discovery::*;
 mod system_caches;
 use system_caches::*;
 
+#[path = "cleanup/plan.rs"]
+mod plan;
+use plan::*;
+
 #[path = "cleanup/clean.rs"]
 mod clean;
 use clean::*;
@@ -79,6 +83,9 @@ pub enum CleanupRisk {
 #[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanResult {
+    #[serde(skip)]
+    #[specta(skip)]
+    plan: Arc<Mutex<FilePlan>>,
     pub scan_id: String,
     pub categories: Vec<CleanupCategory>,
     pub total_size_bytes: u64,
@@ -196,7 +203,25 @@ pub struct LargeFileScanResult {
 pub struct CleanResult {
     pub freed_bytes: u64,
     pub deleted_files: u64,
+    pub skipped_files: u64,
+    pub cancelled: bool,
+    pub paths: Vec<CleanPathReport>,
     pub errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CleanPathReport {
+    pub path: String,
+    pub category: String,
+    pub deleted_files: u64,
+    pub freed_bytes: u64,
+    pub changed_files: u64,
+    pub missing_files: u64,
+    pub busy_files: u64,
+    pub failed_files: u64,
+    pub cancelled_files: u64,
+    pub examples: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, specta::Type)]
@@ -242,9 +267,9 @@ pub async fn scan_cleanup(
     app: AppHandle,
     args: Option<ScanCleanupArgs>,
 ) -> Result<ScanResult, IpcError> {
-    let _guard = CleanupTaskGuard::acquire(CleanupTaskKind::Scanning)?;
+    let guard = Arc::new(CleanupTaskGuard::acquire(CleanupTaskKind::Scanning)?);
     clear_scan_cache();
-    let _app_guard = ActiveScanApp::install(app.clone());
+    let app_guard = Arc::new(ActiveScanApp::install(app.clone()));
     SCAN_CANCEL_REQUESTED.store(false, Ordering::SeqCst);
     let started = Instant::now();
     let started_at_ms = chrono::Local::now().timestamp_millis();
@@ -269,9 +294,14 @@ pub async fn scan_cleanup(
         .map(|path| path.to_string_lossy().to_string())
         .collect::<Vec<_>>();
     let colony = ColonyConfig::detect();
-    let mut result = tokio::task::spawn_blocking(move || do_scan(project_roots, colony))
-        .await
-        .map_err(|e| crate::error::AppError::Other(format!("cleanup scan join: {e}")))?;
+    let worker_guard = guard.clone();
+    let worker_app_guard = app_guard.clone();
+    let mut result = tokio::task::spawn_blocking(move || {
+        let _lease = (worker_guard, worker_app_guard);
+        do_scan(project_roots, colony)
+    })
+    .await
+    .map_err(|e| crate::error::AppError::Other(format!("cleanup scan join: {e}")))?;
     result.scan_id = format!(
         "{}-{}",
         chrono::Local::now().timestamp_millis(),
@@ -310,6 +340,16 @@ pub fn cancel_cleanup_scan() -> bool {
         return false;
     }
     SCAN_CANCEL_REQUESTED.store(true, Ordering::SeqCst);
+    true
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn cancel_cleanup() -> bool {
+    if CLEANUP_STATE.load(Ordering::SeqCst) != CleanupTaskKind::Cleaning as u8 {
+        return false;
+    }
+    CLEAN_CANCEL_REQUESTED.store(true, Ordering::SeqCst);
     true
 }
 
@@ -459,7 +499,8 @@ fn build_cleanup_export_document(
 #[tauri::command]
 #[specta::specta]
 pub async fn clean_categories(app: AppHandle, args: CleanArgs) -> Result<CleanResult, IpcError> {
-    let _guard = CleanupTaskGuard::acquire(CleanupTaskKind::Cleaning)?;
+    let guard = Arc::new(CleanupTaskGuard::acquire(CleanupTaskKind::Cleaning)?);
+    CLEAN_CANCEL_REQUESTED.store(false, Ordering::SeqCst);
     let ids = args.category_ids;
     let excluded = args.excluded_paths;
     let scan = cached_scan(&args.scan_id).ok_or_else(|| {
@@ -487,9 +528,13 @@ pub async fn clean_categories(app: AppHandle, args: CleanArgs) -> Result<CleanRe
     let scan = take_cached_scan(&args.scan_id).ok_or_else(|| {
         crate::error::AppError::Invalid("扫描结果已失效，请重新扫描后再清理".into())
     })?;
-    let result = tokio::task::spawn_blocking(move || do_clean(&app, scan, &ids, &excluded))
-        .await
-        .map_err(|e| crate::error::AppError::Other(format!("cleanup clean join: {e}")))?;
+    let worker_guard = guard.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let _lease = worker_guard;
+        do_clean(Some(&app), scan, &ids, &excluded)
+    })
+    .await
+    .map_err(|e| crate::error::AppError::Other(format!("cleanup clean join: {e}")))?;
     Ok(result)
 }
 

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ScanResult } from "@/bindings";
+import type { ScanResult, CleanResult } from "@/bindings";
 
-const api = vi.hoisted(() => ({ scanCleanup: vi.fn(), cleanCategories: vi.fn(), cancelCleanupScan: vi.fn() }));
+const api = vi.hoisted(() => ({ scanCleanup: vi.fn(), cleanCategories: vi.fn(), cancelCleanupScan: vi.fn(), cancelCleanup: vi.fn() }));
 const events = vi.hoisted(() => new Map<string, (event: { payload: unknown }) => void>());
 vi.mock("@/bindings", () => ({ commands: api }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async (name, callback) => {
@@ -48,37 +48,36 @@ describe("cleanup application task lifetime", () => {
     expect(api.cancelCleanupScan).not.toHaveBeenCalled();
   });
 
-  it("cleans once across page changes and retains the report when refreshing fails", async () => {
-    const request = deferred<{ freedBytes: number; deletedFiles: number; errors: string[] }>();
+  it("cleans once across page changes without starting an expensive automatic scan", async () => {
+    const request = deferred<CleanResult>();
     api.cleanCategories.mockReturnValue(request.promise);
     api.scanCleanup.mockRejectedValue(new Error("refresh failed"));
     useCleanupStore.setState({ scan: scan() });
-    const running = useCleanupStore.getState().clean(args, []);
-    await useCleanupStore.getState().clean(args, []);
+    const running = useCleanupStore.getState().clean(args);
+    await useCleanupStore.getState().clean(args);
     await vi.waitFor(() => expect(api.cleanCategories).toHaveBeenCalledOnce());
-    const result = { freedBytes: 512, deletedFiles: 1, errors: ["locked file"] };
+    const result: CleanResult = { freedBytes: 512, deletedFiles: 1, skippedFiles: 1, cancelled: false, paths: [], errors: [] };
     request.resolve(result);
     await running;
     expect(useCleanupStore.getState()).toMatchObject({ phase: "idle", lastCleanResult: result, consumed: true });
-    expect(useCleanupStore.getState().notice?.text).toContain("清理报告已保留");
+    expect(api.scanCleanup).not.toHaveBeenCalled();
     expect(api.cleanCategories).toHaveBeenCalledOnce();
   });
 
-  it("keeps post-clean refresh visible as a cancellable scan", async () => {
-    const refresh = deferred<ScanResult>();
-    api.cleanCategories.mockResolvedValue({ freedBytes: 512, deletedFiles: 1, errors: [] });
-    api.scanCleanup.mockReturnValue(refresh.promise);
-    api.cancelCleanupScan.mockResolvedValue(true);
+  it("cancels cleaning and preserves its partial report without rescanning", async () => {
+    const request = deferred<any>();
+    api.cleanCategories.mockReturnValue(request.promise);
+    api.cancelCleanup.mockResolvedValue(true);
     useCleanupStore.setState({ scan: scan() });
-    const running = useCleanupStore.getState().clean(args, []);
-    await vi.waitFor(() => expect(useCleanupStore.getState().phase).toBe("refreshing"));
+    const running = useCleanupStore.getState().clean(args);
+    await vi.waitFor(() => expect(api.cleanCategories).toHaveBeenCalledOnce());
     await useCleanupStore.getState().cancelScan();
-    expect(api.cancelCleanupScan).toHaveBeenCalledOnce();
-    refresh.resolve({ ...scan(), cancelled: true, complete: false });
+    expect(api.cancelCleanup).toHaveBeenCalledOnce();
+    request.resolve({ freedBytes: 512, deletedFiles: 1, skippedFiles: 1, cancelled: true, paths: [], errors: [] });
     await running;
-    expect(useCleanupStore.getState().lastCleanResult?.deletedFiles).toBe(1);
-    await useCleanupStore.getState().clean(args, []);
-    expect(api.cleanCategories).toHaveBeenCalledOnce();
+    expect(useCleanupStore.getState()).toMatchObject({ phase: "idle", scan: null, consumed: true,
+      lastCleanResult: { deletedFiles: 1, cancelled: true } });
+    expect(api.scanCleanup).not.toHaveBeenCalled();
   });
 
   it("recovers cancellation controls on IPC failure instead of hanging", async () => {
@@ -115,9 +114,9 @@ describe("cleanup application task lifetime", () => {
   it("clears pending progress on cleanup IPC failure and forbids snapshot reuse", async () => {
     api.cleanCategories.mockRejectedValue(new Error("cleanup failed"));
     useCleanupStore.setState({ scan: scan() });
-    await useCleanupStore.getState().clean(args, []);
+    await useCleanupStore.getState().clean(args);
     expect(useCleanupStore.getState()).toMatchObject({ phase: "idle", consumed: true, cleanProgress: null });
-    await useCleanupStore.getState().clean(args, []);
+    await useCleanupStore.getState().clean(args);
     expect(api.cleanCategories).toHaveBeenCalledOnce();
   });
 
@@ -125,15 +124,15 @@ describe("cleanup application task lifetime", () => {
     const old = { ...scan(), scannedAtMs: Date.now() - 7 * 24 * 60 * 60 * 1000 };
     for (const invalid of [{ ...old, scanId: "other" }, { ...old, complete: false }, { ...old, cancelled: true }]) {
       useCleanupStore.setState({ scan: invalid });
-      await useCleanupStore.getState().clean(args, []);
+      await useCleanupStore.getState().clean(args);
     }
     expect(api.cleanCategories).not.toHaveBeenCalled();
-    api.cleanCategories.mockResolvedValue({ freedBytes: 512, deletedFiles: 1, errors: [] });
+    api.cleanCategories.mockResolvedValue({ freedBytes: 512, deletedFiles: 1, skippedFiles: 0, cancelled: false, paths: [], errors: [] });
     api.scanCleanup.mockRejectedValue(new Error("refresh failed"));
     useCleanupStore.setState({ scan: old });
-    await useCleanupStore.getState().clean(args, []);
+    await useCleanupStore.getState().clean(args);
     expect(api.cleanCategories).toHaveBeenCalledExactlyOnceWith(args);
-    await useCleanupStore.getState().clean(args, []);
+    await useCleanupStore.getState().clean(args);
     expect(api.cleanCategories).toHaveBeenCalledOnce();
   });
 });

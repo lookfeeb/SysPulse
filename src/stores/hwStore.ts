@@ -14,6 +14,7 @@ import {
   subscribeHelperStatus,
 } from "@/ipc";
 import { createEventBinder } from "@/utils/bindOnce";
+import { SENSOR_DISPLAY_MS, SENSOR_FRESH_MS, sensorAge, visibleHardware } from "@/utils/hardwareFreshness";
 
 const HISTORY_LIMIT = 60;
 export interface HwHistoryPoint {
@@ -30,6 +31,7 @@ interface HwState {
   current: HwSnapshot | null;
   history: HwHistoryPoint[];
   stale: boolean;
+  storageStale: boolean;
   lastReceivedAt: number | null;
   helperStatus: HelperStatus;
   helperReason?: string | null;
@@ -45,6 +47,7 @@ export const useHwStore = create<HwState>((set) => ({
   current: null,
   history: [],
   stale: true,
+  storageStale: true,
   lastReceivedAt: null,
   helperStatus: "starting",
   helperReason: undefined,
@@ -68,26 +71,35 @@ export const useHwStore = create<HwState>((set) => ({
   setSnapshot: (s) =>
     set((state) => {
       snapshotRevision++;
-      if (s.timestampMs === state.current?.timestampMs) return state;
+      const repeated = s.timestampMs === state.current?.timestampMs;
       const temps = (s.gpus ?? []).map((gpu) => gpu.tempC).filter((v): v is number => v != null && Number.isFinite(v));
-      const history = [...state.history.slice(-(HISTORY_LIMIT - 1)), {
+      const history = repeated ? state.history : [...state.history.slice(-(HISTORY_LIMIT - 1)), {
         timestampMs: s.timestampMs, cpuTempC: s.cpu?.packageTempC ?? null,
         gpuTempC: temps.length ? Math.max(...temps) : null,
       }];
-      return { current: s, history, stale: false, lastReceivedAt: performance.now() };
+      return { current: visibleHardware(s), history,
+        stale: sensorAge(s.sampleAgeMs) > SENSOR_FRESH_MS,
+        storageStale: sensorAge(s.storageAgeMs) > SENSOR_FRESH_MS,
+        lastReceivedAt: performance.now() };
     }),
   setHelper: (e) => {
     helperRevision++;
     if (e.status !== "running") snapshotRevision++;
     set({ helperStatus: e.status, helperReason: e.reason,
-      ...(e.status !== "running" ? { current: null, stale: true, lastReceivedAt: null } : {}),
+      ...(e.status !== "running" ? { current: null, stale: true, storageStale: true, lastReceivedAt: null } : {}),
     });
   },
   setFanControl: (s) => { fanRevision++; set({ fanControl: s }); },
   checkFreshness: () => set((state) => {
-    if (state.lastReceivedAt == null || state.stale || performance.now() - state.lastReceivedAt <= 5000) return state;
-    snapshotRevision++;
-    return { current: null, stale: true };
+    if (state.lastReceivedAt == null) return state;
+    const elapsed = performance.now() - state.lastReceivedAt;
+    const stale = sensorAge(state.current?.sampleAgeMs, elapsed) > SENSOR_FRESH_MS;
+    const storageStale = sensorAge(state.current?.storageAgeMs, elapsed) > SENSOR_FRESH_MS;
+    if (elapsed > SENSOR_DISPLAY_MS) {
+      snapshotRevision++;
+      return { current: null, stale: true, storageStale: true, lastReceivedAt: null };
+    }
+    return { stale, storageStale, current: state.current && visibleHardware(state.current, elapsed) };
   }),
 }));
 

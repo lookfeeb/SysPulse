@@ -411,7 +411,7 @@ pub(super) fn antigravity_ids_for_workspace_with_index(
     workspace: &str,
     index: &HashMap<String, AntigravityIdeIndexEntry>,
 ) -> anyhow::Result<HashSet<String>> {
-    let target = normalize_codex_workspace(workspace);
+    let target = normalize_workspace(workspace);
     let mut ids = HashSet::new();
     let default_workspace = if matches!(d.layout, Layout::AntigravityIde) {
         "Antigravity IDE"
@@ -424,7 +424,7 @@ pub(super) fn antigravity_ids_for_workspace_with_index(
         } else {
             &entry.cwd
         };
-        if normalize_codex_workspace(cwd) == target {
+        if normalize_workspace(cwd) == target {
             ids.insert(id.clone());
         }
     }
@@ -479,7 +479,7 @@ pub(super) fn antigravity_ids_for_workspace_with_index(
             let cwd = indexed_cwd
                 .or(db_cwd)
                 .unwrap_or_else(|| default_workspace.to_string());
-            if normalize_codex_workspace(&cwd) == target {
+            if normalize_workspace(&cwd) == target {
                 ids.insert(id);
             }
         }
@@ -503,7 +503,7 @@ pub(super) fn antigravity_ids_for_workspace_with_index(
                     .or(antigravity_artifact_workspace_result(&entry.path())?)
                     .or(antigravity_conversation_db_workspace_result(root, &id)?)
                     .unwrap_or_else(|| default_workspace.to_string());
-                if normalize_codex_workspace(&cwd) == target {
+                if normalize_workspace(&cwd) == target {
                     ids.insert(id);
                 }
             }
@@ -576,7 +576,7 @@ pub(super) fn delete_antigravity_workspace(
     root: &Path,
     workspace: &str,
 ) -> anyhow::Result<()> {
-    if normalize_codex_workspace(workspace).is_empty() {
+    if normalize_workspace(workspace).is_empty() {
         return Err(anyhow::anyhow!("Antigravity 工作区路径为空，已拒绝删除"));
     }
     let ids = antigravity_ids_for_workspace(d, root, workspace)?;

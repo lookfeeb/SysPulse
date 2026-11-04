@@ -282,7 +282,8 @@ fn walk_directory(
             {
                 continue;
             }
-            if let Some((volume_serial, file_id, allocated_size)) = file_details(&entry_path, &meta)
+            if let Some((volume_serial, file_id, allocated_size)) =
+                record_scan_file(&entry_path, &meta)
             {
                 let identity = (volume_serial, file_id);
                 if !context
@@ -329,18 +330,6 @@ pub(super) fn path_detail_identity(path: &Path) -> PathDetail {
     }
 }
 
-pub(super) fn revalidate_cleanup_root(expected: &PathDetail) -> Option<PathBuf> {
-    let path = Path::new(&expected.path);
-    let canonical = safe_cleanup_root(path)?;
-    match (expected.volume_serial, expected.file_id) {
-        (Some(volume_serial), Some(file_id)) => {
-            let current = directory_identity(&canonical)?;
-            (current == (volume_serial, file_id)).then_some(canonical)
-        }
-        _ => None,
-    }
-}
-
 #[cfg(windows)]
 pub(super) fn directory_identity(path: &Path) -> Option<(u64, u64)> {
     file_handle_identity(path, true).map(|value| (value.0, value.1))
@@ -358,7 +347,7 @@ pub(super) fn file_handle_identity(path: &Path, directory: bool) -> Option<(u64,
     use windows::Win32::Foundation::{CloseHandle, HANDLE};
     use windows::Win32::Storage::FileSystem::{
         CreateFileW, FileStandardInfo, GetFileInformationByHandle, GetFileInformationByHandleEx,
-        BY_HANDLE_FILE_INFORMATION, FILE_FLAGS_AND_ATTRIBUTES, FILE_FLAG_BACKUP_SEMANTICS,
+        BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
         FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_STANDARD_INFO, OPEN_EXISTING,
     };
 
@@ -368,9 +357,9 @@ pub(super) fn file_handle_identity(path: &Path, directory: bool) -> Option<(u64,
         .chain(std::iter::once(0))
         .collect();
     let flags = if directory {
-        FILE_FLAG_BACKUP_SEMANTICS
+        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT
     } else {
-        FILE_FLAGS_AND_ATTRIBUTES(0)
+        FILE_FLAG_OPEN_REPARSE_POINT
     };
     let handle = unsafe {
         CreateFileW(
@@ -399,6 +388,9 @@ pub(super) fn file_handle_identity(path: &Path, directory: bool) -> Option<(u64,
         let _ = CloseHandle(handle);
     }
     identity_result.ok()?;
+    if info.dwFileAttributes & 0x400 != 0 {
+        return None;
+    }
     let file_id = ((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64;
     let allocated = standard_result
         .ok()
@@ -514,6 +506,7 @@ pub(super) fn conda_archive_size(pkgs_dir: &Path) -> (u64, u64) {
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
         if is_conda_archive(&name_str) {
+            record_scan_file(&entry.path(), &meta);
             size += meta.len();
             count += 1;
         }
@@ -524,47 +517,6 @@ pub(super) fn conda_archive_size(pkgs_dir: &Path) -> (u64, u64) {
 pub(super) fn is_conda_archive(name: &str) -> bool {
     let lower = name.to_lowercase();
     lower.ends_with(".tar.bz2") || lower.ends_with(".conda")
-}
-
-/// 仅删除 conda pkgs 下的压缩包文件，保留解压后的目录（环境硬链接依赖）
-pub(super) fn remove_conda_archives_with_progress(
-    pkgs_dir: &Path,
-    progress: &mut CleanProgress<'_>,
-    errors: &mut Vec<String>,
-    file_policy: CleanupFilePolicy,
-    diagnostics: &mut PathCleanupDiagnostics,
-) -> std::io::Result<(u64, u64)> {
-    let mut freed = 0u64;
-    let mut count = 0u64;
-    for entry in std::fs::read_dir(pkgs_dir)?.flatten() {
-        let Ok(meta) = entry.metadata() else { continue };
-        if !meta.is_file() {
-            continue;
-        }
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-        if !is_conda_archive(&name_str) {
-            continue;
-        }
-        let entry_path = entry.path();
-        let decision = file_policy.file_decision(&meta);
-        if decision != CleanupPolicyDecision::Allow {
-            diagnostics.record(&entry_path, decision);
-            continue;
-        }
-        let sz = file_details(&entry_path, &meta)
-            .map(|value| value.2)
-            .unwrap_or_else(|| meta.len());
-        if std::fs::remove_file(&entry_path).is_ok() {
-            freed += sz;
-            count += 1;
-            progress.add_result(1, sz, 1);
-        } else {
-            errors.push(format!("{}: 删除文件失败", entry_path.display()));
-            progress.fail(1);
-        }
-    }
-    Ok((freed, count))
 }
 
 /// 扫描缩略图/图标缓存（仅 thumbcache_*.db / iconcache_*.db）
@@ -618,53 +570,10 @@ pub(super) fn thumbnail_files_size(dir: &Path) -> (u64, u64) {
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
         if is_thumbnail_cache_file(&name_str) {
+            record_scan_file(&entry.path(), &meta);
             size += meta.len();
             count += 1;
         }
     }
     (size, count)
-}
-
-/// 仅删除 thumbcache_*.db / iconcache_*.db 文件，保留目录下其他系统文件
-/// （UsrClass.dat、shellbags、Quick Access 等）
-pub(super) fn remove_thumbnail_files_with_progress(
-    dir: &Path,
-    progress: &mut CleanProgress<'_>,
-    errors: &mut Vec<String>,
-    file_policy: CleanupFilePolicy,
-    diagnostics: &mut PathCleanupDiagnostics,
-) -> std::io::Result<(u64, u64)> {
-    let mut freed = 0u64;
-    let mut count = 0u64;
-    for entry in std::fs::read_dir(dir)?.flatten() {
-        let Ok(meta) = entry.metadata() else {
-            continue;
-        };
-        if !meta.is_file() {
-            continue;
-        }
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-        if !is_thumbnail_cache_file(&name_str) {
-            continue;
-        }
-        let entry_path = entry.path();
-        let decision = file_policy.file_decision(&meta);
-        if decision != CleanupPolicyDecision::Allow {
-            diagnostics.record(&entry_path, decision);
-            continue;
-        }
-        let size = file_details(&entry_path, &meta)
-            .map(|value| value.2)
-            .unwrap_or_else(|| meta.len());
-        if std::fs::remove_file(&entry_path).is_ok() {
-            freed += size;
-            count += 1;
-            progress.add_result(1, size, 1);
-        } else {
-            errors.push(format!("{}: 删除文件失败", entry_path.display()));
-            progress.fail(1);
-        }
-    }
-    Ok((freed, count))
 }

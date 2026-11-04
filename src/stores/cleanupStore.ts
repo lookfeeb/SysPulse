@@ -19,7 +19,7 @@ type Notice = { id: number; type: "success" | "warning" | "error"; text: string 
 type CleanupState = {
   taskId: number;
   scan: ScanResult | null;
-  phase: "idle" | "scanning" | "cleaning" | "refreshing";
+  phase: "idle" | "scanning" | "cleaning";
   consumed: boolean;
   cancelRequested: boolean;
   scanProgress: CleanupScanProgress | null;
@@ -29,7 +29,7 @@ type CleanupState = {
   invalidate: () => void;
   startScan: (projectRoots: string[]) => Promise<void>;
   cancelScan: () => Promise<void>;
-  clean: (args: CleanArgs, projectRoots: string[]) => Promise<void>;
+  clean: (args: CleanArgs) => Promise<void>;
 };
 
 let noticeId = 0;
@@ -68,19 +68,20 @@ export const useCleanupStore = create<CleanupState>((set, get) => ({
     }
   },
   async cancelScan() {
-    if (!["scanning", "refreshing"].includes(get().phase) || get().cancelRequested) return;
+    const phase = get().phase;
+    if (!["scanning", "cleaning"].includes(phase) || get().cancelRequested) return;
     const cancelledTask = get().taskId;
     set({ cancelRequested: true });
     try {
-      const accepted = await commands.cancelCleanupScan();
+      const accepted = await (phase === "cleaning" ? commands.cancelCleanup() : commands.cancelCleanupScan());
       if (!accepted && get().taskId === cancelledTask) set({ cancelRequested: false });
     } catch (error) {
       if (get().taskId === cancelledTask) {
-        set({ cancelRequested: false, notice: notice("error", `停止扫描失败：${errorMessage(error)}`) });
+        set({ cancelRequested: false, notice: notice("error", `停止${phase === "cleaning" ? "清理" : "扫描"}失败：${errorMessage(error)}`) });
       }
     }
   },
-  async clean(args, projectRoots) {
+  async clean(args) {
     const current = get();
     if (current.phase !== "idle" || current.consumed || !current.scan?.complete
       || current.scan.cancelled || current.scan.scanId !== args.scanId) return;
@@ -92,21 +93,15 @@ export const useCleanupStore = create<CleanupState>((set, get) => ({
     try {
       await bindCleanupEvents();
       const result = await commands.cleanCategories(args);
-      set({ lastCleanResult: result,
+      set({ lastCleanResult: result, scan: null,
         cleanProgress: { ...get().cleanProgress!, freedBytes: result.freedBytes,
           deletedFiles: result.deletedFiles, percent: 100, done: true },
-        notice: notice(result.errors.length ? "warning" : "success",
-          result.errors.length
-            ? `清理结束，释放 ${fmtBytes(result.freedBytes)}；部分内容已跳过，详情见清理页`
+        notice: notice(result.skippedFiles || result.cancelled ? "warning" : "success",
+          result.cancelled
+            ? `清理已停止，已处理的结果已保留`
+            : result.skippedFiles
+            ? `已清理 ${fmtBytes(result.freedBytes)}，保留 ${result.skippedFiles.toLocaleString()} 个文件`
             : `已释放 ${fmtBytes(result.freedBytes)}，删除 ${result.deletedFiles.toLocaleString()} 个文件`) });
-      // 清理结果单独保存；刷新失败/取消不能覆盖已完成的清理报告。
-      set({ phase: "refreshing", scan: null, scanProgress: initialProgress(), cancelRequested: false });
-      try {
-        const scan = await commands.scanCleanup({ projectRoots: [...projectRoots] });
-        set({ scan, consumed: false });
-      } catch (error) {
-        set({ notice: notice("warning", `清理报告已保留；刷新扫描失败：${errorMessage(error)}`) });
-      }
     } catch (error) {
       set({ cleanProgress: null, notice: notice("error", `清理失败：${errorMessage(error)}`) });
     } finally {
@@ -118,7 +113,7 @@ export const useCleanupStore = create<CleanupState>((set, get) => ({
 const bindCleanupEvents = createEventBinder(async () => {
   const unlistenScan = await listen<CleanupScanProgress>("cleanup:scan-progress", ({ payload }) => {
     const state = useCleanupStore.getState();
-    if (state.phase === "scanning" || state.phase === "refreshing") {
+    if (state.phase === "scanning") {
       useCleanupStore.setState({ scanProgress: payload });
     }
   });

@@ -44,14 +44,17 @@ catch (Exception ex)
 // Publish optional metadata as one completed cache, without delaying readiness.
 var wmiCache = new WmiCache();
 var metadataTask = Task.Run(() => { var cache = new WmiCache(); cache.Refresh(); return cache; });
+using var sampler = new HardwareSampler(host, () => metadataTask.IsCompletedSuccessfully ? metadataTask.Result : wmiCache);
 
 EmitEvent("ready", new { lhmHardwareCount = host.Inner.Hardware.Count });
 
-// Optional: react to Ctrl+C / parent termination by closing LHM cleanly.
+// Stop both collectors before closing their shared LHM lifetime. In particular
+// the storage collector does not take the host gate.
 Console.CancelKeyPress += (_, args) =>
 {
-    args.Cancel = true; // we'll exit naturally after Close()
-    lock (host) host.Dispose();
+    args.Cancel = true;
+    sampler.Dispose();
+    host.Dispose();
     Environment.Exit(0);
 };
 
@@ -77,9 +80,13 @@ while ((line = ReadRequestLine()) != null)
     }
     if (req is null) continue;
 
-    if (metadataTask.IsCompletedSuccessfully) wmiCache = metadataTask.Result;
     Response response;
-    lock (host) response = HandleRequest(req, host, wmiCache);
+    if (req.Op == "snapshot") response = Ok(req.Id, sampler.Read());
+    else if (req.Op == "shutdown") response = Ok(req.Id, null);
+    else if (Monitor.TryEnter(host, 100)) {
+        try { response = HandleRequest(req, host); }
+        finally { Monitor.Exit(host); }
+    } else response = Err(req.Id, "BUSY", "Hardware update in progress; control was not changed");
     WriteResponse(response);
 
     if (req.Op == "shutdown")
@@ -88,7 +95,6 @@ while ((line = ReadRequestLine()) != null)
     }
 }
 
-host.Dispose();
 return 0;
 
 string? ReadRequestLine()
@@ -101,13 +107,12 @@ string? ReadRequestLine()
 // Local helpers
 // -----------------------------------------------------------------------------
 
-Response HandleRequest(Request req, ComputerHost h, WmiCache wmi)
+Response HandleRequest(Request req, ComputerHost h)
 {
     try
     {
         return req.Op switch
         {
-            "snapshot" => Ok(req.Id, SnapshotBuilder.Build(h, wmi)),
             "set_fan" => Ok(req.Id, FanControl.SetFan(h, req.Params)),
             "reset_fan" => Ok(req.Id, FanControl.ResetFan(h, req.Params)),
             "reset_fans" => Ok(req.Id, FanControl.ResetFans(h)),
