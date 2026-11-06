@@ -1,1 +1,1 @@
-{"extends":"../../tsconfig.json","include":["../../src","./fixtures.ts"]}
+{"extends":"../../tsconfig.json","include":["../../src","./fixtures.ts","./overlay-fixture.ts","./overlay-order-check.ts"]}

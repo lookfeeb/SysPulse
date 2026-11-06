@@ -2,9 +2,23 @@ import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import type { AiSessionSummary, AppConfig, ScanResult, Snapshot } from "../../src/bindings";
 import type { CleanResult, HwSnapshot, FanHw, FanControlStatus } from "../../src/bindings";
 import { emit } from "@tauri-apps/api/event";
+import dayjs from "dayjs";
+import type { DailyTraffic, HistoryQuery } from "../../src/bindings";
+
+export const trafficFixture = {
+  calls: [] as HistoryQuery[], delayMs: 0, fail: false,
+  exports: [] as HistoryQuery[],
+  rows: Array.from({ length: 31 }, (_, i) => ({ date: dayjs().subtract(i, "day").format("YYYY-MM-DD"),
+    iface: null, bytesRecv: (i + 1) * 1024 ** 3, bytesSent: (i + 1) * 512 * 1024 ** 2 })) as DailyTraffic[],
+};
+export const autostartFixture = { enabled: new URLSearchParams(location.search).has("autostart-enabled"), delayMs: 600, reads: 0, writes: 0, fail: false };
 
 // Only this test entry imports the mock. No native commands or real files are accessed.
 const config: AppConfig = { schemaVersion: 1, general: { sampleIntervalMs: 1000, adaptiveInterval: false }, overlay: { items: [] }, network: { monitorMode: "all", monitorInterfaces: [], includeLoopback: false, includeVirtual: false }, history: { retainDays: 30 } };
+if (new URLSearchParams(location.search).has("overlay-order")) {
+  config.overlay.items = ["net-down", "net-up", "cpu", "cpu-temp", "mem", "disk-read", "disk-write", "fan-rpm"];
+}
+export const overlayOrderFixture = { writes: [] as AppConfig["overlay"]["items"][], delayMs: 150, failNext: false };
 let sessions: AiSessionSummary[] = Array.from({length: 10000}, (_, i) => ({ sessionId: `fixture-${i}`, title: `验收会话 ${String(i).padStart(5, '0')}`, sessionType: i % 2 ? 'claude' : 'gemini', source: i % 2 ? 'claude' : 'gemini', workspaceHash: 'fixture-workspace', workspaceDirectory: 'C:/Synthetic/Fixture', messageCount: 80, fileSize: 1000, createdAt: Date.now() - i * 1000, modifiedAt: Date.now() - i * 1000 }));
 let sessionWorkspaces = ['fixture-workspace'];
 if (new URLSearchParams(location.search).has('session-sidebar')) {
@@ -93,6 +107,17 @@ mockIPC(async (cmd, payload) => {
       if (failConfig && ++configAttempts <= 2) throw new Error('模拟配置读取失败');
       await new Promise(resolve => setTimeout(resolve, 300));
       return config;
+    case 'set_config': {
+      const patch = args.patch as Partial<AppConfig>;
+      if (patch.overlay) overlayOrderFixture.writes.push([...patch.overlay.items]);
+      await new Promise(resolve => setTimeout(resolve, overlayOrderFixture.delayMs));
+      if (overlayOrderFixture.failNext) {
+        overlayOrderFixture.failNext = false;
+        throw new Error('模拟保存失败');
+      }
+      Object.assign(config, patch);
+      return structuredClone(config);
+    }
     case 'get_realtime_stats': case 'plugin:updater|check': return null;
     case 'get_hw_snapshot': return hardwareSnapshot && Date.now() - hardwareSnapshot.timestampMs < 5000 ? hardwareSnapshot : null;
     case 'get_helper_status': return hardwareSnapshot ? 'running' : 'unavailable';
@@ -108,8 +133,36 @@ mockIPC(async (cmd, payload) => {
     }
     case 'get_app_info': return {name:'SysPulse 隔离验收',version:'0.1.27',os:'Windows',arch:'x64',configDir:'C:/Synthetic',logsDir:'C:/Synthetic',dbFile:'C:/Synthetic/fixture.db'};
     case 'is_admin': return true;
-    case 'autostart_is_enabled': return false;
-    case 'query_traffic_history': return [];
+    case 'autostart_is_enabled': {
+      autostartFixture.reads++;
+      const enabled = autostartFixture.enabled;
+      await new Promise(resolve => setTimeout(resolve, autostartFixture.delayMs));
+      if (autostartFixture.fail) throw new Error('模拟自启状态读取失败');
+      return enabled;
+    }
+    case 'autostart_enable': case 'autostart_disable':
+      autostartFixture.writes++;
+      autostartFixture.enabled = cmd === 'autostart_enable';
+      return null;
+    case 'query_traffic_history': {
+      const query = (payload as {query:HistoryQuery}).query;
+      trafficFixture.calls.push(query);
+      const rows = trafficFixture.rows.filter(row => (!query.from || row.date >= query.from) && (!query.to || row.date <= query.to)).map(row => ({...row}));
+      await new Promise(resolve => setTimeout(resolve, trafficFixture.delayMs));
+      if (trafficFixture.fail) throw new Error('模拟流量读取失败');
+      if (query.granularity === 'day') return rows;
+      const months = new Map<string, DailyTraffic>();
+      rows.forEach(row => {
+        const date = row.date.slice(0,7);
+        const total = months.get(date) ?? {date,iface:null,bytesRecv:0,bytesSent:0};
+        total.bytesRecv += row.bytesRecv;
+        total.bytesSent += row.bytesSent;
+        months.set(date,total);
+      });
+      return [...months.values()];
+    }
+    case 'plugin:dialog|save': return 'C:/Synthetic/traffic.csv';
+    case 'export_traffic_csv': trafficFixture.exports.push(args.query); return {savedTo:args.path,rows:trafficFixture.rows.length};
     case 'ai_get_mcp_overview': mcpFixture.overviewCalls++; return {totalServers:1,enabledServers:1,clients:[{client:'codex',totalServers:1,enabledServers:1}]};
     case 'ai_get_mcp_servers':
       mcpFixture.listCalls.push(args.client);

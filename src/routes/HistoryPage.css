@@ -1,0 +1,51 @@
+.traffic-history-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.traffic-history-summary .ant-statistic {
+  padding: 16px 18px;
+  background: #f6f9fc;
+  border: 1px solid #edf1f5;
+  border-radius: 8px;
+}
+
+.traffic-history-summary .ant-statistic:last-child {
+  background: #eff6ff;
+  border-color: #dbeafe;
+}
+
+.traffic-history-summary .ant-statistic-content {
+  font-size: 23px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.traffic-history-summary .ant-statistic:last-child .ant-statistic-content {
+  color: #3388cc;
+}
+
+.traffic-history-caption {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-bottom: 16px;
+  font-size: 12px;
+}
+
+@media (max-width: 900px) {
+  .traffic-history-summary {
+    gap: 8px;
+  }
+
+  .traffic-history-summary .ant-statistic {
+    padding: 12px;
+  }
+
+  .traffic-history-summary .ant-statistic-content {
+    font-size: 19px;
+  }
+}

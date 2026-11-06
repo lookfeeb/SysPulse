@@ -232,7 +232,9 @@ function autoFitWindow(root: HTMLElement, options: { allowShrink?: boolean } = {
     root.style.height = "auto";
     root.style.overflow = "visible";
     const rect = root.getBoundingClientRect();
-    let w = Math.max(80, Math.ceil(Math.max(rect.width, root.scrollWidth)) + 4);
+    // The root already includes its edge padding; fit the actual text without
+    // leaving a fixed-width tail after the final metric.
+    let w = Math.max(40, Math.ceil(Math.max(rect.width, root.scrollWidth)));
     let h = Math.max(24, Math.ceil(Math.max(rect.height, root.scrollHeight)) + 4);
     if (!options.allowShrink && lastFitWidth > 0) {
       w = Math.max(w, lastFitWidth);
@@ -261,13 +263,15 @@ function setText(el: HTMLElement | null, value: string): boolean {
 }
 
 let tooltipRegionFrame: number | null = null;
+let hoverSuppressed = false;
 
 function syncTooltipRegions(root: HTMLElement) {
   if (tooltipRegionFrame != null) cancelAnimationFrame(tooltipRegionFrame);
   tooltipRegionFrame = requestAnimationFrame(() => {
     tooltipRegionFrame = null;
-    const rect = root.getBoundingClientRect();
-    const regions = [
+    // Anchor to the readings instead of the taskbar-height container's padding.
+    const rect = (root.querySelector<HTMLElement>(".ov-grid") ?? root).getBoundingClientRect();
+    const regions = hoverSuppressed ? [] : [
       { key: "__all__", left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
     ];
     void invoke("register_overlay_tooltip_regions", { args: { regions } }).catch((e) =>
@@ -315,6 +319,14 @@ async function createContextMenu(root: HTMLElement) {
 
 async function main() {
   const root = document.getElementById("root") as HTMLElement;
+  root.addEventListener("pointerdown", () => {
+    hoverSuppressed = true;
+    syncTooltipRegions(root);
+  });
+  root.addEventListener("pointerleave", () => {
+    hoverSuppressed = false;
+    syncTooltipRegions(root);
+  });
   // Bind before asynchronous initialization so opening the main window never
   // depends on menu creation, configuration loading or sensor subscriptions.
   document.body.addEventListener("dblclick", (event) => {

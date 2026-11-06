@@ -14,9 +14,17 @@ node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5175
 
 ## 场景
 
+显示顺序：打开 `?overlay-order` 并进入“通用”，提供 6 个模拟显示项。控制台执行 `await (await import('/tests/ui/overlay-order-check.ts')).checkOverlayOrder()`，检查点击阈值、快速跨项拖动、稳定落点、高亮、单次保存、多指隔离、取消、延迟/失败回退和外部配置变更。该脚本使用浏览器 PointerEvent 与模拟 IPC；还需用真实鼠标/键盘检查捕获、跟手效果和焦点。分别用宽窗口单行、窄窗口换行验证；空格选中，左右移动，上下跨行，Home/End 到首尾，空格/Enter 保存，Esc/Tab 取消。保存期间禁用重复编辑，键盘焦点保留。
+
+流量与自启：导入 `trafficFixture`、`autostartFixture`（`/tests/ui/fixtures.ts`）。默认提供最近 31 天的合成流量；修改 `trafficFixture.rows` 可验证每秒刷新，`fail` / `delayMs` 可验证失败保留与慢请求。`calls` / `exports` 记录查询和导出参数，导出只记录内存调用。`?autostart-enabled` 从开启状态启动；`autostartFixture.delayMs` 默认 600 ms，反复切入通用页时已确认开关不应加载闪动，真实启停操作仅修改模拟状态。
+
 `?cleanup-paths` 使用带扩展前缀的盘符与 UNC 路径；路径显示应去掉前缀，点击后 `cleanupFixture.revealCalls` 保存原始路径，勾选不变。设置 `cleanupFixture.failNextReveal = true` 可检查定位失败提示。
 
 `/tests/ui/overlay.html` 加载真实悬浮窗，暂挂菜单初始化。导入 `overlayFixture`（`/tests/ui/overlay-fixture.ts`）检查 `showCalls`：单击不增加、双击增加一次；调用 `finishMenu()` 后仍然有效，右键增加 `popupCalls`。
+
+菜单初始化完成后，调用 `await overlayFixture.publish(38.6 * 1024 ** 2, 7.22 * 1024 ** 2)` 检查完整网速单位与两行布局；`sizes` 保存窗口尺寸请求，`configure(items)` 切换模拟显示项。可用 `publish(0, 128, 73, 0)` 验证数值变短后窗口收缩，所有调用仅影响隔离页面。
+
+加入 `disk-read` 显示项后检查“硬”“盘”竖排、读取/写入 SVG 图标和完整单位。`regionCalls` 记录悬停区域：按下鼠标后最后一次 `regions` 为空，后续刷新仍为空，离开后恢复。自绘提示面板在 Rust 原生测试中检查；设置 `SYSPULSE_TOOLTIP_PREVIEW` 为 BMP 路径可导出同一绘制函数的预览。
 
 | 地址参数 | 数据与检查重点 |
 | --- | --- |
@@ -38,6 +46,12 @@ const { sessionFixture } = await import('/tests/ui/fixtures.ts');
 `listDelayMs`、`loadDelayMs` 控制延迟，`failNextList`、`failNextLoad` 注入一次失败；`listCalls`、`loadCalls`、`deleteCalls`、`remaining` 用于核对请求和数据。
 
 检查慢加载期间切换项目不会被旧响应覆盖；删除取消不改数据，重复确认只提交一次；删除成功但刷新失败时，已删除行仍应消失。只读记录保持只读。项目下拉框只允许选择；侧栏不显示搜索框、项目路径、本机会话数、来源筛选或结果栏。列表快捷键包括 ↓、End 和 Enter。
+
+## 历史日期查询
+
+进入“流量历史”，日期面板和月份选择面板应显示 `1月` 至 `12月`，星期使用中文。
+加载 `const { trafficFixture } = await import('/tests/ui/fixtures.ts')`，向 `rows` 加入一条 `2001-01-01` 的记录；清空开始、结束日期后点击“查询”，应显示“全部历史记录”，统计包含这条旧记录，最后一次 `calls` 的 `from`、`to` 均为 `null`。
+切换按月后查询、等待实时刷新、切页返回及导出 CSV，仍应保留空日期范围；`exports` 中的查询参数同样为 `null`。仅指定一端日期时，只应用该端限制。
 
 ## 后台清理控制
 

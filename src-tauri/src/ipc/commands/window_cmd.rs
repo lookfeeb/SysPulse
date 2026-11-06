@@ -52,11 +52,14 @@ pub fn spawn_overlay_tooltip_watchdog(app: AppHandle) {
         let mut interval = tokio::time::interval(Duration::from_millis(120));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut active_key: Option<String> = None;
+        let mut pending_key: Option<String> = None;
+        let mut hover_started = Instant::now();
         let mut last_refresh = Instant::now() - Duration::from_secs(2);
 
         loop {
             interval.tick().await;
             if crate::app::is_shutting_down() {
+                let _ = app.run_on_main_thread(crate::windows_api::custom_tooltip::destroy);
                 break;
             }
             let hovered = overlay_tooltip_hit_test(&app);
@@ -64,11 +67,20 @@ pub fn spawn_overlay_tooltip_watchdog(app: AppHandle) {
             let changed = next_key != active_key.as_deref();
 
             let Some(hit) = hovered else {
+                pending_key = None;
                 if active_key.take().is_some() {
-                    let _ = app.run_on_main_thread(crate::windows_api::native_tooltip::hide);
+                    let _ = app.run_on_main_thread(crate::windows_api::custom_tooltip::hide);
                 }
                 continue;
             };
+
+            if pending_key.as_deref() != Some(hit.key.as_str()) {
+                pending_key = Some(hit.key.clone());
+                hover_started = Instant::now();
+            }
+            if changed && hover_started.elapsed() < Duration::from_millis(240) {
+                continue;
+            }
 
             if !changed && last_refresh.elapsed() < Duration::from_secs(1) {
                 continue;
@@ -86,17 +98,19 @@ pub fn spawn_overlay_tooltip_watchdog(app: AppHandle) {
                 build_overlay_tooltip(&hit.key, snapshot.as_ref(), fresh_hw)
             };
             let Some(text) = text else {
+                if active_key.take().is_some() {
+                    let _ = app.run_on_main_thread(crate::windows_api::custom_tooltip::hide);
+                }
                 continue;
             };
 
             let key = hit.key.clone();
             let owner_raw = hit.owner;
-            let x = hit.x;
-            let y = hit.y;
+            let anchor = hit.anchor;
             let _ = app.run_on_main_thread(move || {
                 let owner = HWND(owner_raw as *mut _);
-                if let Err(error) = crate::windows_api::native_tooltip::show(owner, &text, x, y) {
-                    tracing::warn!(?error, key = %key, "show native overlay tooltip failed");
+                if let Err(error) = crate::windows_api::custom_tooltip::show(owner, &text, anchor) {
+                    tracing::warn!(?error, key = %key, "show custom overlay tooltip failed");
                 }
             });
             active_key = Some(hit.key);
@@ -111,14 +125,15 @@ pub fn spawn_overlay_tooltip_watchdog(app: AppHandle) {
 struct OverlayTooltipHit {
     key: String,
     owner: isize,
-    x: i32,
-    y: i32,
+    anchor: RECT,
 }
 
 #[cfg(windows)]
 fn overlay_tooltip_hit_test(app: &AppHandle) -> Option<OverlayTooltipHit> {
     use windows::Win32::Foundation::{HWND, POINT};
-    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetAncestor, GetCursorPos, WindowFromPoint, GA_ROOT,
+    };
 
     let window = app.get_webview_window(OVERLAY_LABEL)?;
     if !window.is_visible().ok()? {
@@ -131,6 +146,10 @@ fn overlay_tooltip_hit_test(app: &AppHandle) -> Option<OverlayTooltipHit> {
     unsafe {
         GetWindowRect(owner, &mut window_rect).ok()?;
         GetCursorPos(&mut cursor).ok()?;
+        // A menu or another window covering the overlay must dismiss the card.
+        if GetAncestor(WindowFromPoint(cursor), GA_ROOT) != owner {
+            return None;
+        }
     }
     if cursor.x < window_rect.left
         || cursor.x >= window_rect.right
@@ -155,8 +174,12 @@ fn overlay_tooltip_hit_test(app: &AppHandle) -> Option<OverlayTooltipHit> {
     Some(OverlayTooltipHit {
         key: region.key.clone(),
         owner: owner.0 as isize,
-        x: window_rect.left + (((region.left + region.right) / 2.0) * scale).round() as i32,
-        y: window_rect.top + (region.top * scale).round() as i32,
+        anchor: RECT {
+            left: window_rect.left + (region.left * scale).round() as i32,
+            top: window_rect.top + (region.top * scale).round() as i32,
+            right: window_rect.left + (region.right * scale).round() as i32,
+            bottom: window_rect.top + (region.bottom * scale).round() as i32,
+        },
     })
 }
 
@@ -241,7 +264,7 @@ fn build_overlay_summary(
                 let read = sum_values(disks.iter().filter_map(|disk| disk.read_bytes_per_sec));
                 let write = sum_values(disks.iter().filter_map(|disk| disk.write_bytes_per_sec));
                 Some(format!(
-                    "硬盘：↓{}  ↑{}",
+                    "硬盘：读 {} · 写 {}",
                     format_speed_opt(read),
                     format_speed_opt(write)
                 ))
@@ -259,7 +282,7 @@ fn build_overlay_summary(
                     h.fans
                         .iter()
                         .filter_map(|fan| fan.rpm)
-                        .filter(|rpm| *rpm > 0.0)
+                        .filter(|rpm| *rpm >= 0.0)
                 }))
                 .map(|rpm| format!("{rpm:.0} RPM"))
                 .unwrap_or_else(|| "--".into())

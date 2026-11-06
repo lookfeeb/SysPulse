@@ -21,12 +21,13 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
-use tokio::sync::{broadcast, mpsc, oneshot, RwLock};
+use tokio::sync::{broadcast, mpsc, oneshot, watch, RwLock};
 use tokio::time::timeout;
 
 const REQ_TIMEOUT: Duration = Duration::from_millis(3000);
 const MAX_TIMEOUTS_BEFORE_RESTART: u32 = 5;
 const MAX_RESTART_ATTEMPTS: u32 = 5;
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -82,7 +83,7 @@ struct InnerState {
     /// consecutive timeouts since last successful response
     timeouts: AtomicI64,
     /// current status
-    status: Mutex<HelperStatus>,
+    status: watch::Sender<HelperStatus>,
     /// status broadcast (to forward to webview as "hw:helper-status")
     status_tx: broadcast::Sender<HelperStatusEvent>,
     /// helper executable path
@@ -118,7 +119,7 @@ impl HwClient {
                 supervisor_tx: Mutex::new(None),
                 next_id: AtomicU64::new(1),
                 timeouts: AtomicI64::new(0),
-                status: Mutex::new(HelperStatus::Starting),
+                status: watch::channel(HelperStatus::Starting).0,
                 status_tx,
                 helper_path,
                 io_tasks: Mutex::new(Vec::new()),
@@ -127,7 +128,11 @@ impl HwClient {
     }
 
     pub fn status(&self) -> HelperStatus {
-        *self.inner.status.lock()
+        *self.inner.status.borrow()
+    }
+
+    pub(crate) fn watch_status(&self) -> watch::Receiver<HelperStatus> {
+        self.inner.status.subscribe()
     }
 
     pub fn subscribe_status(&self) -> broadcast::Receiver<HelperStatusEvent> {
@@ -321,7 +326,7 @@ async fn supervisor_loop(state: Arc<InnerState>, mut rx: mpsc::Receiver<Supervis
         match spawn_one(&state).await {
             Ok(child) => {
                 let started = std::time::Instant::now();
-                match wait_for_exit_or_command(child, &mut rx).await {
+                match wait_for_exit_or_command(child, &mut rx, state.status.subscribe()).await {
                     SupervisorExit::Exited => {
                         clear_runtime(&state).await;
                         tracing::warn!("hw helper exited; attempting restart");
@@ -333,6 +338,7 @@ async fn supervisor_loop(state: Arc<InnerState>, mut rx: mpsc::Receiver<Supervis
                     }
                     SupervisorExit::Restart(reason) => {
                         clear_runtime(&state).await;
+                        tracing::warn!("hw helper restarting: {reason}");
                         set_status(&state, HelperStatus::Restarting, Some(reason));
                     }
                     SupervisorExit::Shutdown => {
@@ -435,6 +441,7 @@ async fn spawn_one(state: &Arc<InnerState>) -> std::io::Result<Child> {
 async fn wait_for_exit_or_command(
     mut child: Child,
     rx: &mut mpsc::Receiver<SupervisorCmd>,
+    status: watch::Receiver<HelperStatus>,
 ) -> SupervisorExit {
     tokio::select! {
         status = child.wait() => {
@@ -457,6 +464,29 @@ async fn wait_for_exit_or_command(
                 }
             }
         }
+        _ = startup_stalled(status, STARTUP_TIMEOUT) => {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            SupervisorExit::Restart("helper did not become ready within 30 seconds".into())
+        }
+    }
+}
+
+/// After ready, only the request deadlines supervise health. A helper that never
+/// emits ready still has a bounded startup even while the sampler waits quietly.
+async fn startup_stalled(mut status: watch::Receiver<HelperStatus>, limit: Duration) {
+    let ready = async {
+        loop {
+            if *status.borrow_and_update() == HelperStatus::Running {
+                return;
+            }
+            if status.changed().await.is_err() {
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+    if timeout(limit, ready).await.is_ok() {
+        std::future::pending::<()>().await;
     }
 }
 
@@ -612,7 +642,7 @@ async fn request_supervisor_shutdown(state: &Arc<InnerState>) {
 }
 
 fn set_status(state: &Arc<InnerState>, new: HelperStatus, reason: Option<String>) {
-    *state.status.lock() = new;
+    state.status.send_replace(new);
     let _ = state.status_tx.send(HelperStatusEvent {
         status: new,
         reason,
@@ -620,12 +650,16 @@ fn set_status(state: &Arc<InnerState>, new: HelperStatus, reason: Option<String>
 }
 
 fn mark_running_if_available(state: &Arc<InnerState>) {
-    let mut status = state.status.lock();
-    if *status == HelperStatus::Running {
+    let changed = state.status.send_if_modified(|status| {
+        if *status != HelperStatus::Starting {
+            return false;
+        }
+        *status = HelperStatus::Running;
+        true
+    });
+    if !changed {
         return;
     }
-    *status = HelperStatus::Running;
-    drop(status);
     let _ = state.status_tx.send(HelperStatusEvent {
         status: HelperStatus::Running,
         reason: None,
@@ -635,6 +669,101 @@ fn mark_running_if_available(state: &Arc<InnerState>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn startup_deadline_only_fires_when_helper_never_becomes_ready() {
+        use futures_util::FutureExt;
+        let (status, rx) = watch::channel(HelperStatus::Starting);
+        let mut deadline = Box::pin(startup_stalled(rx, Duration::from_millis(20)));
+        assert!(deadline.as_mut().now_or_never().is_none());
+        status.send_replace(HelperStatus::Running);
+        assert!(timeout(Duration::from_millis(60), &mut deadline)
+            .await
+            .is_err());
+
+        let (_status, rx) = watch::channel(HelperStatus::Starting);
+        timeout(
+            Duration::from_secs(1),
+            startup_stalled(rx, Duration::from_millis(10)),
+        )
+        .await
+        .unwrap();
+
+        // A readiness event emitted before subscribing must also be retained.
+        let (_status, rx) = watch::channel(HelperStatus::Running);
+        assert!(timeout(
+            Duration::from_millis(40),
+            startup_stalled(rx, Duration::from_millis(10))
+        )
+        .await
+        .is_err());
+    }
+
+    #[tokio::test]
+    async fn sampler_waits_for_ready_and_resumes_immediately_after_restart() {
+        let client = Arc::new(HwClient::new(PathBuf::new()));
+        let (tx, mut rx) = mpsc::channel(4);
+        *client.inner.writer_tx.write().await = Some(tx);
+        let sampler = crate::hw::sampler::spawn(client.clone());
+        let mut snapshots = sampler.subscribe();
+        assert!(timeout(Duration::from_millis(80), rx.recv()).await.is_err());
+        for iteration in 0..2 {
+            set_status(&client.inner, HelperStatus::Starting, None);
+            mark_running_if_available(&client.inner);
+            let request = timeout(Duration::from_secs(1), rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(request.op, "snapshot");
+            let response = HelperResponse {
+                id: request.id as i64,
+                ok: true,
+                data: serde_json::to_value(HwSnapshot {
+                    timestamp_ms: iteration,
+                    ..Default::default()
+                })
+                .unwrap(),
+                error: None,
+            };
+            client
+                .inner
+                .pending
+                .lock()
+                .remove(&request.id)
+                .unwrap()
+                .send(response)
+                .unwrap();
+            assert_eq!(
+                timeout(Duration::from_secs(1), snapshots.recv())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .timestamp_ms,
+                iteration
+            );
+            assert!(
+                timeout(Duration::from_millis(80), rx.recv()).await.is_err(),
+                "ready must not cause duplicate immediate samples"
+            );
+            set_status(
+                &client.inner,
+                HelperStatus::Restarting,
+                Some("test restart".into()),
+            );
+            assert!(timeout(Duration::from_millis(80), rx.recv()).await.is_err());
+        }
+        sampler.shutdown().await;
+    }
+
+    #[test]
+    fn late_ready_cannot_revive_an_unavailable_or_restarting_helper() {
+        let client = HwClient::new(PathBuf::new());
+        for status in [HelperStatus::Restarting, HelperStatus::Unavailable] {
+            set_status(&client.inner, status, None);
+            mark_running_if_available(&client.inner);
+            assert_eq!(client.status(), status);
+        }
+    }
 
     #[tokio::test]
     async fn protocol_frames_are_bounded_and_must_be_complete() {

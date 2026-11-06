@@ -20,8 +20,17 @@ $root = $PSScriptRoot
 # 安装包输出目录（相对于项目根目录），用于存放准备发布的安装包
 $releaseDir = Join-Path $root "release"
 
-# Tauri 编译后安装包所在路径
-$bundleDir = Join-Path $root "target\release\bundle"
+# Resolve Cargo's configured output directory, including CARGO_TARGET_DIR overrides.
+function Get-CargoTargetDirectory {
+    Push-Location $root
+    try {
+        $metadata = cargo metadata --manifest-path src-tauri/Cargo.toml --no-deps --format-version 1 --locked
+        if ($LASTEXITCODE -ne 0) { throw "无法读取 Cargo 编译缓存目录" }
+        return ($metadata | ConvertFrom-Json).target_directory
+    } finally {
+        Pop-Location
+    }
+}
 
 # ─── 工具函数 ──────────────────────────────────────────────────────────────────
 
@@ -98,6 +107,7 @@ function Build-Helper {
 function Copy-Installers {
     Write-Host ""
     Write-Host "  ► 复制安装包到 release/ ..." -ForegroundColor Cyan
+    $bundleDir = Join-Path (Get-CargoTargetDirectory) "release\bundle"
 
     if (-not (Test-Path $releaseDir)) {
         New-Item -ItemType Directory -Path $releaseDir | Out-Null

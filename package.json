@@ -1,6 +1,6 @@
 {
   "name": "syspulse",
-  "version": "0.1.31",
+  "version": "0.1.32",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,8 +9,8 @@
     "test": "vitest run",
     "preview": "vite preview",
     "tauri": "tauri",
-    "build:helper": "powershell -ExecutionPolicy Bypass -File scripts/build-helper.ps1",
-    "build:helper:ensure": "powershell -ExecutionPolicy Bypass -File scripts/ensure-helper.ps1",
+    "build:helper": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/build-helper.ps1",
+    "build:helper:ensure": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/ensure-helper.ps1",
     "tauri:dev": "npm run build:helper:ensure && tauri dev",
     "tauri:build": "npm run build:helper && tauri build"
   },

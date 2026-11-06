@@ -1,0 +1,21 @@
+{
+  "theme": "base",
+  "securityLevel": "strict",
+  "htmlLabels": false,
+  "deterministicIds": true,
+  "deterministicIDSeed": "syspulse-architecture",
+  "themeVariables": {
+    "fontFamily": "Microsoft YaHei UI, Segoe UI, Arial, sans-serif",
+    "fontSize": "18px",
+    "lineColor": "#64748b",
+    "edgeLabelBackground": "#ffffff",
+    "primaryTextColor": "#1e293b"
+  },
+  "flowchart": {
+    "htmlLabels": false,
+    "curve": "linear",
+    "nodeSpacing": 24,
+    "rankSpacing": 46,
+    "padding": 16
+  }
+}

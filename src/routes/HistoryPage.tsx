@@ -1,30 +1,33 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Button,
+  Alert,
   Card,
   DatePicker,
   App as AntdApp,
   Radio,
   Space,
+  Statistic,
   Table,
   Typography,
 } from "antd";
-import dayjs, { type Dayjs } from "dayjs";
+import dayjs from "dayjs";
+import "dayjs/locale/zh-cn";
+import zhCN from "antd/locale/zh_CN";
 import { useTranslation } from "react-i18next";
-import { queryTrafficHistory } from "@/ipc";
 import type { DailyTraffic, HistoryQuery } from "@/bindings";
 import { save } from "@tauri-apps/plugin-dialog";
 import { exportTrafficCsv } from "@/ipc";
 import { fmtBytes } from "@/utils/format";
+import { trafficTotals, useHistoryStore } from "@/stores/historyStore";
+import { historyQueryFromRange, historyRangeLabel, type HistoryRange } from "@/utils/historyQuery";
+import "./HistoryPage.css";
 
 const { RangePicker } = DatePicker;
-
-type HistoryCache = {
-  query: HistoryQuery;
-  rows: DailyTraffic[];
+const dateLocale = {
+  ...zhCN.DatePicker!,
+  lang: { ...zhCN.DatePicker!.lang, monthFormat: "M月" },
 };
-
-let cachedHistory: HistoryCache | null = null;
 
 function defaultQuery(): HistoryQuery {
   return {
@@ -38,65 +41,48 @@ function defaultQuery(): HistoryQuery {
 export default function HistoryPage() {
   const { t } = useTranslation();
   const { message } = AntdApp.useApp();
-  const initialQuery = cachedHistory?.query ?? defaultQuery();
-  const [range, setRange] = useState<[Dayjs, Dayjs]>([
-    dayjs(initialQuery.from),
-    dayjs(initialQuery.to),
+  const { query, rows, loading, error, updatedAt, load } = useHistoryStore();
+  const [initialQuery] = useState(() => query ?? defaultQuery());
+  const [range, setRange] = useState<HistoryRange>([
+    initialQuery.from ? dayjs(initialQuery.from) : null,
+    initialQuery.to ? dayjs(initialQuery.to) : null,
   ]);
   const [granularity, setGranularity] = useState<"day" | "month">(
     initialQuery.granularity ?? "day",
   );
-  const [rows, setRows] = useState<DailyTraffic[]>(cachedHistory?.rows ?? []);
-  const [loading, setLoading] = useState(false);
-
-  const buildQuery = (): HistoryQuery => {
-    const from = granularity === "month"
-      ? range[0].startOf("month").format("YYYY-MM-DD")
-      : range[0].format("YYYY-MM-DD");
-    const to = granularity === "month"
-      ? range[1].endOf("month").format("YYYY-MM-DD")
-      : range[1].format("YYYY-MM-DD");
-
-    return {
-      from,
-      to,
-      granularity,
-      iface: null,
-    };
-  };
+  const [page, setPage] = useState(1);
+  const totals = useMemo(() => trafficTotals(rows), [rows]);
 
   const onQuery = async () => {
-    setLoading(true);
-    try {
-      const query = buildQuery();
-      const r = await queryTrafficHistory(query);
-      const sorted = [...r].reverse();
-      setRows(sorted);
-      cachedHistory = { query, rows: sorted };
-      void message.success({ content: `查询完成，共 ${r.length} 条`, duration: 1.5, key: "history-query" });
-    } catch (e: unknown) {
-      void message.error(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
+    if (await load(historyQueryFromRange(range, granularity))) setPage(1);
   };
 
-  // Only auto-query on first mount if no cache exists.
   useEffect(() => {
-    if (!cachedHistory) {
-      void onQuery();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    const refresh = () => {
+      if (document.hidden) return;
+      const state = useHistoryStore.getState();
+      if (state.loading || state.refreshing) return;
+      if (state.query) void state.refresh();
+      else void state.load(initialQuery, state.updatedAt !== null);
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 1000);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [initialQuery]);
 
   const onExport = async () => {
-    const path = await save({
-      defaultPath: `traffic-${granularity}-${dayjs().format("YYYYMMDD")}.csv`,
-      filters: [{ name: "CSV", extensions: ["csv"] }],
-    });
-    if (!path) return;
+    if (!query) return;
     try {
-      const r = await exportTrafficCsv(buildQuery(), path);
+      const path = await save({
+        defaultPath: `traffic-${query.granularity}-${dayjs().format("YYYYMMDD")}.csv`,
+        filters: [{ name: "CSV", extensions: ["csv"] }],
+      });
+      if (!path) return;
+      const r = await exportTrafficCsv(query, path);
       void message.success(`已导出 ${r.rows} 行 → ${r.savedTo}`);
     } catch (e: unknown) {
       void message.error(e instanceof Error ? e.message : String(e));
@@ -123,13 +109,15 @@ export default function HistoryPage() {
   ];
 
   return (
-    <Card title={t("menu.history")}>
-      <Space style={{ marginBottom: 16 }}>
+    <Card title={t("menu.history")} className="traffic-history">
+      <Space wrap style={{ marginBottom: 16 }}>
         <RangePicker
+          locale={dateLocale}
+          allowEmpty={[true, true]}
           picker={granularity === "month" ? "month" : "date"}
           format={granularity === "month" ? "YYYY-MM" : "YYYY-MM-DD"}
           value={range}
-          onChange={(v) => v && setRange(v as [Dayjs, Dayjs])}
+          onChange={(value) => setRange(value ?? [null, null])}
         />
         <Radio.Group
           value={granularity}
@@ -137,7 +125,7 @@ export default function HistoryPage() {
             const nextGranularity = e.target.value as "day" | "month";
             setGranularity(nextGranularity);
             if (nextGranularity === "month") {
-              setRange([range[0].startOf("month"), range[1].startOf("month")]);
+              setRange(([from, to]) => [from?.startOf("month") ?? null, to?.startOf("month") ?? null]);
             }
           }}
         >
@@ -147,10 +135,25 @@ export default function HistoryPage() {
         <Button type="primary" loading={loading} onClick={onQuery} style={{ minWidth: 72 }}>
           {t("history.query")}
         </Button>
-        <Button onClick={onExport} disabled={rows.length === 0}>
+        <Button onClick={onExport} disabled={loading || rows.length === 0}>
           {t("history.exportCsv")}
         </Button>
       </Space>
+
+      <div className="traffic-history-summary" aria-label="查询区间流量统计">
+        <Statistic title="累计下行" value={totals.recv} formatter={() => updatedAt === null ? "--" : fmtBytes(totals.recv)} />
+        <Statistic title="累计上行" value={totals.sent} formatter={() => updatedAt === null ? "--" : fmtBytes(totals.sent)} />
+        <Statistic title="流量合计" value={totals.total} formatter={() => updatedAt === null ? "--" : fmtBytes(totals.total)} />
+      </div>
+      <div className="traffic-history-caption">
+        <Typography.Text type="secondary">
+          {query ? `${historyRangeLabel(query)} · 全部 ${rows.length} 条记录` : "正在读取流量统计…"}
+        </Typography.Text>
+        <Typography.Text type="secondary">
+          {error ? "更新失败，保留上次数据" : updatedAt === null ? "等待数据" : `每秒更新 · ${dayjs(updatedAt).format("HH:mm:ss")}`}
+        </Typography.Text>
+      </div>
+      {error && <Alert type="warning" showIcon title={`流量查询失败：${error}`} style={{ marginBottom: 16 }} />}
 
       {rows.length === 0 && !loading ? (
         <Typography.Text type="secondary">暂无流量历史数据。</Typography.Text>
@@ -159,7 +162,7 @@ export default function HistoryPage() {
           size="small"
           rowKey="date"
           loading={loading}
-          pagination={{ pageSize: 10, showSizeChanger: false, showTotal: (total) => `共 ${total} 条` }}
+          pagination={{ current: page, onChange: setPage, pageSize: 10, showSizeChanger: false, showTotal: (total) => `共 ${total} 条` }}
           dataSource={rows}
           columns={columns}
         />

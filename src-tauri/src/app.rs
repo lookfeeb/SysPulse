@@ -17,7 +17,6 @@ use tauri::{App, AppHandle, Emitter, Manager, WindowEvent};
 /// State injected as Tauri managed state and consumed by IPC commands.
 pub struct AppState {
     pub config: Arc<ConfigManager>,
-    pub store: Arc<TrafficStore>,
     pub sampler: SamplerHandle,
     pub writer: WriterHandle,
     pub last_snapshot: Arc<RwLock<Option<Snapshot>>>,
@@ -93,7 +92,6 @@ pub fn setup(app: &mut App) -> std::result::Result<(), Box<dyn std::error::Error
     let last_hw_snapshot = Arc::new(RwLock::new(None));
     let helper_path = resolve_helper_path(app);
     let hw_client = Arc::new(HwClient::new(helper_path.clone()));
-    hw_client.start();
 
     {
         let app_handle = app.handle().clone();
@@ -134,6 +132,9 @@ pub fn setup(app: &mut App) -> std::result::Result<(), Box<dyn std::error::Error
         });
     }
 
+    // Subscribe to status and snapshots before a fast helper can publish ready.
+    hw_client.start();
+
     if !helper_path.exists() {
         tracing::warn!(path = %helper_path.display(),
             "hw-helper.exe not found; run scripts/build-helper.ps1 first");
@@ -151,7 +152,6 @@ pub fn setup(app: &mut App) -> std::result::Result<(), Box<dyn std::error::Error
     // can immediately call IPC during startup.
     app.manage(AppState {
         config,
-        store,
         sampler,
         writer,
         last_snapshot,
@@ -312,6 +312,7 @@ pub fn on_window_event(window: &tauri::Window, event: &WindowEvent) {
         #[cfg(windows)]
         if window.label() == "overlay" {
             crate::windows_api::taskbar::stop_overlay_z_order_watch();
+            crate::windows_api::custom_tooltip::destroy();
         }
         tracing::warn!(
             label = window.label(),

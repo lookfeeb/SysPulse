@@ -1,6 +1,6 @@
 [package]
 name = "syspulse"
-version = "0.1.31"
+version = "0.1.32"
 description = "Lightweight Windows network/system monitor"
 authors = ["SysPulse"]
 edition = "2021"
@@ -83,6 +83,7 @@ tauri-specta = { version = "=2.0.0-rc.21", features = ["derive", "typescript"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
+    "Foundation_Numerics",
     "Win32_Foundation",
     "Win32_NetworkManagement_IpHelper",
     "Win32_NetworkManagement_Ndis",
@@ -94,7 +95,13 @@ windows = { version = "0.58", features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Accessibility",
     "Win32_UI_Controls",
+    "Win32_UI_HiDpi",
+    "Win32_System_LibraryLoader",
     "Win32_Graphics_Gdi",
+    "Win32_Graphics_Direct2D",
+    "Win32_Graphics_Direct2D_Common",
+    "Win32_Graphics_DirectWrite",
+    "Win32_Graphics_Dxgi_Common",
 ] }
 
 [features]

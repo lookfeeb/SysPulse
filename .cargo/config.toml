@@ -1,3 +1,5 @@
 [build]
-# Share one output directory across Cargo, Tauri, local packaging and CI.
-target-dir = "target"
+# Z: maps to this share. Use UNC in every process, including elevated builds.
+# CI overrides this with CARGO_TARGET_DIR.
+# Keep Windows backslashes: MSVC treats a leading // as a linker option.
+target-dir = '\\192.168.4.1\win_data\SysPulseBuildCache\target'

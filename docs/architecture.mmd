@@ -1,0 +1,40 @@
+flowchart TB
+    accTitle: SysPulse 应用架构
+    accDescr: 两个 WebView2 窗口通过 Tauri 命令和事件访问 Rust 服务；Rust 连接原生悬停卡、硬件 helper、流量 Writer、本地文件及 AI 客户端。
+
+    Main["主窗口 · WebView2<br/>React / Ant Design / Zustand"]
+    Overlay["任务栏悬浮窗 · WebView2<br/>独立 TypeScript / CSS"]
+    IPC["Rust / Tauri 2<br/>命令与事件 · Specta 类型绑定<br/>AppState · 最近快照缓存"]
+
+    Monitor["监控与硬件服务<br/>基础采样 / helper 监督<br/>快照广播 / 风扇保护"]
+    Jobs["配置与后台任务<br/>配置通知 / 历史查询<br/>磁盘清理 / 托盘 / 更新"]
+    AI["AI 管理<br/>MCP 配置 / OAuth 代理<br/>多来源会话 / Token 刷新"]
+    Tooltip["原生悬停卡 · Win32<br/>DirectWrite / 透明圆角<br/>状态灯呼吸动画"]
+
+    Helper["硬件 helper 子进程<br/>.NET 8 / LibreHardwareMonitor<br/>传感器与磁盘独立采集"]
+    Writer["流量 Writer<br/>串行查询与落盘<br/>合并数据库与待写增量"]
+    Local["本地文件与系统<br/>config.toml / 日志<br/>清理目标 / Windows 集成"]
+    Clients["AI 客户端与服务<br/>客户端配置 / 会话文件<br/>凭据存储 / MCP 远端"]
+    DB[("traffic.db<br/>SQLite WAL")]
+
+    Main <-->|"命令 / 事件"| IPC
+    Overlay <-->|"命令 / 事件"| IPC
+    IPC <--> Monitor
+    IPC <--> Jobs
+    IPC <--> AI
+    IPC -->|"UI 线程"| Tooltip
+    Monitor <-->|"stdio · JSON Lines"| Helper
+    Monitor -->|"网卡流量增量"| Writer
+    Jobs <-->|"历史 / CSV"| Writer
+    Jobs <--> Local
+    AI <--> Clients
+    Writer <--> DB
+
+    classDef ui fill:#eff6ff,stroke:#60a5fa,color:#163660,stroke-width:1.5px
+    classDef rust fill:#eefbf5,stroke:#56ac88,color:#174b38,stroke-width:1.5px
+    classDef native fill:#f5f0ff,stroke:#a78bdb,color:#4b326d,stroke-width:1.5px
+    classDef resource fill:#fff9ed,stroke:#d4aa58,color:#60451f,stroke-width:1.5px
+    class Main,Overlay ui
+    class IPC,Monitor,Jobs,AI,Writer rust
+    class Tooltip,Helper native
+    class Local,Clients,DB resource

@@ -1,16 +1,16 @@
 use crate::app::AppState;
 use crate::error::IpcError;
-use crate::storage::queries::{query_history, DailyTraffic, HistoryQuery};
+use crate::storage::queries::{DailyTraffic, HistoryQuery};
 use std::path::PathBuf;
 use tauri::State;
 
 #[tauri::command]
 #[specta::specta]
-pub fn query_traffic_history(
+pub async fn query_traffic_history(
     state: State<'_, AppState>,
     query: HistoryQuery,
 ) -> Result<Vec<DailyTraffic>, IpcError> {
-    Ok(query_history(state.store.pool(), &query)?)
+    Ok(state.writer.query_history(query).await?)
 }
 
 #[derive(serde::Deserialize, specta::Type)]
@@ -28,14 +28,16 @@ pub struct ExportResult {
 
 #[tauri::command]
 #[specta::specta]
-pub fn export_traffic_csv(
+pub async fn export_traffic_csv(
     state: State<'_, AppState>,
     args: ExportArgs,
 ) -> Result<ExportResult, IpcError> {
-    let rows = query_history(state.store.pool(), &args.query)?;
+    let rows = state.writer.query_history(args.query).await?;
     let path = PathBuf::from(&args.path);
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(crate::error::AppError::Io)?;
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(crate::error::AppError::Io)?;
     }
     let mut out = String::new();
     // UTF-8 BOM so Excel reads it correctly.
@@ -48,7 +50,9 @@ pub fn export_traffic_csv(
             r.date, iface, r.bytes_recv, r.bytes_sent
         ));
     }
-    std::fs::write(&path, out).map_err(crate::error::AppError::Io)?;
+    tokio::fs::write(&path, out)
+        .await
+        .map_err(crate::error::AppError::Io)?;
     Ok(ExportResult {
         saved_to: path.to_string_lossy().to_string(),
         rows: rows.len(),

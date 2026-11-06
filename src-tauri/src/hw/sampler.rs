@@ -1,4 +1,4 @@
-use crate::hw::client::HwClient;
+use crate::hw::client::{HelperStatus, HwClient, HwClientError};
 use crate::hw::snapshot::HwSnapshot;
 use std::sync::Arc;
 use std::time::Duration;
@@ -32,6 +32,7 @@ pub fn spawn(client: Arc<HwClient>) -> HwSamplerHandle {
     let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(8);
     let (bus_tx, _) = broadcast::channel::<HwSnapshot>(16);
     let bus_clone = bus_tx.clone();
+    let mut status_rx = client.watch_status();
 
     tauri::async_runtime::spawn(async move {
         let mut next = Instant::now();
@@ -39,11 +40,17 @@ pub fn spawn(client: Arc<HwClient>) -> HwSamplerHandle {
 
         loop {
             tokio::select! {
-                _ = sleep_until(next) => {
+                _ = sleep_until(next), if client.status() == HelperStatus::Running => {
+                    status_rx.borrow_and_update();
                     match client.snapshot().await {
                         Ok(snap) => {
                             consecutive_failures = 0;
                             let _ = bus_clone.send(snap);
+                        }
+                        Err(HwClientError::NotRunning) => {
+                            // The supervisor owns exit/restart diagnostics. A process
+                            // can exit between the readiness check and this request.
+                            consecutive_failures = 0;
                         }
                         Err(e) => {
                             consecutive_failures = consecutive_failures.saturating_add(1);
@@ -56,7 +63,15 @@ pub fn spawn(client: Arc<HwClient>) -> HwSamplerHandle {
                     // Rest after completion: slow hardware never causes catch-up bursts.
                     next = Instant::now() + next_sample_delay(consecutive_failures);
                 }
-                Some(()) = shutdown_rx.recv() => {
+                changed = status_rx.changed() => {
+                    if changed.is_err() { break; }
+                    // Readiness wakes the first sample immediately, including after
+                    // a restart; startup time is not counted as sampling failures.
+                    status_rx.borrow_and_update();
+                    consecutive_failures = 0;
+                    next = Instant::now();
+                }
+                _ = shutdown_rx.recv() => {
                     break;
                 }
                 else => { break; }

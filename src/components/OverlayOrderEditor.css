@@ -1,0 +1,79 @@
+.overlay-order-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+  gap: 10px;
+  position: relative;
+}
+
+.overlay-order-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 9px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 7px;
+  color: #374151;
+  background: #fff;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  transition: border-color 120ms, background-color 120ms, box-shadow 120ms;
+}
+
+.overlay-order-chip:hover:not([aria-disabled="true"]),
+.overlay-order-chip:focus-visible {
+  border-color: #3388cc;
+  background: #f5faff;
+}
+
+.overlay-order-chip:focus-visible { outline: 2px solid #93c5fd; outline-offset: 2px; }
+.overlay-order-chip[aria-disabled="true"] { cursor: wait; opacity: .65; }
+.overlay-order-handle { flex: none; color: #9ca3af; }
+.overlay-order-label { font-weight: 500; overflow-wrap: anywhere; }
+.overlay-order-number {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 10px;
+  background: #f3f4f6;
+  color: #6b7280;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.overlay-order-placeholder .overlay-order-chip {
+  border: 1px dashed #3388cc;
+  background: #eff6ff;
+}
+.overlay-order-placeholder .overlay-order-chip > * { opacity: .3; }
+.overlay-order-keyboard .overlay-order-chip { border-color: #3388cc; background: #dbeafe; }
+.overlay-order-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 2000;
+  pointer-events: none;
+  cursor: grabbing;
+  border-color: #3388cc;
+  background: #eff6ff;
+  box-shadow: 0 8px 24px #3388cc33;
+  will-change: transform;
+}
+.overlay-order-ghost .overlay-order-number { background: #3388cc; color: #fff; }
+.overlay-order-ghost[data-outside="true"] { opacity: .55; border-color: #9ca3af; }
+.overlay-order-help { min-height: 18px; margin-top: 10px; font-size: 11px; color: #9ca3af; }
+.overlay-order-empty { padding: 24px 12px; text-align: center; border: 1px dashed #d1d5db; border-radius: 6px; background: #f9fafb; color: #9ca3af; font-size: 12px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .overlay-order-chip { transition: none; }
+}

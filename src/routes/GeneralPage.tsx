@@ -20,6 +20,7 @@ export default function GeneralPage() {
   const patch = useConfigStore((s) => s.patch);
   const autoStartState = useAutostartStore((s) => s.enabled);
   const autoStartStoreLoading = useAutostartStore((s) => s.loading);
+  const autoStartError = useAutostartStore((s) => s.error);
   const refreshAutoStart = useAutostartStore((s) => s.refresh);
   const setAutoStartEnabled = useAutostartStore((s) => s.setEnabled);
 
@@ -80,7 +81,6 @@ export default function GeneralPage() {
 
   const adaptive = config.general.adaptiveInterval;
   const autoStart = autoStartState ?? false;
-  const autoStartLoading = autoStartStoreLoading || autoStartState === null;
 
   return (
     <Space vertical size={16} style={{ width: "100%" }}>
@@ -91,14 +91,25 @@ export default function GeneralPage() {
           <Form.Item label={t("general.autoStart")} style={{ marginBottom: 20 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <PoweroffOutlined style={{ color: autoStart ? "#22c55e" : "#9ca3af", fontSize: 14 }} />
-              <Switch
-                checked={autoStart}
-                loading={autoStartLoading}
-                onChange={(checked) => void onAutoStartChange(checked)}
-              />
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                {autoStart ? "已开启" : "已关闭"}
-              </Text>
+              {autoStartState === null ? (
+                <Space role="status">
+                  {!autoStartError && <Spin size="small" />}
+                  <Text type="secondary">{autoStartError ? "状态读取失败" : "正在读取状态…"}</Text>
+                  {autoStartError && <Button size="small" onClick={() => void refreshAutoStart().catch(() => {})}>重试</Button>}
+                </Space>
+              ) : (
+                <>
+                  <Switch
+                    aria-label={t("general.autoStart")}
+                    checked={autoStart}
+                    loading={autoStartStoreLoading}
+                    onChange={(checked) => void onAutoStartChange(checked)}
+                  />
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {autoStart ? "已开启" : "已关闭"}
+                  </Text>
+                </>
+              )}
             </div>
           </Form.Item>
 

@@ -14,6 +14,9 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      # Hosted runners do not have the local Z: cache drive.
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
     permissions:
       contents: write
 
@@ -64,7 +67,7 @@ jobs:
         run: npm ci
 
       - name: Build hw-helper
-        run: powershell -ExecutionPolicy Bypass -File scripts/build-helper.ps1 -Runtime ${{ matrix.helper-runtime }}
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/build-helper.ps1 -Runtime ${{ matrix.helper-runtime }}
 
       - name: Get version
         id: version

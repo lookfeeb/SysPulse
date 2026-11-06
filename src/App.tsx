@@ -16,6 +16,7 @@ import { bindLiveEvents, useLiveStore } from "@/stores/liveStore";
 import { bindHwEvents, useHwStore } from "@/stores/hwStore";
 import { useMcpStore } from "@/stores/mcpStore";
 import { useUpdateStore } from "@/stores/updateStore";
+import { useAutostartStore } from "@/stores/autostartStore";
 
 import "@/i18n";
 
@@ -27,6 +28,7 @@ export default function App() {
 
   useEffect(() => {
     void load();
+    void useAutostartStore.getState().refresh().catch(() => {});
     void useMcpStore.getState().initialize();
     void prime();
     void primeHw();
