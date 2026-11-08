@@ -44,13 +44,12 @@ def powershell7_path() -> str:
 
 
 def cargo_target_dir() -> str:
-    env = os.environ.copy()
-    env.pop("CARGO_TARGET_DIR", None)
     metadata = subprocess.run(
         ["cargo", "metadata", "--manifest-path", "src-tauri/Cargo.toml", "--no-deps", "--format-version", "1", "--locked"],
-        cwd=PROJECT_DIR, env=env, capture_output=True, text=True, encoding="utf-8", check=True,
+        cwd=PROJECT_DIR, env=os.environ.copy(), capture_output=True, text=True, encoding="utf-8", check=True,
     )
-    # Resolve mapped drives before elevation: the elevated token may not have Z:.
+    # Preserve explicit CARGO_TARGET_DIR overrides, then resolve the effective
+    # path before elevation (mapped drives may be unavailable to the new token).
     return os.path.realpath(json.loads(metadata.stdout)["target_directory"])
 
 

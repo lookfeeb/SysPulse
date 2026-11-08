@@ -1,9 +1,12 @@
 using System.Text;
+using System.Text.Json;
 
 namespace SysPulse.HwHelper;
 
 public static class ProtocolReader
 {
+    public static Request? Parse(string line) => JsonSerializer.Deserialize(line, HelperJsonContext.Default.Request);
+
     public static string? ReadLine(TextReader input, int limit = 16 * 1024)
     {
         var line = new StringBuilder();

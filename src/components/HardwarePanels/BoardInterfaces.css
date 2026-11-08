@@ -1,0 +1,41 @@
+.board-ports { min-width: 0; color: #26334a; }
+.board-ports__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.board-ports__header h3 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 14px; font-weight: 600; }
+.board-ports__header h3 .anticon { color: #527be1; }
+.board-ports__header p { margin: 5px 0 0; font-size: 11px; color: #718096; }
+.board-ports__summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin-bottom: 12px; font-size: 12px; color: #64748b; }
+.board-ports__summary b { color: #365d8e; font-variant-numeric: tabular-nums; font-weight: 600; }
+.board-ports__connected-filter { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border: 1px solid #9cd6bc; border-radius: 5px; background: #ecf9f2; color: #16724f; font: inherit; line-height: 1.5; cursor: pointer; }
+.board-ports__connected-filter b { color: inherit; }
+.board-ports__connected-filter:hover { border-color: #38936c; background: #dcf2e6; }
+.board-ports__connected-filter[aria-pressed="true"] { border-color: #18734f; background: #18734f; color: #fff; }
+.board-ports__connected-filter[aria-pressed="true"]:hover { border-color: #125e40; background: #125e40; }
+.board-ports__connected-filter:focus-visible { outline: 2px solid #38936c; outline-offset: 2px; }
+.board-ports__categories { display: flex; flex-wrap: wrap; gap: 5px; padding-bottom: 10px; margin-bottom: 12px; border-bottom: 1px solid #e6ebf3; }
+.board-ports__categories button { font: inherit; display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; font-size: 12px; border: 0; border-radius: 5px; background: transparent; color: #64748b; cursor: pointer; }
+.board-ports__categories button:hover { background: #f1f5fa; }
+.board-ports__categories button[aria-pressed="true"] { background: #eaf2fc; color: #3765bf; font-weight: 600; }
+.board-ports__categories button span { font-size: 11px; font-variant-numeric: tabular-nums; }
+.board-ports__categories button:focus-visible, .board-ports__table-scroll:focus-visible { outline: 2px solid #668def; outline-offset: 2px; }
+.board-ports__table-scroll { width: 100%; overflow-x: auto; }
+.board-ports__table { width: 100%; min-width: 650px; border-collapse: collapse; table-layout: fixed; font-size: 12px; line-height: 1.6; text-align: left; }
+.board-ports__table thead th { padding: 8px 10px; background: #f5f7fb; border-bottom: 1px solid #e4eaf2; color: #63748e; font-weight: 500; }
+.board-ports__table tbody th, .board-ports__table tbody td { padding: 10px; vertical-align: top; border-bottom: 1px solid #edf0f5; overflow-wrap: anywhere; font-weight: 400; }
+.board-ports__table tbody tr:hover { background: #f9fbfe; }
+.board-ports__name { font-weight: 500; }
+.board-ports__detail { display: block; margin-top: 3px; font-size: 11px; color: #78869b; }
+.board-ports__type-c { color: #7954b2; font-weight: 500; }
+.board-ports__speed { font-variant-numeric: tabular-nums; }
+.board-ports__speed > div { display: flex; flex-wrap: wrap; column-gap: 8px; }
+.board-ports__speed-label { color: #697b94; }
+.board-ports__status { display: inline-flex; align-items: center; gap: 5px; color: #78869b; white-space: nowrap; }
+.board-ports__status i { flex: 0 0 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.board-ports__status--connected { color: #22866d; }
+.board-ports__status--in-use { color: #4c7dbd; }
+.board-ports__status--error, .board-ports__status--unavailable { color: #b46529; }
+.board-ports__footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding-top: 12px; color: #78869b; font-size: 11px; }
+.board-ports__empty { text-align: center; padding: 15px 0 25px; }
+.board-ports__help { max-width: 340px; font-size: 12px; line-height: 1.7; color: #627188; }
+.board-ports__help p { margin: 0 0 8px; }
+.board-ports__help p:last-child { margin-bottom: 0; }
+.board-ports__sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }

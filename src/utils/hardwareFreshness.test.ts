@@ -18,4 +18,11 @@ describe("hardware display freshness", () => {
   it("never accepts invalid ages as fresh", () => {
     for (const age of [-1, Infinity, NaN]) expect(sensorAge(age)).toBe(Infinity);
   });
+  it("keeps live interfaces when sensors stall and expires connection state independently", () => {
+    const motherboard = { interfacesAgeMs: 1000, interfaces: [{ status: "connected" }], temperaturesC: [{ value: 60 }] };
+    expect(visibleHardware({ ...snapshot, sampleAgeMs: 31000, motherboard }).motherboard)
+      .toMatchObject({ interfaces: [{ status: "connected" }], temperaturesC: [] });
+    expect(visibleHardware({ ...snapshot, motherboard }, 15000).motherboard?.interfaces).toEqual([]);
+    expect(motherboard.interfaces[0].status).toBe("connected");
+  });
 });

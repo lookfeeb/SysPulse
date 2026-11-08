@@ -45,19 +45,16 @@ export default function HardwarePage() {
         <Alert
           type="error"
           showIcon
-          title="hw-helper 不可用"
+          title="硬件采集模块不可用"
           description={
             helperReason ||
-            "未找到 hw-helper.exe。请在仓库根运行 scripts/build-helper.ps1，然后重启程序。"
+            "硬件模块未能加载，请重新启动程序；若仍无法恢复，请修复安装。"
           }
           style={{ borderRadius: 8 }}
         />
       )}
-      {helperStatus === "restarting" && (
-        <Alert type="warning" showIcon title="hw-helper 正在重启…" style={{ borderRadius: 8 }} />
-      )}
       {helperStatus === "starting" && (
-        <Alert type="info" showIcon title="hw-helper 正在启动…" style={{ borderRadius: 8 }} />
+        <Alert type="info" showIcon title="硬件采集模块正在启动…" style={{ borderRadius: 8 }} />
       )}
       {fanControl.fuseHold && (
         <Alert

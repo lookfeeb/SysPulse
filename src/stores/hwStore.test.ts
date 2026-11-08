@@ -73,7 +73,7 @@ describe("hardware snapshots", () => {
 
   it("invalidates data immediately on helper restart", () => {
     useHwStore.getState().setSnapshot(snapshot(1));
-    useHwStore.getState().setHelper({ status: "restarting", reason: "timeout" });
+    useHwStore.getState().setHelper({ status: "unavailable", reason: "timeout" });
     expect(useHwStore.getState().current).toBeNull();
     expect(useHwStore.getState().stale).toBe(true);
   });

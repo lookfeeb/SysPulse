@@ -89,13 +89,54 @@ pub fn spawn_overlay_tooltip_watchdog(app: AppHandle) {
                 continue;
             };
             let config = state.config.snapshot();
+            let show_traffic = matches!(hit.key.as_str(), "net-down" | "net-up")
+                || (hit.key == "__all__"
+                    && config.overlay.items.iter().any(|item| {
+                        matches!(
+                            item,
+                            crate::config::OverlayItem::NetDown | crate::config::OverlayItem::NetUp
+                        )
+                    }));
+            let today_traffic = if show_traffic {
+                match query_today_traffic(
+                    &state.writer,
+                    &config.network,
+                    chrono::Local::now().date_naive(),
+                )
+                .await
+                {
+                    Ok(total) => Some(total),
+                    Err(error) => {
+                        tracing::warn!(?error, "query tooltip daily traffic failed");
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            // A database read yields to other tasks; don't reopen a card after
+            // the pointer has left its region or the overlay has moved.
+            let Some(hit) = overlay_tooltip_hit_test(&app)
+                .filter(|current| current.key == hit.key && current.owner == hit.owner)
+            else {
+                pending_key = None;
+                if active_key.take().is_some() {
+                    let _ = app.run_on_main_thread(crate::windows_api::custom_tooltip::hide);
+                }
+                continue;
+            };
             let snapshot = state.last_snapshot.read();
             let hw = state.last_hw_snapshot.read();
             let fresh_hw = hw.as_ref().filter(|s| s.is_fresh());
             let text = if hit.key == "__all__" {
-                build_overlay_summary(&config.overlay.items, snapshot.as_ref(), fresh_hw)
+                build_overlay_summary(
+                    &config.overlay.items,
+                    snapshot.as_ref(),
+                    fresh_hw,
+                    today_traffic,
+                )
             } else {
-                build_overlay_tooltip(&hit.key, snapshot.as_ref(), fresh_hw)
+                build_overlay_tooltip(&hit.key, snapshot.as_ref(), fresh_hw, today_traffic)
             };
             let Some(text) = text else {
                 if active_key.take().is_some() {
@@ -119,6 +160,54 @@ pub fn spawn_overlay_tooltip_watchdog(app: AppHandle) {
     });
     #[cfg(not(windows))]
     let _ = app;
+}
+
+#[cfg(windows)]
+async fn query_today_traffic(
+    writer: &crate::storage::WriterHandle,
+    network: &crate::config::schema::NetworkConfig,
+    today: chrono::NaiveDate,
+) -> crate::error::Result<(u64, u64)> {
+    use crate::config::schema::NetworkMonitorMode;
+    use crate::storage::queries::{HistoryGranularity, HistoryQuery};
+
+    let interfaces = match network.monitor_mode {
+        NetworkMonitorMode::All => vec![None],
+        NetworkMonitorMode::Specified => network
+            .monitor_interfaces
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .map(|iface| Some(iface.clone()))
+            .collect(),
+    };
+    let date = today.format("%Y-%m-%d").to_string();
+    let mut total = (0_u64, 0_u64);
+    for iface in interfaces {
+        // The writer combines persisted history and queued samples exactly once.
+        // Only query while the network card is visible; never force a disk flush.
+        let rows = writer
+            .query_history(HistoryQuery {
+                from: Some(date.clone()),
+                to: Some(date.clone()),
+                granularity: HistoryGranularity::Day,
+                iface,
+            })
+            .await?;
+        for row in rows {
+            total.0 = total.0.saturating_add(row.bytes_recv.max(0) as u64);
+            total.1 = total.1.saturating_add(row.bytes_sent.max(0) as u64);
+        }
+    }
+    Ok(total)
+}
+
+#[cfg(windows)]
+fn today_traffic_line(total: Option<(u64, u64)>) -> String {
+    let (recv, sent) = total
+        .map(|(recv, sent)| (format_bytes(recv as f64), format_bytes(sent as f64)))
+        .unwrap_or_else(|| ("--".into(), "--".into()));
+    format!("今日流量：↓{recv}  ↑{sent}")
 }
 
 #[cfg(windows)]
@@ -188,6 +277,7 @@ fn build_overlay_summary(
     items: &[crate::config::OverlayItem],
     snapshot: Option<&crate::monitor::Snapshot>,
     hw: Option<&crate::hw::HwSnapshot>,
+    today_traffic: Option<(u64, u64)>,
 ) -> Option<String> {
     use crate::config::OverlayItem;
     use std::collections::HashSet;
@@ -199,17 +289,18 @@ fn build_overlay_summary(
             OverlayItem::NetDown | OverlayItem::NetUp if groups.insert("network") => {
                 let total = snapshot.map(|s| &s.network.total);
                 Some(format!(
-                    "网速：↓{}  ↑{}",
+                    "网速：↓{}  ↑{}\r\n{}",
                     total
                         .map(|value| format_speed(value.bytes_recv_per_sec as f64))
                         .unwrap_or_else(|| "--".into()),
                     total
                         .map(|value| format_speed(value.bytes_sent_per_sec as f64))
-                        .unwrap_or_else(|| "--".into())
+                        .unwrap_or_else(|| "--".into()),
+                    today_traffic_line(today_traffic)
                 ))
             }
             OverlayItem::Cpu => Some(format!(
-                "CPU 占用：{}",
+                "CPU：{}",
                 hw.and_then(|h| h.cpu.as_ref())
                     .and_then(|cpu| cpu.total_usage)
                     .map(format_percent)
@@ -217,7 +308,7 @@ fn build_overlay_summary(
                     .unwrap_or_else(|| "--".into())
             )),
             OverlayItem::CpuTemp => Some(format!(
-                "CPU 温度：{}",
+                "CPU°：{}",
                 format_temp(
                     hw.and_then(|h| h.cpu.as_ref())
                         .and_then(|cpu| cpu.package_temp_c)
@@ -238,7 +329,7 @@ fn build_overlay_summary(
                     .unwrap_or_else(|| "--".into());
                 Some(match memory {
                     Some(value) if value.total_bytes > 0 => format!(
-                        "内存：{percent}（{} / {}）",
+                        "内存：{percent} ({} / {})",
                         format_bytes(value.used_bytes as f64),
                         format_bytes(value.total_bytes as f64)
                     ),
@@ -246,14 +337,14 @@ fn build_overlay_summary(
                 })
             }
             OverlayItem::Gpu | OverlayItem::GpuUsage => Some(format!(
-                "GPU 占用：{}",
+                "GPU：{}",
                 format_percent_opt(max_value(
                     hw.into_iter()
                         .flat_map(|h| { h.gpus.iter().filter_map(|gpu| gpu.usage_percent) })
                 ))
             )),
             OverlayItem::GpuTemp => Some(format!(
-                "GPU 温度：{}",
+                "GPU°：{}",
                 format_temp(max_value(
                     hw.into_iter()
                         .flat_map(|h| { h.gpus.iter().filter_map(|gpu| gpu.temp_c) })
@@ -324,6 +415,7 @@ fn build_overlay_tooltip(
     key: &str,
     snapshot: Option<&crate::monitor::Snapshot>,
     hw: Option<&crate::hw::HwSnapshot>,
+    today_traffic: Option<(u64, u64)>,
 ) -> Option<String> {
     let mut lines = Vec::new();
     let title = match key {
@@ -353,7 +445,7 @@ fn build_overlay_tooltip(
                     lines.push(format!("物理核心：{}", s.cpu.physical_cores));
                 }
             }
-            "CPU 占用"
+            "CPU"
         }
         "cpu-temp" => {
             let cpu = hw.and_then(|h| h.cpu.as_ref());
@@ -370,7 +462,7 @@ fn build_overlay_tooltip(
                     lines.push(format!("最低核心：{}", format_temp(Some(min))));
                 }
             }
-            "CPU 温度"
+            "CPU°"
         }
         "cpu-freq" => {
             lines.push(format!(
@@ -412,11 +504,11 @@ fn build_overlay_tooltip(
         }
         "gpu-usage" => {
             append_gpu_lines(&mut lines, hw, |gpu| format_percent_opt(gpu.usage_percent));
-            "GPU 占用"
+            "GPU"
         }
         "gpu-temp" => {
             append_gpu_lines(&mut lines, hw, |gpu| format_temp(gpu.temp_c));
-            "GPU 温度"
+            "GPU°"
         }
         "disk-read" | "disk-write" => {
             let disks = hw.map(|h| h.disks.as_slice()).unwrap_or_default();
@@ -507,6 +599,7 @@ fn build_overlay_tooltip(
                     format_speed(s.network.total.bytes_sent_per_sec as f64)
                 ));
             }
+            lines.push(today_traffic_line(today_traffic));
             "网速"
         }
         _ => return None,
@@ -609,15 +702,24 @@ mod tooltip_tests {
         snapshot.network.total.bytes_recv_per_sec = 2 * 1024 * 1024;
         snapshot.network.total.bytes_sent_per_sec = 512 * 1024;
 
-        let text = build_overlay_tooltip("net-down", Some(&snapshot), None).unwrap();
-        assert!(text.contains("网速"));
-        assert!(text.contains("下行：2.00 MB/s"));
-        assert!(text.contains("上行：512.0 KB/s"));
+        for key in ["net-down", "net-up"] {
+            let text = build_overlay_tooltip(
+                key,
+                Some(&snapshot),
+                None,
+                Some((3 * 1024 * 1024 * 1024, 512 * 1024 * 1024)),
+            )
+            .unwrap();
+            assert!(text.contains("网速"));
+            assert!(text.contains("下行：2.00 MB/s"));
+            assert!(text.contains("上行：512.0 KB/s"));
+            assert!(text.contains("今日流量：↓3.00 GB  ↑512.00 MB"));
+        }
     }
 
     #[test]
     fn rejects_unknown_overlay_item() {
-        assert!(build_overlay_tooltip("unknown", None, None).is_none());
+        assert!(build_overlay_tooltip("unknown", None, None, None).is_none());
     }
 
     #[test]
@@ -636,10 +738,99 @@ mod tooltip_tests {
             OverlayItem::Mem,
         ];
 
-        let text = build_overlay_summary(&items, Some(&snapshot), None).unwrap();
+        let text = build_overlay_summary(&items, Some(&snapshot), None, Some((0, 0))).unwrap();
         assert_eq!(text.matches("网速：").count(), 1);
-        assert!(text.contains("CPU 占用：17%"));
+        assert_eq!(text.matches("今日流量：").count(), 1);
+        assert_eq!(text.lines().nth(2), Some("今日流量：↓0 B  ↑0 B"));
+        assert!(text.contains("CPU：17%"));
         assert!(text.contains("内存：56%"));
+        let text = build_overlay_summary(&[OverlayItem::Cpu], Some(&snapshot), None, None).unwrap();
+        assert!(!text.contains("今日流量"));
+        let text = build_overlay_summary(&[OverlayItem::NetUp], None, None, None).unwrap();
+        assert!(text.contains("今日流量：↓--  ↑--"));
+    }
+
+    #[tokio::test]
+    async fn daily_tooltip_includes_saved_and_live_bytes_and_follows_date_and_interfaces() {
+        use crate::config::schema::{NetworkConfig, NetworkMonitorMode};
+        use crate::storage::{spawn_writer, TrafficDelta};
+        use chrono::NaiveDate;
+        use std::sync::Arc;
+
+        let pool = Arc::new(
+            r2d2::Pool::builder()
+                .max_size(1)
+                .build(r2d2_sqlite::SqliteConnectionManager::memory())
+                .unwrap(),
+        );
+        pool.get().unwrap().execute_batch(
+            "CREATE TABLE traffic_daily(date_iso TEXT, luid INTEGER, bytes_recv INTEGER, bytes_sent INTEGER, PRIMARY KEY(date_iso,luid));
+             INSERT INTO traffic_daily VALUES ('2026-11-07',1,900,800), ('2026-11-08',1,100,200), ('2026-11-08',2,300,400);"
+        ).unwrap();
+        let writer = spawn_writer(pool);
+        let today = NaiveDate::from_ymd_opt(2026, 11, 8).unwrap();
+        let tomorrow = today.succ_opt().unwrap();
+        let mut network = NetworkConfig::default();
+        assert_eq!(
+            query_today_traffic(&writer, &network, today).await.unwrap(),
+            (400, 600)
+        );
+        writer
+            .send_delta(TrafficDelta {
+                luid: 1,
+                date_local: today,
+                bytes_recv: 10,
+                bytes_sent: 20,
+            })
+            .await;
+        for _ in 0..2 {
+            assert_eq!(
+                query_today_traffic(&writer, &network, today).await.unwrap(),
+                (410, 620)
+            );
+            writer.flush().await.unwrap();
+        }
+        network.monitor_mode = NetworkMonitorMode::Specified;
+        network.monitor_interfaces = vec!["1".into(), "1".into()];
+        assert_eq!(
+            query_today_traffic(&writer, &network, today).await.unwrap(),
+            (110, 220)
+        );
+        network.monitor_interfaces = vec!["2".into(), "1".into()];
+        assert_eq!(
+            query_today_traffic(&writer, &network, today).await.unwrap(),
+            (410, 620)
+        );
+        network.monitor_interfaces.clear();
+        assert_eq!(
+            query_today_traffic(&writer, &network, today).await.unwrap(),
+            (0, 0)
+        );
+        network.monitor_mode = NetworkMonitorMode::All;
+        assert_eq!(
+            query_today_traffic(&writer, &network, tomorrow)
+                .await
+                .unwrap(),
+            (0, 0)
+        );
+        writer
+            .send_delta(TrafficDelta {
+                luid: 1,
+                date_local: tomorrow,
+                bytes_recv: 5,
+                bytes_sent: 6,
+            })
+            .await;
+        assert_eq!(
+            query_today_traffic(&writer, &network, tomorrow)
+                .await
+                .unwrap(),
+            (5, 6)
+        );
+        assert_eq!(
+            query_today_traffic(&writer, &network, today).await.unwrap(),
+            (410, 620)
+        );
     }
 }
 

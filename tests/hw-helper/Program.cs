@@ -1,11 +1,18 @@
 using System.Reflection;
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
+using System.Text;
 using LibreHardwareMonitor.Hardware;
 using SysPulse.HwHelper;
+
+if (args.Contains("--benchmark")) { HelperBenchmarks.Run(); return; }
 
 // No driver, WMI query, real device, or fan write is used by this regression runner.
 int passed = 0;
 void Test(string name, Action action) { action(); passed++; Console.WriteLine($"PASS {name}"); }
+InProcessTests.Run(Test);
+UsbCapabilityTests.Run(Test);
 void Check(bool condition) { if (!condition) throw new Exception("Assertion failed"); }
 
 ISensor Sensor(string name, SensorType type, float? value, int index = 0, IControl? control = null) =>
@@ -88,6 +95,16 @@ Test("request protocol bounds and incomplete frames", () => {
         Check(rejected);
     }
 });
+Test("generated request parser preserves IDs, control parameters and malformed-input rejection", () => {
+    var request = ProtocolReader.Parse("{\"id\":9223372036854775807,\"op\":\"set_fan\",\"params\":{\"fanId\":\"风扇\",\"mode\":\"manual\",\"pwm\":37.5}}")!;
+    Check(request.Id == long.MaxValue && request.Op == "set_fan" && request.Params?.FanId == "风扇");
+    Check(request.Params?.Mode == "manual" && request.Params.Pwm == 37.5);
+    Check(ProtocolReader.Parse("null") == null);
+    Check(ProtocolReader.Parse("{\"id\":1,\"op\":\"snapshot\"}")!.Params == null);
+    bool rejected = false;
+    try { ProtocolReader.Parse("{\"id\":\"bad\"}"); } catch (JsonException) { rejected = true; }
+    Check(rejected);
+});
 Test("package priority and core alignment", () => {
     var cpu = Build(Device(HardwareType.Cpu, [
         Sensor("Core (CCD1)", SensorType.Temperature, 50), Sensor("CPU Package", SensorType.Temperature, 70),
@@ -122,6 +139,83 @@ Test("library history is disabled without affecting live values", () => {
         };
     });
     Check(Build(Device(HardwareType.Cpu, [sensor])).Cpu?.PackageTempC == 62 && window == TimeSpan.Zero);
+});
+Test("cached sensor identity keeps changed names, values and control attachments live", () => {
+    int identityReads = 0;
+    string name = "Original";
+    float value = 1000;
+    IControl? control = null;
+    var sensor = Proxy.Create<ISensor>((method, _) => {
+        if (method.Name == "get_Identifier") { identityReads++; return new Identifier("stable", "fan"); }
+        return method.Name switch {
+            "get_Name" => name, "get_Value" => value, "get_Control" => control,
+            "get_SensorType" => SensorType.Fan, "get_Index" => 0, _ => null,
+        };
+    });
+    var hardware = Device(HardwareType.SuperIO, [sensor]);
+    var first = FanChannels.Capture(hardware).Single();
+    name = "Changed"; value = 0; control = Proxy.Create<IControl>((_, _) => null);
+    var second = FanChannels.Capture(hardware).Single();
+    Check(identityReads == 1 && first.Id == second.Id && first.Name == "Original");
+    Check(second.Name == "Changed" && second.Value == 0 && ReferenceEquals(second.Control, control));
+});
+Test("native memory preserves byte precision and rejects invalid counters", () => {
+    // Page-aligned counters on a large-memory system exceed float-GB precision.
+    ulong total = 512UL * 1024 * 1024 * 1024 + 4096;
+    ulong available = 128UL * 1024 * 1024 * 1024 + 8192;
+    var metadata = new WmiCache();
+    metadata.MemoryModules.Add(new MemoryModule { CapacityBytes = 32UL * 1024 * 1024 * 1024 });
+    var memory = NativeMemory.FromCounters(total, available, metadata)!;
+    Check(memory.TotalBytes == total && memory.UsedBytes == total - available);
+    const double gib = 1024d * 1024 * 1024;
+    Check((ulong)(((float)((total - available) / gib) + (double)(float)(available / gib)) * gib) != total);
+    Check(Math.Abs(memory.UsedPercent - (100d * (total - available) / total)) < 1e-10);
+    Check(ReferenceEquals(memory.Modules, metadata.MemoryModules));
+    Check(NativeMemory.FromCounters(0, 0, metadata) == null);
+    Check(NativeMemory.FromCounters(100, 101, metadata) == null);
+    Check(NativeMemory.FromCounters(100, 100, metadata)!.UsedPercent == 0);
+    Check(NativeMemory.FromCounters(100, 0, metadata)!.UsedPercent == 100);
+});
+Test("sampler publishes independent native memory without a memory hardware device", () => {
+    var metadata = new WmiCache();
+    using var sampler = new HardwareSampler([], new object(), () => metadata,
+        wmi => NativeMemory.FromCounters(1024, 256, wmi));
+    Check(SpinWait.SpinUntil(() => sampler.Read().Memory != null, 5000));
+    var snapshot = sampler.Read();
+    Check(snapshot.Memory!.UsedBytes == 768 && snapshot.Memory.UsedPercent == 75);
+    Check(snapshot.SampleAgeMs < 5000 && snapshot.Cpu == null);
+});
+Test("collection cost counts toward cadence and overruns skip missed ticks", () => {
+    Check(HardwareSampler.NextDelayMs(TimeSpan.Zero, 1000) == 1000);
+    Check(HardwareSampler.NextDelayMs(TimeSpan.FromMilliseconds(250), 1000) == 750);
+    Check(HardwareSampler.NextDelayMs(TimeSpan.FromMilliseconds(1250), 1000) == 750);
+    Check(HardwareSampler.NextDelayMs(TimeSpan.FromMilliseconds(3000), 1000) == 1000);
+    Check(HardwareSampler.NextDelayMs(TimeSpan.FromMilliseconds(2999.9), 3000) == 1);
+});
+Test("UTF-8 snapshot writer preserves wire format, nulls, Unicode and consecutive frame boundaries", () => {
+    var options = new JsonSerializerOptions {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
+    var snapshots = new[] {
+        new HwSnapshot {
+            TimestampMs = 123, SampleAgeMs = 42, StorageAgeMs = long.MaxValue,
+            Cpu = new CpuHw { Name = "测试 CPU\n😀", PackageTempC = 0, PerCoreTempsC = new() { null, 62 } },
+            Fans = new() { new FanHw { Name = "风扇", Rpm = 0 }, new FanHw { Name = "未知", Rpm = null } },
+            Memory = new MemoryHw { TotalBytes = 34359738491, UsedBytes = 21474836596 },
+        },
+        new HwSnapshot(),
+    };
+    using var output = new MemoryStream();
+    using (var writer = new SnapshotResponseWriter(output))
+        for (int i = 0; i < snapshots.Length; i++) writer.Write(i + 1, snapshots[i]);
+    Check(output.CanWrite);
+    var frames = Encoding.UTF8.GetString(output.ToArray()).Split('\n', StringSplitOptions.RemoveEmptyEntries);
+    Check(frames.Length == snapshots.Length);
+    for (int i = 0; i < snapshots.Length; i++) {
+        var expected = JsonSerializer.Serialize(new Response { Id = i + 1, Ok = true, Data = snapshots[i] }, options);
+        Check(JsonNode.DeepEquals(JsonNode.Parse(frames[i]), JsonNode.Parse(expected)));
+    }
 });
 Test("failed parent and recursive children", () => {
     int updates = 0;

@@ -8,7 +8,12 @@ namespace SysPulse.HwHelper;
 /// <summary>Capture each sensor once; publish only successfully refreshed devices.</summary>
 public static class SnapshotBuilder
 {
-    public static HwSnapshot Build(ComputerHost host, WmiCache wmi) => Build(host.Refresh(), wmi);
+    public static HwSnapshot Build(ComputerHost host, WmiCache wmi)
+    {
+        var snapshot = Build(host.Refresh(), wmi);
+        snapshot.Memory = NativeMemory.Read(wmi);
+        return snapshot;
+    }
 
     public static HwSnapshot Build(IEnumerable<IHardware> refreshed, WmiCache wmi)
     {

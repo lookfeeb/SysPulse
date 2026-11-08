@@ -57,6 +57,9 @@ impl HwSnapshot {
         let mut snapshot = self.clone();
         snapshot.sample_age_ms = snapshot.sample_age_ms.saturating_add(elapsed);
         snapshot.storage_age_ms = snapshot.storage_age_ms.saturating_add(elapsed);
+        if let Some(board) = &mut snapshot.motherboard {
+            board.interfaces_age_ms = board.interfaces_age_ms.saturating_add(elapsed);
+        }
         snapshot.received_at = Some(now);
         snapshot
     }
@@ -153,6 +156,11 @@ pub struct DiskHw {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct MotherboardHw {
+    #[serde(default)]
+    #[specta(optional = false)]
+    pub interfaces: Vec<BoardInterface>,
+    #[serde(default)]
+    pub interfaces_age_ms: u64,
     pub vendor: String,
     pub model: String,
     pub super_io: Option<String>,
@@ -162,6 +170,34 @@ pub struct MotherboardHw {
     #[serde(default)]
     #[specta(optional = false)]
     pub voltages_v: Vec<NamedValue>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct BoardInterface {
+    #[serde(default)]
+    #[specta(optional)]
+    pub usb: Option<UsbInterfaceDetails>,
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub connector: Option<String>,
+    pub supported_speed: Option<String>,
+    pub current_speed: Option<String>,
+    pub status: String,
+    pub device: Option<String>,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct UsbInterfaceDetails {
+    pub logical_port_count: u32,
+    pub user_connectable: Option<bool>,
+    pub maximum_speed_source: Option<String>,
+    pub device_capability: Option<String>,
+    pub device_capability_source: Option<String>,
+    pub topology_note: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type)]

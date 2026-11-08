@@ -54,7 +54,9 @@ public static class FanControl
         return new { fanId = args.FanId, mode = "bios" };
     }
 
-    public static object ResetFans(ComputerHost host)
+    public sealed record ResetReport(int attempted, int succeeded, int failed);
+
+    public static ResetReport ResetFans(ComputerHost host)
     {
         var attempted = 0;
         var succeeded = 0;
@@ -77,7 +79,7 @@ public static class FanControl
             }
         }
 
-        return new { attempted, succeeded, failed };
+        return new ResetReport(attempted, succeeded, failed);
     }
 
     private static IControl? FindControl(ComputerHost host, string fanId) => FindControl(AllHardware(host), fanId);

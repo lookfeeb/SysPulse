@@ -678,11 +678,12 @@ mod tests {
 
     #[test]
     fn custom_card_preserves_full_values_at_multiple_dpi_scales() {
-        let text = "SysPulse\r\n网速：↓107.8 KB/s  ↑1.20 MB/s\r\n硬盘：读 999.99 MB/s · 写 100.00 GB/s\r\nCPU 占用：100%\r\nCPU 温度：60°C\r\n内存：46%（14.76 GB / 31.85 GB）\r\n风扇：0 RPM";
+        let text = "SysPulse\r\n网速：↓107.8 KB/s  ↑1.20 MB/s\r\n今日流量：↓999.99 GB  ↑100.00 GB\r\n硬盘：读 999.99 MB/s · 写 100.00 GB/s\r\nCPU：100%\r\nCPU°：60°C\r\n内存：46% (14.76 GB / 31.85 GB)\r\n风扇：0 RPM";
         for dpi in [96, 120, 144, 192] {
             let card = Card::new(text, dpi, px(480, dpi)).unwrap();
-            assert_eq!(card.rows.len(), 6);
-            assert!(card.rows[1].value.ends_with("100.00 GB/s"));
+            assert_eq!(card.rows.len(), 7);
+            assert!(card.rows[1].value.ends_with("100.00 GB"));
+            assert!(card.rows[2].value.ends_with("100.00 GB/s"));
             assert!(card.height > px(180, dpi));
             assert!(card.width <= px(480, dpi));
             for row in &card.rows {
@@ -733,7 +734,7 @@ mod tests {
     #[test]
     fn rounded_corners_have_symmetric_premultiplied_alpha_at_every_dpi() {
         for dpi in [96, 120, 144, 192] {
-            let card = Card::new("SysPulse\n网速：↓112.0 KB/s ↑7.2 KB/s\nCPU 占用：11%\nCPU 温度：35°C\n内存：47%（15.03 GB / 31.85 GB）\n硬盘：读 0 B/s · 写 1.14 MB/s", dpi, px(480, dpi)).unwrap();
+            let card = Card::new("SysPulse\n网速：↓112.0 KB/s ↑7.2 KB/s\n今日流量：↓1.23 GB ↑456.00 MB\nCPU：11%\nCPU°：35°C\n内存：47% (15.03 GB / 31.85 GB)\n硬盘：读 0 B/s · 写 1.14 MB/s", dpi, px(480, dpi)).unwrap();
             let surface = card.render().unwrap();
             let pixels = surface.pixels();
             let alpha = |x: i32, y: i32| pixels[((y * card.width + x) * 4 + 3) as usize];
@@ -821,7 +822,7 @@ mod tests {
     fn breathing_light_changes_only_its_patch_and_never_accumulates_blur() {
         for dpi in [96, 120, 144, 192] {
             let card =
-                Card::new("SysPulse\nCPU 占用：40%\nCPU 温度：48°C", dpi, px(480, dpi)).unwrap();
+                Card::new("SysPulse\nCPU：40%\nCPU°：48°C", dpi, px(480, dpi)).unwrap();
             let mut surface = card.render().unwrap();
             let initial = surface.pixels().to_vec();
             surface.paint_light(dpi, 1.2);
@@ -887,7 +888,7 @@ mod tests {
             let directory = std::path::PathBuf::from(directory);
             std::fs::create_dir_all(&directory).unwrap();
             for dpi in [96, 120, 144, 192] {
-                let card = Card::new("SysPulse\n网速：↓120.0 KB/s  ↑3.3 KB/s\nCPU 占用：40%\nCPU 温度：48°C\n内存：51%（16.40 GB / 31.85 GB）\nCPU 频率：3.77 GHz", dpi, px(480, dpi)).unwrap();
+                let card = Card::new("SysPulse\n网速：↓28.1 KB/s  ↑2.23 MB/s\n今日流量：↓3.28 GB  ↑512.00 MB\nCPU：52%\nCPU°：55°C\nGPU：38%\nGPU°：62°C\n内存：53% (16.85 GB / 31.85 GB)\n风扇：1337 RPM", dpi, px(480, dpi)).unwrap();
                 render_preview(
                     &card,
                     directory.join(format!("tooltip-{dpi}.bmp")).as_os_str(),

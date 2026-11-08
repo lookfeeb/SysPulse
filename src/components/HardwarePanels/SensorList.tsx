@@ -54,7 +54,7 @@ export default function SensorList({
         title={<span style={{ fontWeight: 600, fontSize: 13, color: "#374151" }}>传感器详情</span>}
         style={{ borderRadius: 10 }}
       >
-        <Empty description="等待 hw-helper 第一帧…" />
+        <Empty description="等待硬件采集数据…" />
       </Card>
     );
   }

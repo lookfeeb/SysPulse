@@ -11,12 +11,21 @@ export function sensorAge(reported: number | undefined, elapsed = 0): number {
 export function visibleHardware<T extends {
   sampleAgeMs?: number; storageAgeMs?: number;
   cpu?: unknown; gpus?: unknown[]; memory?: unknown;
-  motherboard?: unknown; fans?: unknown[]; disks?: unknown[];
+  motherboard?: { interfacesAgeMs?: number; interfaces?: unknown[]; temperaturesC?: unknown[]; voltagesV?: unknown[] } | null;
+  fans?: unknown[]; disks?: unknown[];
 }>(snapshot: T, elapsed = 0): T {
+  const fastExpired = sensorAge(snapshot.sampleAgeMs, elapsed) > SENSOR_DISPLAY_MS;
+  const board = snapshot.motherboard;
+  const interfacesFresh = board?.interfaces != null && sensorAge(board.interfacesAgeMs, elapsed) <= 15000;
+  const motherboard = board ? (fastExpired && !interfacesFresh ? null : {
+    ...board,
+    ...(fastExpired ? { temperaturesC: [], voltagesV: [] } : {}),
+    ...(!interfacesFresh ? { interfaces: [] } : {}),
+  }) : board;
   return {
     ...snapshot,
-    ...(sensorAge(snapshot.sampleAgeMs, elapsed) > SENSOR_DISPLAY_MS
-      ? { cpu: null, gpus: [], memory: null, motherboard: null, fans: [] } : {}),
+    motherboard,
+    ...(fastExpired ? { cpu: null, gpus: [], memory: null, fans: [] } : {}),
     ...(sensorAge(snapshot.storageAgeMs, elapsed) > SENSOR_DISPLAY_MS ? { disks: [] } : {}),
   };
 }

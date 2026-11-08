@@ -1,4 +1,5 @@
 using LibreHardwareMonitor.Hardware;
+using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 
 namespace SysPulse.HwHelper;
@@ -6,6 +7,9 @@ namespace SysPulse.HwHelper;
 /// <summary>One association policy for both telemetry and writes; indices are not identities.</summary>
 public static class FanChannels
 {
+    // LHM identifiers are stable for a sensor's lifetime. Keep names, values
+    // and control attachments live, but avoid rebuilding identifier strings.
+    private static readonly ConditionalWeakTable<ISensor, string> Identifiers = new();
     private static readonly Regex BoardLabel = new(@"^(?:CPU(?: Optional)?|System|Chassis) Fan(?: #?\d+)?$",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     public sealed record Reading(string Name, string Id, int Index, SensorType Type, double? Value, IControl? Control);
@@ -29,7 +33,7 @@ public static class FanChannels
                 }
                 IControl? control = null;
                 try { control = sensor.Control; } catch { /* Optional capability. */ }
-                readings.Add(new(sensor.Name, sensor.Identifier.ToString(), sensor.Index, sensor.SensorType,
+                readings.Add(new(sensor.Name, Identifiers.GetValue(sensor, static s => s.Identifier.ToString()), sensor.Index, sensor.SensorType,
                     value is double v && double.IsFinite(v) ? v : null, control));
             }
             catch { /* A broken descriptor must not discard neighbouring channels. */ }

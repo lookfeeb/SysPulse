@@ -31,34 +31,38 @@ public sealed class HardwareSampler : IDisposable
     private bool _disposed;
 
     public HardwareSampler(ComputerHost host, Func<WmiCache> metadata)
-        : this(host.Inner.Hardware.ToArray(), host, metadata) { }
+        : this(host.Inner.Hardware.ToArray(), host, metadata, NativeMemory.Read) { }
 
     // The same collector path can run against synthetic devices without
     // opening drivers, allowing blocking I/O and shutdown to be verified.
-    public HardwareSampler(IHardware[] roots, object sensorGate, Func<WmiCache> metadata)
+    public HardwareSampler(IHardware[] roots, object sensorGate, Func<WmiCache> metadata,
+        Func<WmiCache, MemoryHw?>? memoryReader = null)
     {
         // One LHM lifetime, disjoint device trees. Storage I/O never takes the
         // sensor/control gate and cannot delay the CPU/fan publication.
         var sensors = roots.Where(h => h.HardwareType != HardwareType.Storage).ToArray();
         var disks = roots.Where(h => h.HardwareType == HardwareType.Storage).ToArray();
-        _fastThread = new Thread(() => Collect(sensorGate, sensors, metadata, _fast, 1000)) { IsBackground = true, Name = "sensors" };
-        _storageThread = new Thread(() => Collect(new object(), disks, metadata, _storage, 3000)) { IsBackground = true, Name = "storage-sensors" };
+        _fastThread = new Thread(() => Collect(sensorGate, sensors, metadata, _fast, 1000, memoryReader)) { IsBackground = true, Name = "sensors" };
+        _storageThread = new Thread(() => Collect(new object(), disks, metadata, _storage, 3000, null)) { IsBackground = true, Name = "storage-sensors" };
         _fastThread.Start();
         _storageThread.Start();
     }
 
-    private void Collect(object gate, IHardware[] devices, Func<WmiCache> metadata, SnapshotMailbox mailbox, int interval)
+    private void Collect(object gate, IHardware[] devices, Func<WmiCache> metadata, SnapshotMailbox mailbox,
+        int interval, Func<WmiCache, MemoryHw?>? memoryReader)
     {
         while (!_stop.IsSet) {
             var started = Stopwatch.GetTimestamp();
             try {
                 HwSnapshot snapshot;
-                lock (gate) snapshot = SnapshotBuilder.Build(ComputerHost.Refresh(devices), metadata());
+                var wmi = metadata();
+                lock (gate) snapshot = SnapshotBuilder.Build(ComputerHost.Refresh(devices), wmi);
+                if (memoryReader != null) snapshot.Memory = memoryReader(wmi);
                 mailbox.Publish(snapshot, started);
                 var elapsed = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
                 if (elapsed > 2000) Console.Error.WriteLine($"[hw-helper] {Thread.CurrentThread.Name} collection took {elapsed:F0} ms");
             } catch (Exception ex) { Console.Error.WriteLine($"[hw-helper] collector failed: {ex}"); }
-            if (_stop.Wait(interval)) break;
+            if (_stop.Wait(NextDelayMs(Stopwatch.GetElapsedTime(started), interval))) break;
         }
     }
 
@@ -66,17 +70,16 @@ public sealed class HardwareSampler : IDisposable
     {
         var (fast, age) = _fast.Read();
         var (storage, storageAge) = _storage.Read();
-        return new HwSnapshot {
-            TimestampMs = fast?.TimestampMs ?? 0,
-            SampleAgeMs = age,
-            StorageAgeMs = storageAge,
-            Cpu = age <= 30000 ? fast?.Cpu : null,
-            Gpus = age <= 30000 ? fast?.Gpus ?? new() : new(),
-            Memory = age <= 30000 ? fast?.Memory : null,
-            Motherboard = age <= 30000 ? fast?.Motherboard : null,
-            Fans = age <= 30000 ? fast?.Fans ?? new() : new(),
-            Disks = storageAge <= 30000 ? storage?.Disks ?? new() : new(),
-        };
+        return new HwSnapshot(fast, age, storage, storageAge);
+    }
+
+    // Include collection time in the period. Skip missed ticks instead of
+    // running catch-up bursts or busy-looping when a driver overruns.
+    public static int NextDelayMs(TimeSpan elapsed, int intervalMs)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(intervalMs);
+        var remainder = Math.Max(0, elapsed.TotalMilliseconds) % intervalMs;
+        return Math.Max(1, (int)Math.Ceiling(intervalMs - remainder));
     }
 
     public void Dispose()

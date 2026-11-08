@@ -22,7 +22,7 @@ public sealed class ComputerHost : IDisposable
         {
             IsCpuEnabled = true,
             IsGpuEnabled = true,
-            IsMemoryEnabled = true,
+            IsMemoryEnabled = false, // NativeMemory preserves exact Windows byte counters.
             IsMotherboardEnabled = true,
             IsControllerEnabled = true,
             IsStorageEnabled = true,
@@ -37,8 +37,15 @@ public sealed class ComputerHost : IDisposable
     public void Open()
     {
         if (_opened) return;
-        _computer.Open();
-        _opened = true;
+        try {
+            _computer.Open();
+            _opened = true;
+        } catch {
+            // In-process initialization cannot rely on killing a child to
+            // release devices opened before a later provider failed.
+            try { _computer.Close(); } catch { /* Preserve the initialization error. */ }
+            throw;
+        }
     }
 
     /// <summary>

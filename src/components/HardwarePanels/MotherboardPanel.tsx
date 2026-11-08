@@ -1,6 +1,7 @@
 import { Space, Tag, Typography } from "antd";
 import { FireOutlined, ThunderboltOutlined } from "@ant-design/icons";
 import type { MotherboardHw } from "@/bindings";
+import BoardInterfaces from "./BoardInterfaces";
 
 const { Text } = Typography;
 
@@ -27,6 +28,8 @@ export default function MotherboardPanel({ mb }: { mb: MotherboardHw }) {
           </Text>
         )}
       </div>
+
+      <BoardInterfaces ports={mb.interfaces ?? []} />
 
       {/* 温度 */}
       {temperatures.length > 0 && (

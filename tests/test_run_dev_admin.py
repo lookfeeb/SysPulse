@@ -2,6 +2,7 @@
 
 import base64
 import importlib.util
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -15,11 +16,20 @@ launcher = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(launcher)
 
 PWSH = r"C:\Program Files\PowerShell\7\pwsh.exe"
-TARGET = r"\\192.168.4.1\win_data\SysPulseBuildCache\target"
+TARGET = r"Z:\SysPulseBuildCache\target"
 
 
 @unittest.skipUnless(os.name == "nt", "Windows launcher")
 class LauncherTests(unittest.TestCase):
+    def test_target_directory_respects_environment_override(self):
+        override = r"D:\Build Cache\SysPulse"
+        with patch.dict(launcher.os.environ, {"CARGO_TARGET_DIR": override}), patch.object(
+            launcher.subprocess, "run", return_value=Mock(stdout=json.dumps({"target_directory": override}))
+        ) as run:
+            self.assertEqual(launcher.cargo_target_dir(), os.path.realpath(override))
+            self.assertEqual(run.call_args.kwargs["env"]["CARGO_TARGET_DIR"], override)
+            self.assertEqual(run.call_args.kwargs["cwd"], str(ROOT))
+
     def test_requires_major_version_seven(self):
         for version in ("5", "8", "7"):
             with self.subTest(version=version), patch.object(launcher.os.path, "isfile", return_value=True), patch.object(

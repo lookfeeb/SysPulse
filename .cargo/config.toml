@@ -1,5 +1,5 @@
 [build]
-# Z: maps to this share. Use UNC in every process, including elevated builds.
-# CI overrides this with CARGO_TARGET_DIR.
-# Keep Windows backslashes: MSVC treats a leading // as a linker option.
-target-dir = '\\192.168.4.1\win_data\SysPulseBuildCache\target'
+# Z: is the local build-cache disk; do not replace it with a network share.
+# Keep this path in sync with src-tauri/.cargo/config.toml.
+# Other machines and CI can override it with CARGO_TARGET_DIR.
+target-dir = 'Z:\SysPulseBuildCache\target'

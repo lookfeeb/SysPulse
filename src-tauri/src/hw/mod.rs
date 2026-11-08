@@ -1,7 +1,8 @@
 pub mod admin;
+pub mod binary;
 pub mod client;
 pub mod fan_control;
-pub mod protocol;
+pub mod native;
 pub mod sampler;
 pub mod snapshot;
 

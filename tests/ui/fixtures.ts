@@ -49,6 +49,11 @@ let pendingClean: ((result: CleanResult) => void) | null = null;
 let hardwareSnapshot: HwSnapshot | null = null;
 let hardwareFanControl: FanControlStatus = {fuseHold:false,fuseReason:null,maxTempC:null,entries:[]};
 export const hardwareFixture = {
+  async publishSnapshot(snapshot: HwSnapshot) {
+    hardwareSnapshot = snapshot;
+    await emit('hw:helper-status', { status: 'running', reason: null });
+    await emit('hw:update', snapshot);
+  },
   fanWrites: [] as Array<{fanId:string;mode:string;pwm?:number}>,
   fanWriteDelayMs: 150,
   failNextFanWrite: false,

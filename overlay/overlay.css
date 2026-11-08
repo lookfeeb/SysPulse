@@ -71,7 +71,7 @@ body {
   grid-auto-flow: column;
   align-items: center;
   justify-content: center;
-  column-gap: 2px;
+  column-gap: 8px;
   row-gap: 1px;
   white-space: nowrap;
   contain: layout paint;

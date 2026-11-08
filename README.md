@@ -6,14 +6,15 @@ Windows 桌面系统监控工具，使用 Rust / Tauri 2、React 19、TypeScript
 
 - **悬浮窗与概览**：显示网速、CPU、GPU、内存、温度、硬盘读写和风扇转速；显示项可拖动排序，网速与硬盘读写成对排列，宽度随内容调整。透明窗口贴合任务栏；图表按实际采样时间展示数据。
 - **自定义悬停卡**：使用 DirectWrite 绘制中文和数值，适配不同 DPI，提供透明平滑圆角和状态灯呼吸效果；面板不抢焦点，隐藏后停止动画。
-- **硬件监控**：普通传感器与磁盘独立采集。区分未知值与 `0 RPM`，超过 5 秒标记延迟、超过 30 秒显示未知。
+- **硬件监控**：普通传感器与磁盘独立采集，按 1 秒 / 3 秒周期刷新，超时跳过错过的周期。内存直接读取 Windows 原生字节计数；快照经同进程 C ABI 与二进制缓冲区读取。区分未知值与 `0 RPM`，超过 5 秒标记延迟、超过 30 秒显示未知。
 - **风扇控制**：提供固件自动、手动 PWM 和 CPU 温控曲线。只有确认转速与控制通道关联后才允许写入；CPU 温度缺失、过期、达到 90°C 或连续写入失败时触发保护并尝试恢复固件控制。看门狗周期为 2 秒。
 - **磁盘清理**：检查用户目录、固定磁盘和开发工具缓存，支持自定义项目根。扫描、清理和进度独立于页面，切换页面后继续运行；删除前复核文件身份、时间、保留期及重解析点，跳过占用或变化的文件。
 - **AI 管理**：管理 Kiro、Codex、Claude CLI 的 MCP 配置与 OAuth，启动时及每两小时静默扫描；按项目浏览全部来源会话，支持分页、导出及按来源能力删除 Kiro、Claude、Antigravity、Gemini 会话。包含本地 OAuth 代理、凭据加密和 Token 刷新。
 - **流量历史**：按日/月查询，每秒刷新累计下行、上行和合计，包含尚未落盘的增量。日期均为空时查询全部现存历史，CSV 导出沿用查询范围；日期面板使用数字月份。
+- **主板与扩展接口**：列出固件连接器、PCIe/M.2 插槽、PCIe 设备链路、USB 集线器逻辑端口和系统网卡；区分支持速率、当前链路速率、实时连接与固件开机占用状态，未报告的信息保持未知。USB/PCIe 链路/网卡约 5 秒刷新。
 - **系统设置**：固定采样间隔为 500～5000 ms，自适应采样为 500～2000 ms。支持 Windows 计划任务自启、托盘操作和应用更新，自启状态在页面切换间保持同步。
 
-传感器可用性和控制能力取决于硬件、驱动及权限。无法确认的数据与控制关联保持未知或只读。
+传感器可用性和控制能力取决于硬件、驱动及权限。无法确认的数据与控制关联保持未知或只读。同进程模式不再具有子进程崩溃隔离；原生驱动故障可能影响主程序，不能安全强杀一个卡住的驱动调用。
 
 ## 架构
 
@@ -21,7 +22,7 @@ Windows 桌面系统监控工具，使用 Rust / Tauri 2、React 19、TypeScript
 
 - **显示层**：主窗口使用 React、Ant Design 和 Zustand；任务栏悬浮窗使用独立 TypeScript / CSS 入口。原生悬停卡由 Rust UI 线程绘制。
 - **Rust 主进程**：Tauri 命令和事件连接界面与应用服务；共享快照供首次读取与悬停展示，采样、清理和持久化独立于页面运行。
-- **硬件子进程**：.NET helper 通过 stdio JSON Lines 与 Rust 通信，基于 LibreHardwareMonitor 采集；普通传感器、磁盘和 WMI 元数据分别处理。
+- **同进程硬件模块**：Rust 加载随程序打包的 .NET 8 运行时和 hw-helper.dll，在专用线程直接调用 C ABI，不启动硬件子进程。普通传感器、磁盘和接口分别采集；前端仍使用 Tauri 命令与事件。
 - **数据与控制**：流量 Writer 串行处理增量、查询和事务落盘；Rust 负责配置、文件清理、AI 客户端适配和风扇保护。
 
 调用链、模块入口、事件和生命周期见[架构文档](docs/architecture.md)。架构图提供 [Mermaid 源文件](docs/architecture.mmd)及可放大的 [SVG](docs/architecture.svg)。
@@ -64,9 +65,9 @@ npm run tauri:build
 
 正式更新包需要设置 `TAURI_SIGNING_PRIVATE_KEY`，并与 [tauri.conf.json](src-tauri/tauri.conf.json) 中的更新公钥匹配。仅验证桌面编译、不生成安装包时使用 `npm run tauri:build -- --no-bundle`。
 
-本机 Rust/Tauri 编译缓存统一位于 `Z:\SysPulseBuildCache\target`，默认安装包位于其 `release\bundle\nsis\`；指定 Rust 目标时位于 `<目标>\release\bundle\nsis\`。两个 [Cargo](.cargo/config.toml) [配置入口](src-tauri/.cargo/config.toml)统一使用 UNC 路径 `\\192.168.4.1\win_data\SysPulseBuildCache\target`，使普通和管理员构建中的插件权限文件路径一致。UNC 路径保留 Windows 反斜杠，避免 MSVC 将 `//` 识别为链接选项。
+本机 Rust/Tauri 编译缓存统一位于本地磁盘 `Z:\SysPulseBuildCache\target`，默认安装包位于其 `release\bundle\nsis\`；指定 Rust 目标时位于 `<目标>\release\bundle\nsis\`。两个 [Cargo](.cargo/config.toml) [配置入口](src-tauri/.cargo/config.toml)使用相同的本地路径，使从项目根目录和 `src-tauri/` 启动时复用同一缓存，不依赖网络共享。
 
-其他机器没有该共享目录时，通过 `CARGO_TARGET_DIR` 指向可访问的编译目录；GitHub Actions 已覆盖为工作区 `target/`。此配置只控制 Rust/Tauri target，npm 依赖与 helper 的默认中间目录仍在项目内。Release 默认启用 LTO，可通过 Cargo 环境变量覆盖。
+其他机器没有 Z 盘时，通过 `CARGO_TARGET_DIR` 指向可访问的编译目录，例如在 PowerShell 中执行 `$env:CARGO_TARGET_DIR = Join-Path $PWD 'target'`；管理员启动脚本也会保留此覆盖。GitHub Actions 已覆盖为工作区 `target/`。此配置只控制 Rust/Tauri target，npm 依赖与 helper 的默认中间目录仍在项目内。Release 默认启用 LTO，可通过 Cargo 环境变量覆盖。
 
 也可运行 `pwsh -NoProfile -ExecutionPolicy Bypass -File build.ps1`，使用交互菜单选择 LTO / 普通构建或清理构建缓存，并将安装包复制到 `release/`。脚本沿用 Tauri 的前端构建钩子，前端只编译一次。菜单中的版本输入会修改版本文件；需要变更版本时还应同步锁文件。
 
@@ -104,7 +105,12 @@ $cacheDir = (cargo metadata --manifest-path src-tauri/Cargo.toml --no-deps --for
 $validationDir = Join-Path $cacheDir "hw-validation"
 dotnet build tests/hw-helper/HwHelper.Tests.csproj --artifacts-path $validationDir -p:SelfContained=false
 dotnet (Join-Path $validationDir "bin/HwHelper.Tests/debug/HwHelper.Tests.dll")
+
+# 合成微基准：缓存读取、108 个传感器的快照构建和 JSON 行编码
+dotnet run --project tests/hw-helper/HwHelper.Tests.csproj -c Release -- --benchmark
 ```
+
+硬件性能测量方法、实机只读探针和“纳秒级缓存读取”的适用范围见 [helper 验证说明](tests/hw-helper/README.md)。
 
 前端测试覆盖状态恢复、请求去重、历史日期范围、清理任务跨页、会话导航、拖动排序和读数显示；Rust 回归覆盖流量查询与落盘一致性、文件删除边界、会话存储、OAuth、helper 生命周期及原生提示面板绘制。涉及删除的回归使用合成临时目录。硬件测试使用虚构设备和内存传感器，不查询 WMI、不加载驱动、不操作真实风扇。
 
@@ -114,7 +120,7 @@ dotnet (Join-Path $validationDir "bin/HwHelper.Tests/debug/HwHelper.Tests.dll")
 
 ```text
 SysPulse/
-├── .cargo/config.toml      通过 UNC 统一 Cargo 输出到 Z 盘编译缓存
+├── .cargo/config.toml      统一 Cargo 输出到本地 Z 盘编译缓存
 ├── .github/workflows/      x64 / ARM64 构建与发布
 ├── index.html              配置窗口入口
 ├── src/

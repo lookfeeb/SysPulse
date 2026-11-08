@@ -135,9 +135,9 @@ pub fn setup(app: &mut App) -> std::result::Result<(), Box<dyn std::error::Error
     // Subscribe to status and snapshots before a fast helper can publish ready.
     hw_client.start();
 
-    if !helper_path.exists() {
+    if !helper_path.join("hw-helper.dll").exists() {
         tracing::warn!(path = %helper_path.display(),
-            "hw-helper.exe not found; run scripts/build-helper.ps1 first");
+            "in-process hardware module not found; run scripts/build-helper.ps1 first");
     }
 
     let fan_control = hw::FanControlManager::new();
@@ -204,12 +204,12 @@ fn spawn_retention_cleanup(pool: storage::store::DbPool, config: Arc<ConfigManag
     });
 }
 
-/// Find `hw-helper.exe` in (a) packaged Tauri resources or (b) the dev
+/// Find the private runtime/assembly directory in packaged resources or the dev
 /// `src-tauri/resources/hw-helper/` produced by `scripts/build-helper.ps1`.
 fn resolve_helper_path(app: &App) -> PathBuf {
     if let Ok(resource_dir) = app.path().resource_dir() {
-        let p = resource_dir.join("hw-helper").join("hw-helper.exe");
-        if p.exists() {
+        let p = resource_dir.join("hw-helper");
+        if p.join("hw-helper.dll").exists() {
             return p;
         }
     }
@@ -217,9 +217,8 @@ fn resolve_helper_path(app: &App) -> PathBuf {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let p = manifest_dir
         .join("resources")
-        .join("hw-helper")
-        .join("hw-helper.exe");
-    if p.exists() {
+        .join("hw-helper");
+    if p.join("hw-helper.dll").exists() {
         return p;
     }
     // Last resort: workspace root + resources/...
@@ -228,7 +227,6 @@ fn resolve_helper_path(app: &App) -> PathBuf {
         .join("src-tauri")
         .join("resources")
         .join("hw-helper")
-        .join("hw-helper.exe")
 }
 
 fn apply_initial_window_state(app: &App, cfg: &crate::config::AppConfig) {

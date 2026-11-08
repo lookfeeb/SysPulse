@@ -29,6 +29,7 @@ using var stdout = new StreamWriter(Console.OpenStandardOutput(), new System.Tex
     AutoFlush = true,
     NewLine = "\n",
 };
+using var snapshotWriter = new SnapshotResponseWriter(stdout.BaseStream);
 
 using var host = new ComputerHost();
 try
@@ -66,7 +67,7 @@ while ((line = ReadRequestLine()) != null)
     Request? req;
     try
     {
-        req = JsonSerializer.Deserialize<Request>(line, jsonOpts);
+        req = ProtocolReader.Parse(line);
     }
     catch (Exception ex)
     {
@@ -80,9 +81,13 @@ while ((line = ReadRequestLine()) != null)
     }
     if (req is null) continue;
 
+    if (req.Op == "snapshot")
+    {
+        snapshotWriter.Write(req.Id, sampler.Read());
+        continue;
+    }
     Response response;
-    if (req.Op == "snapshot") response = Ok(req.Id, sampler.Read());
-    else if (req.Op == "shutdown") response = Ok(req.Id, null);
+    if (req.Op == "shutdown") response = Ok(req.Id, null);
     else if (Monitor.TryEnter(host, 100)) {
         try { response = HandleRequest(req, host); }
         finally { Monitor.Exit(host); }

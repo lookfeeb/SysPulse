@@ -190,6 +190,7 @@ export type AiToggleMcpServerArgs = { client: string; name: string; disabled: bo
 export type AiWorkspaceArgs = { workspaceHash: string }
 export type AppConfig = { schemaVersion: number; general: GeneralConfig; overlay: OverlayConfig; network: NetworkConfig; history: HistoryConfig }
 export type AppInfo = { name: string; version: string; os: string; arch: string; configDir: string; logsDir: string; dbFile: string }
+export type BoardInterface = { usb?: UsbInterfaceDetails | null; id: string; name: string; kind: string; connector: string | null; supportedSpeed: string | null; currentSpeed: string | null; status: string; device: string | null; source: string }
 export type CleanArgs = { scanId: string; categoryIds: string[]; excludedPaths: string[]; confirmCaution: boolean; confirmAdvanced: boolean }
 export type CleanPathReport = { path: string; category: string; deletedFiles: number; freedBytes: number; changedFiles: number; missingFiles: number; busyFiles: number; failedFiles: number; cancelledFiles: number; examples: string[] }
 export type CleanResult = { freedBytes: number; deletedFiles: number; skippedFiles: number; cancelled: boolean; paths: CleanPathReport[]; errors: string[] }
@@ -216,7 +217,7 @@ export type GeneralConfig = { sampleIntervalMs: number;
  */
 adaptiveInterval: boolean }
 export type GpuHw = { index: number; name: string; vendor: string; usagePercent: number | null; memUsedMb: number | null; memTotalMb: number | null; tempC: number | null; powerW: number | null; fanRpm: number | null; fanPwm: number | null }
-export type HelperStatus = "starting" | "running" | "restarting" | "unavailable"
+export type HelperStatus = "starting" | "running" | "unavailable"
 export type HelperStatusEvent = { status: HelperStatus; reason?: string | null }
 export type HistoryConfig = { retainDays: number }
 export type HistoryGranularity = "day" | "month"
@@ -231,7 +232,7 @@ export type LargeFileScanResult = { files: LargeFile[]; totalScanned: number }
 export type MemoryHw = { totalBytes: number; usedBytes: number; usedPercent: number; swapTotalBytes: number; swapUsedBytes: number; modules?: MemoryModule[]; frequencyMhz: number | null; channels: number | null }
 export type MemoryModule = { slot: string; capacityBytes: number; speedMtps: number | null; manufacturer: string; partNumber: string }
 export type MemorySnapshot = { totalBytes: number; usedBytes: number; usedPercent: number; swapTotalBytes: number; swapUsedBytes: number }
-export type MotherboardHw = { vendor: string; model: string; superIo: string | null; temperaturesC?: NamedValue[]; voltagesV?: NamedValue[] }
+export type MotherboardHw = { interfaces?: BoardInterface[]; interfacesAgeMs?: number; vendor: string; model: string; superIo: string | null; temperaturesC?: NamedValue[]; voltagesV?: NamedValue[] }
 export type NamedValue = { name: string; value: number; identifier?: string }
 export type NetworkConfig = { monitorMode: NetworkMonitorMode; monitorInterfaces: string[]; includeLoopback: boolean; includeVirtual: boolean }
 export type NetworkMonitorMode = "all" | "specified"
@@ -252,6 +253,7 @@ export type SetFanManualArgs = { fanId: string; pwm: number }
 export type Snapshot = { timestampMs: number; cpu: CpuSnapshot; memory: MemorySnapshot; network: NetworkSnapshot }
 export type TAURI_CHANNEL<TSend> = null
 export type UpdateDownloadEvent = { event: "Started"; data: { contentLength: number | null } } | { event: "Progress"; data: { downloaded: number; contentLength: number | null } } | { event: "Verifying" } | { event: "Installing" }
+export type UsbInterfaceDetails = { logicalPortCount: number; userConnectable: boolean | null; maximumSpeedSource: string | null; deviceCapability: string | null; deviceCapabilitySource: string | null; topologyNote: string | null }
 
 /** tauri-specta globals **/
 
