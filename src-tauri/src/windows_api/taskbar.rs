@@ -1,9 +1,11 @@
 //! Helpers for locating the Windows shell taskbar (`Shell_TrayWnd`) so we can
 //! position the overlay window in its notification area.
 //!
-//! True COM-based deskbands are deprecated on Windows 11. We instead use a
-//! topmost popup window sized to the taskbar and placed precisely where the
-//! deskband would have lived.
+//! The overlay is a taskbar child so it follows Explorer into the shell's
+//! higher Z-order band when Start opens. A desktop topmost popup cannot do so.
+
+mod docking;
+pub use docking::{dock_overlay, is_overlay_hit};
 
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
@@ -139,6 +141,9 @@ pub fn ensure_overlay_above_taskbar(overlay: HWND) -> windows::core::Result<()> 
 }
 
 fn ensure_above_window(overlay: HWND, reference: HWND) -> windows::core::Result<bool> {
+    if docking::is_taskbar_child(overlay, reference) {
+        return docking::raise_child_if_needed(overlay);
+    }
     // Leave other topmost windows (including menus and tooltips) alone when the
     // overlay is already above the taskbar. Never activate or reparent it.
     if !is_above_window(reference, overlay) {
@@ -203,6 +208,7 @@ pub struct PixelRect {
 
 #[derive(Debug, Clone, Copy)]
 pub struct TaskbarLayout {
+    pub hwnd: HWND,
     pub edge: TaskbarEdge,
     /// Whole `Shell_TrayWnd` rect in physical pixels (screen coords).
     pub bar: PixelRect,
@@ -256,6 +262,7 @@ pub fn find_taskbar_layout() -> Option<TaskbarLayout> {
         let tray_notify = tray_notify_hwnd.and_then(effective_tray_notify_rect);
 
         Some(TaskbarLayout {
+            hwnd: taskbar,
             edge,
             bar,
             tray_notify,

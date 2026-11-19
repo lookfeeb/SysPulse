@@ -1,11 +1,3 @@
-.cleanup-project-modal { max-width: calc(100vw - 40px); }
-.project-scope { display: flex; flex-direction: column; height: min(540px, calc(100vh - 48px)); min-height: 350px; color: #243e55; background: #fff; }
-.project-scope-header { display: flex; flex: 0 0 auto; align-items: center; gap: 13px; padding: 22px 24px; background: linear-gradient(120deg, #f1f7fc, #fbfdff); border-bottom: 1px solid #e6eef5; }
-.project-scope-icon { display: grid; place-items: center; width: 44px; height: 44px; flex-shrink: 0; border: 1px solid #d8e9f5; border-radius: 12px; background: #e7f2fc; color: #3287c6; font-size: 22px; }
-.project-scope-header > div { min-width: 0; flex: 1; }
-.project-scope-header h2 { margin: 0 0 4px; color: #203e56; font-size: 18px; font-weight: 650; }
-.project-scope-header p { margin: 0; color: #7b8e9e; font-size: 12px; }
-.project-scope-header .ant-btn { align-self: flex-start; color: #8a9dab; }
 .project-scope-auto { display: flex; flex: 0 0 auto; align-items: center; flex-wrap: wrap; gap: 8px; padding: 13px 24px; border-bottom: 1px solid #edf1f5; font-size: 11px; }
 .project-scope-auto > span:first-child { margin-right: 6px; color: #6e8396; }
 .project-scope-auto .anticon { margin-right: 5px; color: #479b80; }
@@ -34,20 +26,15 @@
 .project-scope-empty > span { display: grid; place-items: center; width: 52px; height: 52px; margin-bottom: 12px; border: 1px solid #e0ebf4; border-radius: 16px; color: #8eb2ce; background: #f0f6fb; font-size: 26px; }
 .project-scope-empty strong { color: #5b778e; font-size: 13px; font-weight: 500; }
 .project-scope-empty p { margin: 7px 0 0; color: #92a2af; font-size: 11px; line-height: 1.8; }
-.project-scope-footer { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; padding: 13px 24px; border-top: 1px solid #e9eff4; }
 .project-scope-footer > span { margin-right: auto; color: #7d919f; font-size: 11px; }
 .project-scope-footer > span .anticon { margin-right: 5px; color: #58a087; }
-.project-scope-footer .ant-btn { border-radius: 7px; font-size: 12px; }
-.project-scope-footer > .ant-btn:last-child { min-width: 72px; }
 @media (max-height: 620px) {
-  .project-scope-header { padding: 16px 20px; }
   .project-scope-content { padding: 16px 20px 10px; }
   .project-scope-toolbar { margin-bottom: 12px; }
-  .project-scope-auto, .project-scope-footer { padding-inline: 20px; }
+  .project-scope-auto { padding-inline: 20px; }
 }
 @media (max-width: 600px) {
-  .project-scope-header { gap: 10px; padding-inline: 16px; }
-  .project-scope-content, .project-scope-auto, .project-scope-footer { padding-inline: 16px; }
+  .project-scope-content, .project-scope-auto { padding-inline: 16px; }
   .project-scope-auto-note { display: none; }
   .project-scope-toolbar { align-items: flex-start; }
   .project-scope-toolbar p { max-width: 210px; }

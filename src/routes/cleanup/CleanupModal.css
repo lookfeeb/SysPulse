@@ -1,0 +1,19 @@
+.cleanup-modal { max-width: calc(100vw - 40px); }
+.cleanup-modal-shell { display: flex; flex-direction: column; height: min(540px, calc(100dvh - 48px)); min-height: 0; overflow: hidden; color: #243e55; background: #fff; }
+.cleanup-modal-header { display: flex; flex: 0 0 auto; align-items: center; gap: 13px; padding: 12px 24px; background: linear-gradient(120deg, #f1f7fc, #fbfdff); border-bottom: 1px solid #e6eef5; }
+.cleanup-modal-icon { display: grid; place-items: center; width: 44px; height: 44px; flex-shrink: 0; border: 1px solid #d8e9f5; border-radius: 12px; background: #e7f2fc; color: #3287c6; font-size: 22px; }
+.cleanup-modal-heading { min-width: 0; flex: 1; }
+.cleanup-modal-heading h2 { margin: 0 0 4px; color: #203e56; font-size: 18px; font-weight: 650; overflow-wrap: anywhere; }
+.cleanup-modal-heading p { margin: 0; color: #7b8e9e; font-size: 12px; }
+.cleanup-modal-close.ant-btn { align-self: flex-start; flex-shrink: 0; color: #8a9dab; }
+.cleanup-modal-footer { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; padding: 13px 24px; border-top: 1px solid #e9eff4; background: #fff; }
+.cleanup-modal-footer .ant-btn { border-radius: 7px; font-size: 12px; }
+.cleanup-modal-footer > .ant-btn:last-child { min-width: 72px; }
+@media (max-height: 620px) {
+  .cleanup-modal-header { padding: 12px 20px; }
+  .cleanup-modal-footer { padding-inline: 20px; }
+}
+@media (max-width: 600px) {
+  .cleanup-modal-header { gap: 10px; padding-inline: 16px; }
+  .cleanup-modal-footer { padding-inline: 16px; }
+}

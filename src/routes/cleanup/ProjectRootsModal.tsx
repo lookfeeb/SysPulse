@@ -4,19 +4,20 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { displayPath } from "@/utils/path";
 import { App, Button, Modal, Popconfirm, Tooltip } from "antd";
 import type { CleanupModel } from "./useCleanupModel";
+import "./CleanupModal.css";
 import "./ProjectRootsModal.css";
 
 export default function ProjectRootsModal({ model }: { model: CleanupModel }) {
   const { message } = App.useApp();
   const { busy, onAddProjectRoot, onReplaceProjectRoot, persistProjectRoots, projectManagerOpen, projectRoots, setProjectManagerOpen } = model;
   return <Modal title={null} closable={false} open={projectManagerOpen} onCancel={() => setProjectManagerOpen(false)}
-    footer={null} width={760} centered className="cleanup-project-modal"
+    footer={null} width={760} centered className="cleanup-modal cleanup-project-modal"
     styles={{ container: { padding: 0, overflow: "hidden" }, body: { padding: 0 } }}>
-    <div className="project-scope">
-      <header className="project-scope-header">
-        <span className="project-scope-icon"><FolderOpenOutlined /></span>
-        <div><h2>项目目录管理</h2><p>添加常用工作区，优先检查缓存与编译产物</p></div>
-        <Button type="text" icon={<CloseOutlined />} onClick={() => setProjectManagerOpen(false)} aria-label="关闭项目目录管理" />
+    <div className="project-scope cleanup-modal-shell">
+      <header className="cleanup-modal-header">
+        <span className="cleanup-modal-icon"><FolderOpenOutlined /></span>
+        <div className="cleanup-modal-heading"><h2>项目目录管理</h2><p>添加常用工作区，优先检查缓存与编译产物</p></div>
+        <Button type="text" className="cleanup-modal-close" icon={<CloseOutlined />} onClick={() => setProjectManagerOpen(false)} aria-label="关闭项目目录管理" />
       </header>
       <div className="project-scope-auto">
         <span><SafetyCertificateOutlined /> 自动扫描</span>
@@ -51,7 +52,7 @@ export default function ProjectRootsModal({ model }: { model: CleanupModel }) {
           </div>}
         </div>
       </section>
-      <footer className="project-scope-footer">
+      <footer className="project-scope-footer cleanup-modal-footer">
         <span><CheckCircleOutlined /> 更改自动保存</span>
         <Popconfirm title="清空全部项目目录？" description="仅移除扫描配置，磁盘上的文件会保留。" onConfirm={() => persistProjectRoots([])} disabled={busy || projectRoots.length === 0}>
           <Button type="text" danger disabled={busy || projectRoots.length === 0}>清空列表</Button>

@@ -57,7 +57,7 @@ Rust `HwClient` 使用一个专用工作线程，通过随包的 hostfxr 加载�
 
 ## 任务栏与原生悬停卡
 
-悬浮窗保持独立顶层窗口，通过 Win32 定位与层级事件跟随任务栏，定时检查作为后备恢复；不把窗口挂到 Explorer 的父子窗口树。显示项排序通过共享规则保持网速、硬盘读写成对，数值宽度按内容测量。
+悬浮窗在 UI 线程挂为任务栏子窗口，随任务栏进入开始菜单使用的系统窗口层级；普通顶层窗口的 `HWND_TOPMOST` 无法跨越该层级，`EnumWindows` 也可能漏掉此时的任务栏。挂载只执行一次，后续按屏幕到父窗口客户区的坐标转换更新位置和尺寸，用兄弟窗口顺序修复遮挡，未变化时不重绘。Explorer 重建任务栏导致子窗口销毁后，由原有看门狗重建 WebView 并重新挂载；若 Windows 暂时拒绝挂载，则回滚窗口样式，保留顶层窗口并重试。悬停命中检查窗口本身及 WebView2 子窗口，不能再以 `GA_ROOT` 判断。显示项排序通过共享规则保持网速、硬盘读写成对，数值宽度按内容测量。
 
 前端上报实际读数区域。Rust 悬停检测从共享快照构建文案，并在 UI 线程调用 [custom_tooltip.rs](../src-tauri/src/windows_api/custom_tooltip.rs)。[drawing.rs](../src-tauri/src/windows_api/custom_tooltip/drawing.rs) 用 DirectWrite 测量与绘制中文和数值，通过 Direct2D 灰度抗锯齿避免 ClearType 彩边；文字与几何使用同一 DPI 的物理像素坐标。
 

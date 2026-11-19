@@ -9,6 +9,10 @@
   height: 100%;
 }
 
+.dashboard-card > .ant-card-body {
+  padding-block: 12px;
+}
+
 .dashboard-card--third {
   grid-column: span 2;
 }
@@ -52,8 +56,9 @@
 }
 
 .dashboard-history-card .ant-card-head {
-  min-height: 48px;
-  border-bottom-color: #edf2f7;
+  min-height: 0;
+  padding-block: 12px 0;
+  border-bottom: 0;
 }
 
 .dashboard-history-card .ant-card-head::after {
@@ -62,7 +67,7 @@
 }
 
 .dashboard-history-card .ant-card-body {
-  padding: 16px;
+  padding: 8px 16px 16px;
   background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
   border-radius: 0 0 12px 12px;
 }
@@ -253,7 +258,7 @@
   }
 
   .dashboard-history-card .ant-card-body {
-    padding: 10px;
+    padding: 8px 10px 10px;
   }
 
   .dashboard-history-panel {

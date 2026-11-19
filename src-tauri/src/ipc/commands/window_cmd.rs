@@ -1,7 +1,7 @@
 use crate::app::AppState;
 use crate::config::OverlayConfig;
 use crate::error::{AppError, IpcError};
-use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, State};
+use tauri::{AppHandle, Manager, State};
 #[cfg(windows)]
 use windows::Win32::Foundation::RECT;
 #[cfg(windows)]
@@ -220,9 +220,7 @@ struct OverlayTooltipHit {
 #[cfg(windows)]
 fn overlay_tooltip_hit_test(app: &AppHandle) -> Option<OverlayTooltipHit> {
     use windows::Win32::Foundation::{HWND, POINT};
-    use windows::Win32::UI::WindowsAndMessaging::{
-        GetAncestor, GetCursorPos, WindowFromPoint, GA_ROOT,
-    };
+    use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, WindowFromPoint};
 
     let window = app.get_webview_window(OVERLAY_LABEL)?;
     if !window.is_visible().ok()? {
@@ -236,7 +234,7 @@ fn overlay_tooltip_hit_test(app: &AppHandle) -> Option<OverlayTooltipHit> {
         GetWindowRect(owner, &mut window_rect).ok()?;
         GetCursorPos(&mut cursor).ok()?;
         // A menu or another window covering the overlay must dismiss the card.
-        if GetAncestor(WindowFromPoint(cursor), GA_ROOT) != owner {
+        if !crate::windows_api::taskbar::is_overlay_hit(owner, WindowFromPoint(cursor)) {
             return None;
         }
     }
@@ -857,10 +855,13 @@ pub fn hide_config_window(app: AppHandle) -> Result<(), IpcError> {
 pub fn apply_overlay_config(app: &AppHandle, cfg: &OverlayConfig) -> Result<(), AppError> {
     let _ = cfg;
     if let Some(w) = app.get_webview_window(OVERLAY_LABEL) {
-        w.set_always_on_top(true).map_err(AppError::Tauri)?;
         w.set_ignore_cursor_events(false).map_err(AppError::Tauri)?;
-        w.show().map_err(AppError::Tauri)?;
-        let _ = dock_overlay_now(app);
+        #[cfg(not(windows))]
+        {
+            w.set_always_on_top(true).map_err(AppError::Tauri)?;
+            w.show().map_err(AppError::Tauri)?;
+        }
+        dock_overlay_now(app)?;
         watch_overlay_z_order(app, &w)?;
     }
     Ok(())
@@ -879,27 +880,17 @@ pub fn resize_overlay(
     state: State<'_, AppState>,
     args: ResizeArgs,
 ) -> Result<(), IpcError> {
-    let overlay_cfg = state.config.snapshot().overlay;
+    let _ = state;
     if let Some(w) = app.get_webview_window(OVERLAY_LABEL) {
         let scale = w.scale_factor().unwrap_or(1.0).max(0.1);
-        let mut width = logical_to_physical(args.width.max(40), scale);
-        let mut height = logical_to_physical(args.height.max(20), scale);
+        let width = logical_to_physical(args.width.max(40), scale);
+        let height = logical_to_physical(args.height.max(20), scale);
         #[cfg(windows)]
-        {
-            if let Some(layout) = crate::windows_api::taskbar::find_taskbar_layout() {
-                let (dock_w, dock_h) =
-                    crate::windows_api::taskbar::dock_size(&layout, width as i32, height as i32);
-                width = dock_w as u32;
-                height = dock_h as u32;
-            }
-        }
-
-        w.set_size(PhysicalSize::new(width, height))
+        dock_overlay_with_size(&app, Some((width as i32, height as i32)))?;
+        #[cfg(not(windows))]
+        w.set_size(tauri::PhysicalSize::new(width, height))
             .map_err(AppError::Tauri)?;
     }
-    // Keep the overlay flush against the taskbar after content reflow.
-    let _ = overlay_cfg;
-    let _ = dock_overlay_now(&app);
     Ok(())
 }
 
@@ -917,54 +908,35 @@ pub fn dock_overlay_to_taskbar(app: AppHandle, state: State<'_, AppState>) -> Re
 /// Reposition the overlay window to sit flush against the taskbar's
 /// notification area.
 pub fn dock_overlay_now(app: &AppHandle) -> Result<(), AppError> {
-    #[cfg(windows)]
-    {
-        let layout = crate::windows_api::taskbar::find_taskbar_layout()
-            .ok_or_else(|| AppError::NotFound("Shell_TrayWnd".into()))?;
-        if let Some(w) = app.get_webview_window(OVERLAY_LABEL) {
-            // Repair Z order even when the size and position already match.
-            crate::windows_api::taskbar::ensure_overlay_above_taskbar(
-                windows::Win32::Foundation::HWND(w.hwnd()?.0 as _),
-            )?;
-            let size = w.outer_size().map_err(AppError::Tauri)?;
-            let (win_w, win_h) = crate::windows_api::taskbar::dock_size(
-                &layout,
-                size.width as i32,
-                size.height as i32,
-            );
-            if win_w as u32 != size.width || win_h as u32 != size.height {
-                w.set_size(PhysicalSize::new(win_w as u32, win_h as u32))
-                    .map_err(AppError::Tauri)?;
-            }
-            let (x, y) = crate::windows_api::taskbar::dock_position(&layout, win_w, win_h);
-            if let Some(rect) = current_window_rect(&w) {
-                let current_w = rect.right - rect.left;
-                let current_h = rect.bottom - rect.top;
-                if rect.left == x && rect.top == y && current_w == win_w && current_h == win_h {
-                    return Ok(());
-                }
-            }
-            // Keep the WebView owned by SysPulse. Explorer can destroy and
-            // recreate Shell_TrayWnd during a shell crash, DPI change or update.
-            w.set_position(PhysicalPosition::new(x, y))
-                .map_err(AppError::Tauri)?;
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = app;
-    }
-    Ok(())
+    dock_overlay_with_size(app, None)
 }
 
-#[cfg(windows)]
-fn current_window_rect(w: &tauri::WebviewWindow) -> Option<RECT> {
-    use windows::Win32::Foundation::HWND;
+fn dock_overlay_with_size(
+    app: &AppHandle,
+    content_size: Option<(i32, i32)>,
+) -> Result<(), AppError> {
+    #[cfg(windows)]
+    {
+        let w = app
+            .get_webview_window(OVERLAY_LABEL)
+            .ok_or_else(|| AppError::NotFound(OVERLAY_LABEL.into()))?;
+        let hwnd = w.hwnd()?.0 as isize;
+        app.run_on_main_thread(move || {
+            use windows::Win32::Foundation::HWND;
+            use windows::Win32::UI::WindowsAndMessaging::IsWindow;
 
-    let hwnd = HWND(w.hwnd().ok()?.0 as _);
-    let mut rect = RECT::default();
-    unsafe { GetWindowRect(hwnd, &mut rect).ok()? };
-    Some(rect)
+            let hwnd = HWND(hwnd as *mut _);
+            if crate::app::is_shutting_down() || !unsafe { IsWindow(hwnd).as_bool() } {
+                return;
+            }
+            if let Err(error) = crate::windows_api::taskbar::dock_overlay(hwnd, content_size) {
+                tracing::warn!(?error, "dock taskbar overlay failed");
+            }
+        })?;
+    }
+    #[cfg(not(windows))]
+    let _ = (app, content_size);
+    Ok(())
 }
 
 pub fn spawn_taskbar_overlay_z_order_watchdog(app: AppHandle) {
@@ -984,11 +956,9 @@ pub fn spawn_taskbar_overlay_z_order_watchdog(app: AppHandle) {
 }
 
 fn restore_taskbar_overlay(app: &AppHandle) -> Result<(), AppError> {
-    if let Some(w) = get_or_create_overlay_window(app)? {
-        w.set_always_on_top(true).map_err(AppError::Tauri)?;
-        if !w.is_visible().unwrap_or(false) {
-            w.show().map_err(AppError::Tauri)?;
-        }
+    // Explorer destroys its child HWNDs when the taskbar is rebuilt. Tauri's
+    // Destroyed event removes the old WebView; recreate and attach on this tick.
+    if get_or_create_overlay_window(app)?.is_some() {
         dock_overlay_now(app)?;
     }
     Ok(())
