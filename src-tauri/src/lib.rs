@@ -33,7 +33,7 @@ pub fn run() {
     }));
 
     let single_instance = tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-        if let Err(e) = app::on_second_instance(app) {
+        if let Err(e) = ipc::commands::window_cmd::open_config_window(app) {
             tracing::warn!(?e, "on_second_instance handler failed");
         }
     });
@@ -90,7 +90,7 @@ pub fn run() {
             }
             tauri::RunEvent::Exit => {
                 #[cfg(windows)]
-                windows_api::taskbar::stop_overlay_z_order_watch();
+                windows_api::taskbar::stop_overlay_watchers();
                 tracing::info!("SysPulse runtime exited");
             }
             _ => {}

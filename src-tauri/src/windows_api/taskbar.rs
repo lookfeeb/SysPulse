@@ -5,7 +5,13 @@
 //! higher Z-order band when Start opens. A desktop topmost popup cannot do so.
 
 mod docking;
+#[cfg(all(test, feature = "desktop-tests"))]
+pub(crate) use docking::dock_to_layout;
 pub use docking::{dock_overlay, is_overlay_hit};
+mod lifecycle;
+pub use lifecycle::{watch_taskbar_restarts, OverlayRecovery, RecoveryAction, ShellIdentity};
+mod input;
+pub use input::watch as watch_overlay_input;
 
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
@@ -81,7 +87,12 @@ pub fn watch_overlay_z_order(overlay: HWND) -> windows::core::Result<()> {
     })
 }
 
-pub fn stop_overlay_z_order_watch() {
+pub fn stop_overlay_watchers() {
+    input::stop();
+    stop_overlay_z_order_watch();
+}
+
+fn stop_overlay_z_order_watch() {
     Z_ORDER_HOOKS.with(|slot| {
         slot.borrow_mut().take();
     });
@@ -427,6 +438,7 @@ pub fn dock_size(layout: &TaskbarLayout, content_w: i32, content_h: i32) -> (i32
 #[cfg(test)]
 mod z_order_tests {
     use super::*;
+    use windows::Win32::UI::Accessibility::NotifyWinEvent;
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DestroyWindow, DispatchMessageW, GetForegroundWindow, PeekMessageW,
         TranslateMessage, MSG, PM_REMOVE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
@@ -539,6 +551,10 @@ mod z_order_tests {
         let mut longest = std::time::Duration::ZERO;
         for _ in 0..30 {
             taskbar.raise();
+            // Off-screen STATIC fixtures do not reliably emit the shell's
+            // accessibility notifications. Exercise delivery through the real
+            // WinEvent hook with an explicit shell-equivalent reorder event.
+            unsafe { NotifyWinEvent(EVENT_OBJECT_REORDER, taskbar.0, OBJID_WINDOW.0, 0) };
             let start = std::time::Instant::now();
             while is_above_window(taskbar.0, overlay.0) && start.elapsed().as_millis() < 250 {
                 pump_events();

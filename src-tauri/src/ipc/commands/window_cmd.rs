@@ -10,6 +10,10 @@ use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
 const CONFIG_LABEL: &str = "config";
 const OVERLAY_LABEL: &str = "overlay";
 
+#[cfg(all(test, windows, feature = "desktop-tests"))]
+#[path = "window_cmd/desktop_tests.rs"]
+mod desktop_tests;
+
 #[derive(Clone, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct OverlayTooltipRegion {
@@ -835,11 +839,17 @@ mod tooltip_tests {
 #[tauri::command]
 #[specta::specta]
 pub fn show_config_window(app: AppHandle) -> Result<(), IpcError> {
-    if let Some(w) = app.get_webview_window(CONFIG_LABEL) {
-        w.show().map_err(AppError::Tauri)?;
-        w.unminimize().map_err(AppError::Tauri)?;
-        w.set_focus().map_err(AppError::Tauri)?;
-    }
+    open_config_window(&app).map_err(Into::into)
+}
+
+pub(crate) fn open_config_window(app: &AppHandle) -> Result<(), AppError> {
+    let w = app
+        .get_webview_window(CONFIG_LABEL)
+        .ok_or_else(|| AppError::NotFound(CONFIG_LABEL.into()))?;
+    w.show().map_err(AppError::Tauri)?;
+    w.unminimize().map_err(AppError::Tauri)?;
+    w.set_focus().map_err(AppError::Tauri)?;
+    tracing::debug!("config window shown");
     Ok(())
 }
 
@@ -861,8 +871,8 @@ pub fn apply_overlay_config(app: &AppHandle, cfg: &OverlayConfig) -> Result<(), 
             w.set_always_on_top(true).map_err(AppError::Tauri)?;
             w.show().map_err(AppError::Tauri)?;
         }
+        watch_overlay_events(app, &w)?;
         dock_overlay_now(app)?;
-        watch_overlay_z_order(app, &w)?;
     }
     Ok(())
 }
@@ -939,7 +949,24 @@ fn dock_overlay_with_size(
     Ok(())
 }
 
-pub fn spawn_taskbar_overlay_z_order_watchdog(app: AppHandle) {
+pub fn spawn_taskbar_overlay_watchdog(app: AppHandle) {
+    #[cfg(windows)]
+    let mut recovery = crate::windows_api::taskbar::OverlayRecovery::new(
+        crate::windows_api::taskbar::ShellIdentity::current(),
+    );
+    #[cfg(windows)]
+    if let Some(window) = app.get_webview_window(CONFIG_LABEL) {
+        let listener = window.hwnd().map(|hwnd| hwnd.0 as isize);
+        if let Ok(hwnd) = listener {
+            let _ = app.run_on_main_thread(move || {
+                if let Err(error) = crate::windows_api::taskbar::watch_taskbar_restarts(
+                    windows::Win32::Foundation::HWND(hwnd as *mut _),
+                ) {
+                    tracing::warn!(?error, "taskbar restart broadcast listener unavailable");
+                }
+            });
+        }
+    }
     tauri::async_runtime::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -948,16 +975,50 @@ pub fn spawn_taskbar_overlay_z_order_watchdog(app: AppHandle) {
             if crate::app::is_shutting_down() {
                 break;
             }
-            if let Err(e) = restore_taskbar_overlay(&app) {
+            if let Err(e) = restore_taskbar_overlay(
+                &app,
+                #[cfg(windows)]
+                &mut recovery,
+            ) {
                 tracing::debug!(?e, "taskbar overlay z-order watchdog skipped");
             }
         }
     });
 }
 
-fn restore_taskbar_overlay(app: &AppHandle) -> Result<(), AppError> {
-    // Explorer destroys its child HWNDs when the taskbar is rebuilt. Tauri's
-    // Destroyed event removes the old WebView; recreate and attach on this tick.
+fn restore_taskbar_overlay(
+    app: &AppHandle,
+    #[cfg(windows)] recovery: &mut crate::windows_api::taskbar::OverlayRecovery,
+) -> Result<(), AppError> {
+    #[cfg(windows)]
+    {
+        use crate::windows_api::taskbar::{RecoveryAction, ShellIdentity};
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::IsWindow;
+
+        let window = app.get_webview_window(OVERLAY_LABEL);
+        let valid = window.as_ref().map(|window| {
+            window
+                .hwnd()
+                .is_ok_and(|hwnd| unsafe { IsWindow(HWND(hwnd.0 as *mut _)).as_bool() })
+        });
+        match recovery.observe(ShellIdentity::current(), valid) {
+            RecoveryAction::Wait => return Ok(()),
+            RecoveryAction::Destroy => {
+                tracing::info!(
+                    "taskbar restarted or overlay HWND lost; rebuilding overlay WebView"
+                );
+                // Destroy queues runtime cleanup. Wait until Tauri removes the
+                // label before creating its replacement, avoiding duplicate labels.
+                if let Some(window) = window {
+                    window.destroy()?;
+                    recovery.destroy_requested();
+                }
+                return Ok(());
+            }
+            RecoveryAction::DockOrCreate => {}
+        }
+    }
     if get_or_create_overlay_window(app)?.is_some() {
         dock_overlay_now(app)?;
     }
@@ -983,14 +1044,16 @@ fn get_or_create_overlay_window(app: &AppHandle) -> Result<Option<tauri::Webview
         .map_err(AppError::Tauri)?
         .build()
         .map_err(AppError::Tauri)?;
-    watch_overlay_z_order(app, &w)?;
+    tracing::info!("overlay WebView recreated");
+    watch_overlay_events(app, &w)?;
     Ok(Some(w))
 }
 
-fn watch_overlay_z_order(app: &AppHandle, w: &tauri::WebviewWindow) -> Result<(), AppError> {
+fn watch_overlay_events(app: &AppHandle, w: &tauri::WebviewWindow) -> Result<(), AppError> {
     #[cfg(windows)]
     {
         let hwnd = w.hwnd()?.0 as isize;
+        let input_app = app.clone();
         app.run_on_main_thread(move || {
             if crate::app::is_shutting_down() {
                 return;
@@ -999,6 +1062,20 @@ fn watch_overlay_z_order(app: &AppHandle, w: &tauri::WebviewWindow) -> Result<()
                 windows::Win32::Foundation::HWND(hwnd as *mut _),
             ) {
                 tracing::warn!(?error, "overlay z-order event hooks unavailable");
+            }
+            if let Err(error) = crate::windows_api::taskbar::watch_overlay_input(
+                windows::Win32::Foundation::HWND(hwnd as *mut _),
+                move || {
+                    if crate::app::is_shutting_down() {
+                        return;
+                    }
+                    tracing::info!("overlay native double-click: opening config window");
+                    if let Err(error) = open_config_window(&input_app) {
+                        tracing::warn!(?error, "open config from overlay double-click failed");
+                    }
+                },
+            ) {
+                tracing::warn!(?error, "overlay native double-click handler unavailable");
             }
         })?;
     }

@@ -1,7 +1,6 @@
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
 
-let finishMenu: ((value: [number, string]) => void) | undefined;
 export const overlayFixture = {
   showCalls: 0,
   popupCalls: 0,
@@ -13,13 +12,12 @@ export const overlayFixture = {
     emit("stats:update", {cpu:{usagePercent:cpu},memory:{usedPercent:81},network:{total:{bytesSentPerSec:up,bytesRecvPerSec:down}}}),
     emit("hw:update", {cpu:{packageTempC:60,frequencyMhz:4200},fans:[{rpm}],disks:[{readBytesPerSec:down,writeBytesPerSec:up,tempC:42}]}),
   ]),
-  finishMenu: () => finishMenu?.([1, "fixture-menu"]),
 };
 
 mockWindows("overlay");
 mockIPC((command, payload) => {
   switch (command) {
-    case "plugin:menu|new": return new Promise<[number, string]>(resolve => { finishMenu = resolve; });
+    case "plugin:menu|new": return [1, "fixture-menu"];
     case "plugin:menu|popup": overlayFixture.popupCalls++; return null;
     case "show_config_window": overlayFixture.showCalls++; return null;
     case "get_overlay_config": return {items:overlayFixture.items};
@@ -29,8 +27,7 @@ mockIPC((command, payload) => {
   }
 }, {shouldMockEvents:true});
 
-// Use the production markup and script, holding menu creation to exercise
-// double-clicks before asynchronous overlay initialization has completed.
+// Use the production markup and script for layout and context-menu checks.
 const markup = new DOMParser().parseFromString(await (await fetch("/overlay/index.html")).text(), "text/html");
 document.body.append(markup.getElementById("root")!);
 await import("../../overlay/overlay");

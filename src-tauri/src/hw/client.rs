@@ -229,7 +229,11 @@ impl HwClient {
     }
     pub async fn shutdown(&self) {
         self.inner.stopping.store(true, Ordering::Release);
-        set_status(&self.inner, HelperStatus::Unavailable, Some("shutdown".into()));
+        set_status(
+            &self.inner,
+            HelperStatus::Unavailable,
+            Some("shutdown".into()),
+        );
         if !self.inner.started.load(Ordering::Acquire) {
             return;
         }

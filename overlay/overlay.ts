@@ -66,15 +66,6 @@ function applyConfig(cfg: OverlayConfig, root: HTMLElement) {
   layoutItems(root, orderedKeys);
 }
 
-function ensureOverlayRow(root: HTMLElement, className: string): HTMLElement {
-  let row = root.querySelector<HTMLElement>(`.${className}`);
-  if (!row) {
-    row = document.createElement("div");
-    row.className = `ov-row ${className}`;
-  }
-  return row;
-}
-
 function ensureOverlayGrid(root: HTMLElement): HTMLElement {
   let grid = root.querySelector<HTMLElement>(".ov-grid");
   if (!grid) {
@@ -97,23 +88,16 @@ function createPairCell(unit: Extract<LayoutUnit, { kind: "pair" }>): HTMLElemen
 
 function layoutItems(root: HTMLElement, orderedKeys: string[]) {
   const allItems = Array.from(root.querySelectorAll<HTMLElement>(".ov-item"));
-  const topRow = ensureOverlayRow(root, "ov-row-top");
-  const bottomRow = ensureOverlayRow(root, "ov-row-bottom");
   const grid = ensureOverlayGrid(root);
   const stash = document.createDocumentFragment();
   for (const item of allItems) stash.appendChild(item);
   root.querySelectorAll(".ov-pair-cell").forEach((cell) => cell.remove());
 
-  topRow.replaceChildren();
-  bottomRow.replaceChildren();
   grid.replaceChildren();
   for (const item of allItems) {
     item.style.gridColumn = "";
     item.style.gridRow = "";
   }
-
-  topRow.remove();
-  bottomRow.remove();
 
   const itemByKey = new Map(
     allItems.map((item) => [item.dataset.key || "", item] as const),
@@ -296,7 +280,7 @@ async function runMenuAction(action: string) {
   }
 }
 
-async function createContextMenu(root: HTMLElement) {
+async function createContextMenu() {
   const menu = await Menu.new({
     items: [
       { id: "settings", text: "设置", action: (id) => void runMenuAction(id) },
@@ -313,8 +297,6 @@ async function createContextMenu(root: HTMLElement) {
     ev.preventDefault();
     void menu.popup(undefined, getCurrentWindow());
   });
-  root.addEventListener("mouseenter", () => root.classList.add("hovering"));
-  root.addEventListener("mouseleave", () => root.classList.remove("hovering"));
 }
 
 async function main() {
@@ -327,14 +309,8 @@ async function main() {
     hoverSuppressed = false;
     syncTooltipRegions(root);
   });
-  // Bind before asynchronous initialization so opening the main window never
-  // depends on menu creation, configuration loading or sensor subscriptions.
-  document.body.addEventListener("dblclick", (event) => {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    void runMenuAction("settings");
-  });
-  await createContextMenu(root);
+  // Double-clicks are handled by the native overlay input hook.
+  await createContextMenu();
 
   let config: OverlayConfig | null = null;
   try {

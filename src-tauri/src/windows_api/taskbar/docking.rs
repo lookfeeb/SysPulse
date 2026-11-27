@@ -22,7 +22,7 @@ pub fn dock_overlay(overlay: HWND, content_size: Option<(i32, i32)>) -> Result<(
     dock_to_layout(overlay, &layout, content_size).map(|_| ())
 }
 
-fn dock_to_layout(
+pub(crate) fn dock_to_layout(
     overlay: HWND,
     layout: &TaskbarLayout,
     content_size: Option<(i32, i32)>,
@@ -181,8 +181,11 @@ mod tests {
     use super::super::{PixelRect, TaskbarEdge};
     use super::*;
     use windows::core::w;
+    use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+    use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
     use windows::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DestroyWindow, GetForegroundWindow, IsWindowVisible,
+        CreateWindowExW, DestroyWindow, GetForegroundWindow, IsWindowVisible, SendMessageW,
+        MA_ACTIVATEANDEAT, MA_NOACTIVATE, WM_LBUTTONDOWN, WM_MOUSEACTIVATE,
     };
 
     struct Window(HWND);
@@ -310,6 +313,81 @@ mod tests {
         assert!(is_overlay_hit(overlay.0, renderer.0));
         assert!(!is_overlay_hit(overlay.0, sibling.0));
         assert!(!is_overlay_hit(overlay.0, taskbar.0));
+    }
+
+    #[test]
+    fn webview_mouse_activation_does_not_let_the_shell_eat_clicks() {
+        unsafe extern "system" fn shell_activation(
+            window: HWND,
+            message: u32,
+            wparam: WPARAM,
+            lparam: LPARAM,
+            _id: usize,
+            _data: usize,
+        ) -> LRESULT {
+            if message == WM_MOUSEACTIVATE {
+                LRESULT(MA_ACTIVATEANDEAT as isize)
+            } else {
+                DefSubclassProc(window, message, wparam, lparam)
+            }
+        }
+
+        let taskbar = Window::new(None);
+        let overlay = Window::new(Some(taskbar.0));
+        let renderer = Window::new(Some(overlay.0));
+        let activation = LPARAM(((WM_LBUTTONDOWN << 16) | 1) as isize);
+        unsafe {
+            SetWindowSubclass(taskbar.0, Some(shell_activation), 1, 0)
+                .ok()
+                .unwrap();
+            // Reproduce the inherited shell behavior before installing the fix.
+            assert_eq!(
+                SendMessageW(
+                    renderer.0,
+                    WM_MOUSEACTIVATE,
+                    WPARAM(taskbar.0 .0 as usize),
+                    activation
+                )
+                .0,
+                MA_ACTIVATEANDEAT as isize,
+            );
+        }
+        dock_to_layout(overlay.0, &taskbar.layout(), Some((240, 32))).unwrap();
+        super::super::watch_overlay_input(overlay.0, || {}).unwrap();
+        struct StopInput;
+        impl Drop for StopInput {
+            fn drop(&mut self) {
+                super::super::input::stop();
+            }
+        }
+        let _stop = StopInput;
+        for _ in 0..2 {
+            assert_eq!(
+                unsafe {
+                    SendMessageW(
+                        renderer.0,
+                        WM_MOUSEACTIVATE,
+                        WPARAM(taskbar.0 .0 as usize),
+                        activation,
+                    )
+                }
+                .0,
+                MA_NOACTIVATE as isize,
+            );
+        }
+        super::super::input::stop();
+        assert_eq!(
+            unsafe {
+                SendMessageW(
+                    renderer.0,
+                    WM_MOUSEACTIVATE,
+                    WPARAM(taskbar.0 .0 as usize),
+                    activation,
+                )
+                .0
+            },
+            MA_ACTIVATEANDEAT as isize
+        );
     }
 
     #[test]

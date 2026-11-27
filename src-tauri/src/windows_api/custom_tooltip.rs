@@ -821,8 +821,7 @@ mod tests {
     #[test]
     fn breathing_light_changes_only_its_patch_and_never_accumulates_blur() {
         for dpi in [96, 120, 144, 192] {
-            let card =
-                Card::new("SysPulse\nCPU：40%\nCPU°：48°C", dpi, px(480, dpi)).unwrap();
+            let card = Card::new("SysPulse\nCPU：40%\nCPU°：48°C", dpi, px(480, dpi)).unwrap();
             let mut surface = card.render().unwrap();
             let initial = surface.pixels().to_vec();
             surface.paint_light(dpi, 1.2);

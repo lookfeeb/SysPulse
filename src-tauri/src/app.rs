@@ -1,8 +1,7 @@
 use crate::config::ConfigManager;
-use crate::error::Result;
 use crate::hw::{HwClient, HwSamplerHandle, HwSnapshot};
 use crate::ipc::commands::window_cmd::{
-    apply_overlay_config, spawn_overlay_tooltip_watchdog, spawn_taskbar_overlay_z_order_watchdog,
+    apply_overlay_config, spawn_overlay_tooltip_watchdog, spawn_taskbar_overlay_watchdog,
 };
 use crate::ipc::events::{emit_config_changed, emit_overlay_config_changed, emit_stats};
 use crate::monitor::Snapshot;
@@ -166,7 +165,7 @@ pub fn setup(app: &mut App) -> std::result::Result<(), Box<dyn std::error::Error
     if let Some(state) = app.try_state::<AppState>() {
         apply_initial_window_state(app, &state.config.snapshot());
     }
-    spawn_taskbar_overlay_z_order_watchdog(app.handle().clone());
+    spawn_taskbar_overlay_watchdog(app.handle().clone());
     spawn_overlay_tooltip_watchdog(app.handle().clone());
 
     #[cfg(windows)]
@@ -215,9 +214,7 @@ fn resolve_helper_path(app: &App) -> PathBuf {
     }
     // dev fallback: walk up from CARGO_MANIFEST_DIR
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let p = manifest_dir
-        .join("resources")
-        .join("hw-helper");
+    let p = manifest_dir.join("resources").join("hw-helper");
     if p.join("hw-helper.dll").exists() {
         return p;
     }
@@ -235,15 +232,6 @@ fn apply_initial_window_state(app: &App, cfg: &crate::config::AppConfig) {
     if let Err(error) = apply_overlay_config(app.handle(), &cfg.overlay) {
         tracing::warn!(?error, "apply initial overlay state failed");
     }
-}
-
-pub fn on_second_instance(app: &AppHandle) -> Result<()> {
-    if let Some(w) = app.get_webview_window("config") {
-        w.show()?;
-        w.unminimize()?;
-        w.set_focus()?;
-    }
-    Ok(())
 }
 
 static SHUTTING_DOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -309,7 +297,7 @@ pub fn on_window_event(window: &tauri::Window, event: &WindowEvent) {
     if matches!(event, WindowEvent::Destroyed) {
         #[cfg(windows)]
         if window.label() == "overlay" {
-            crate::windows_api::taskbar::stop_overlay_z_order_watch();
+            crate::windows_api::taskbar::stop_overlay_watchers();
             crate::windows_api::custom_tooltip::destroy();
         }
         tracing::warn!(

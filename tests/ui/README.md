@@ -20,15 +20,23 @@ node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5175
 
 `?cleanup-paths` 使用带扩展前缀的盘符与 UNC 路径；路径显示应去掉前缀，点击后 `cleanupFixture.revealCalls` 保存原始路径，勾选不变。设置 `cleanupFixture.failNextReveal = true` 可检查定位失败提示。
 
-`/tests/ui/overlay.html` 加载真实悬浮窗，暂挂菜单初始化。导入 `overlayFixture`（`/tests/ui/overlay-fixture.ts`）检查 `showCalls`：单击不增加、双击增加一次；调用 `finishMenu()` 后仍然有效，右键增加 `popupCalls`。
+`/tests/ui/overlay.html` 加载真实悬浮窗和模拟菜单。导入 `overlayFixture`（`/tests/ui/overlay-fixture.ts`）检查布局与菜单调用：右键增加 `popupCalls`。双击由原生鼠标入口处理，浏览器页面不模拟这条链路，见下方真实鼠标验收。
 
-菜单初始化完成后，调用 `await overlayFixture.publish(38.6 * 1024 ** 2, 7.22 * 1024 ** 2)` 检查完整网速单位与两行布局；`sizes` 保存窗口尺寸请求，`configure(items)` 切换模拟显示项。可用 `publish(0, 128, 73, 0)` 验证数值变短后窗口收缩，所有调用仅影响隔离页面。
+调用 `await overlayFixture.publish(38.6 * 1024 ** 2, 7.22 * 1024 ** 2)` 检查完整网速单位与两行布局；`sizes` 保存窗口尺寸请求，`configure(items)` 切换模拟显示项。可用 `publish(0, 128, 73, 0)` 验证数值变短后窗口收缩，所有调用仅影响隔离页面。
 
 加入 `disk-read` 显示项后检查“硬”“盘”竖排、读取/写入 SVG 图标和完整单位。`regionCalls` 记录悬停区域：按下鼠标后最后一次 `regions` 为空，后续刷新仍为空，离开后恢复。自绘提示面板在 Rust 原生测试中检查；设置 `SYSPULSE_TOOLTIP_PREVIEW` 为 BMP 路径可导出同一绘制函数的预览。
 
-任务栏层级必须在真实 Windows 桌面验证，浏览器模拟入口不能覆盖：打开、关闭开始菜单和搜索面板时，悬浮窗应持续可见、读数继续刷新，菜单焦点不被抢走；改变显示项后窗口仍紧贴通知区域，悬停卡和双击入口有效。另检查负坐标副屏、DPI 调整和自动隐藏任务栏；手动重启 Explorer 后，悬浮窗应在后备检查周期（2 秒）内开始重建。Windows 11 打开开始菜单会把任务栏从桌面 band 1 切到系统 band 6，普通置顶窗口无法跨层级显示。
+任务栏层级必须在真实 Windows 桌面验证，浏览器模拟入口不能覆盖：打开、关闭开始菜单和搜索面板时，悬浮窗应持续可见、读数继续刷新，菜单焦点不被抢走；改变显示项后窗口仍紧贴通知区域，悬停卡和双击入口有效。另检查负坐标副屏、DPI 调整和自动隐藏任务栏；手动重启 Explorer 后，悬浮窗应在后备检查周期（2 秒）内开始销毁失效 WebView，旧窗口清理后通常在下一周期重新显示，随后读数刷新、双击和右键菜单均应可用。连续重启两次再验一次，并在主窗口隐藏及最小化时分别双击检查。Windows 11 打开开始菜单会把任务栏从桌面 band 1 切到系统 band 6，普通置顶窗口无法跨层级显示。
 
 原生回归运行 `cargo test --manifest-path src-tauri/Cargo.toml --locked --lib windows_api::taskbar -- --test-threads=1`，覆盖任务栏子窗口挂载、负坐标定位、重复检查不重绘、撤销顶层置顶、兄弟窗口层级恢复、WebView2 后代窗口命中、挂载失败回滚及父窗口销毁后的新窗口挂载。测试使用离屏合成窗口，不重启真实 Explorer。
+
+新增回归还覆盖任务栏广播、句柄/进程复用、宿主 HWND 仍存在时主动销毁、异步清理期间避免重复创建，以及 WebView 子窗口的鼠标激活请求不会交给任务栏吞掉。层级通知测试显式发送 `NotifyWinEvent`，通过真实系统钩子验证回调，避免依赖离屏合成窗口是否自动产生通知。
+
+Windows 双击统一由原生鼠标入口处理，仅在悬浮窗及其 WebView2 后代 HWND 内识别按下/松开序列，使用系统双击时间和距离设置；拖动、右键、窗口外点击会取消序列。钩子不拦截鼠标消息，识别后向 UI 线程投递打开主窗口的消息，窗口销毁时解除钩子。
+
+真实鼠标验收：运行 `cargo test --manifest-path src-tauri/Cargo.toml --locked --features desktop-tests --lib physical_double_click_opens_hidden_minimized_and_recreated_overlay -- --ignored --test-threads=1 --nocapture`，在“SysPulse 悬浮窗双击验收”的蓝色区域双击。前两轮主窗口打开后关闭它继续；测试分别验证隐藏、最小化、悬浮窗重建三种情况，断言主窗口可见且获得前台焦点。这个测试页面没有任何网页双击处理，也不直接调用打开窗口命令，必须通过真实鼠标走完整原生链路；它使用测试父窗口和独立浏览器配置，不重启 Explorer。
+
+独立运行 `cargo test --manifest-path src-tauri/Cargo.toml --locked --features desktop-tests --lib shell_broadcast_recreates_a_live_tauri_host_and_settings_ipc_still_works -- --ignored --test-threads=1` 可用真实 Tauri/WebView2 验证两轮“宿主仍存活 → 重建广播 → 销毁/注册移除 → 同名重建 → 打开设置 IPC”。该测试使用独立临时浏览器配置和离屏窗口，不启动采样、不读取用户应用配置、不重启 Explorer；它不代替真实鼠标双击验收。`desktop-tests` 仅供测试，额外为测试程序嵌入公共控件 v6 清单，以加载 Tauri 的原生窗口依赖。
 
 | 地址参数 | 数据与检查重点 |
 | --- | --- |

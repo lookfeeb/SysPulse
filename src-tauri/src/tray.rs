@@ -75,10 +75,8 @@ fn handle_menu_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
 }
 
 fn show_config_window(app: &AppHandle) {
-    if let Some(w) = app.get_webview_window("config") {
-        let _ = w.show();
-        let _ = w.unminimize();
-        let _ = w.set_focus();
+    if let Err(error) = crate::ipc::commands::window_cmd::open_config_window(app) {
+        tracing::warn!(?error, "open config from tray failed");
     }
 }
 

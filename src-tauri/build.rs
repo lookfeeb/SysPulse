@@ -9,6 +9,13 @@ fn main() {
     println!("cargo:rerun-if-changed=.cargo/config.toml");
 
     if std::env::var_os("CARGO_CFG_WINDOWS").is_some() {
+        if std::env::var_os("CARGO_FEATURE_DESKTOP_TESTS").is_some() {
+            // embed_manifest targets application bins, not lib test harnesses.
+            // Tauri's TaskDialogIndirect import needs Common Controls v6 even
+            // in an ignored integration test, before the harness can start.
+            println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
+            println!("cargo:rustc-link-arg=/MANIFESTDEPENDENCY:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'");
+        }
         let level = if std::env::var("PROFILE").as_deref() == Ok("release") {
             ExecutionLevel::RequireAdministrator
         } else {

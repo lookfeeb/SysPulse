@@ -45,23 +45,6 @@ body {
   box-sizing: border-box;
   max-width: none;
   gap: 2px 8px;
-  transition:
-    background-color 120ms ease,
-    box-shadow 120ms ease,
-    border-color 120ms ease;
-}
-
-#root.hovering {
-  background: transparent;
-  box-shadow: none;
-}
-
-.ov-row {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  white-space: nowrap;
 }
 
 .ov-grid {

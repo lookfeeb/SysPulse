@@ -1,6 +1,6 @@
 [package]
 name = "syspulse"
-version = "0.1.34"
+version = "0.1.35"
 description = "Lightweight Windows network/system monitor"
 authors = ["SysPulse"]
 edition = "2021"
@@ -95,6 +95,8 @@ windows = { version = "0.58", features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Accessibility",
     "Win32_UI_Controls",
+    "Win32_UI_Shell",
+    "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_HiDpi",
     "Win32_System_LibraryLoader",
     "Win32_Graphics_Gdi",
@@ -108,6 +110,8 @@ windows = { version = "0.58", features = [
 default = []
 # Used when bundling so Tauri serves frontend over the asset:// protocol.
 custom-protocol = ["tauri/custom-protocol"]
+# Opt-in integration tests that instantiate a real Tauri/WebView2 runtime.
+desktop-tests = []
 
 [profile.release]
 opt-level = "z"

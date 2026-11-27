@@ -2,8 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { Modal, Skeleton } from "antd";
 import {
   CloudDownloadOutlined,
-  FileTextOutlined,
-  TagOutlined,
   ClockCircleOutlined,
 } from "@ant-design/icons";
 import { marked } from "marked";
@@ -81,22 +79,32 @@ export default function UpdateNotesModal({
   return (
     <Modal
       className="unm-modal"
+      rootClassName="unm-root"
       open={open}
       onCancel={onClose}
-      onOk={onClose}
-      title={null}
       width={640}
-      footer={null}
-      styles={{
-        body: { padding: 0 },
-        container: { borderRadius: 14, overflow: "hidden" },
-      }}
+      centered
+      closable={{ "aria-label": "关闭" }}
+      closeIcon={
+        <svg className="unm-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M6 6l12 12M18 6 6 18" />
+        </svg>
+      }
+      footer={
+        <button type="button" className="unm-confirm" onClick={onClose}>
+          知道了
+        </button>
+      }
       destroyOnHidden
-    >
-      <header className="unm-head" data-variant={isCurrent ? "current" : "update"}>
-        <div className="unm-head-row">
-          <div className="unm-mark">
-            {isCurrent ? <FileTextOutlined /> : <CloudDownloadOutlined />}
+      title={
+        <header className="unm-head">
+          <div className="unm-mark" aria-hidden="true">
+            {isCurrent ? (
+              <svg className="unm-icon" viewBox="0 0 24 24">
+                <path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z" />
+                <path d="M14 3v5h5M9 13h6M9 17h4" />
+              </svg>
+            ) : <CloudDownloadOutlined />}
           </div>
           <div className="unm-head-text">
             <h2 className="unm-title">
@@ -104,12 +112,15 @@ export default function UpdateNotesModal({
             </h2>
             <div className="unm-meta">
               <span className="unm-ver">
-                <TagOutlined />
+                <svg className="unm-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z" />
+                  <circle cx="7.5" cy="7.5" r="1.2" />
+                </svg>
                 v{version}
               </span>
-              {!isCurrent && (
-                <span className="unm-ver unm-ver--old">当前 v{currentVersion}</span>
-              )}
+              <span className="unm-current">
+                {isCurrent ? "当前版本" : `当前 v${currentVersion}`}
+              </span>
               {publishDate && (
                 <span className="unm-time">
                   <ClockCircleOutlined />
@@ -118,25 +129,30 @@ export default function UpdateNotesModal({
               )}
             </div>
           </div>
-        </div>
-      </header>
-
-      <div className="unm-body">
-        {html === null ? (
-          <Skeleton active paragraph={{ rows: 5 }} title={false} />
+        </header>
+      }
+    >
+      <div className="unm-body" aria-busy={loading || html === null}>
+        {loading || html === null ? (
+          <div className="unm-loading" role="status" aria-label="正在加载更新日志">
+            <Skeleton active paragraph={{ rows: 5 }} title={false} />
+          </div>
         ) : trimmed ? (
-          <>
-            <div className="unm-label">
-              更新内容
-              <i aria-hidden="true" />
-            </div>
-            <div
-              className="update-notes"
-              dangerouslySetInnerHTML={{ __html: html }}
-            />
-          </>
+          <div
+            className="unm-notes"
+            dangerouslySetInnerHTML={{ __html: html }}
+          />
         ) : (
-          <span className="unm-void">此版本发行说明为空。</span>
+          <div className="unm-empty">
+            <svg className="unm-art" viewBox="0 0 120 96" aria-hidden="true">
+              <rect className="unm-art-sheet" x="22" y="10" width="76" height="76" rx="10" />
+              <path className="unm-art-lines" d="M38 34h44M38 48h44M38 62h24" />
+              <circle className="unm-art-badge" cx="92" cy="72" r="16" />
+              <path className="unm-art-minus" d="M85 72h14" />
+            </svg>
+            <strong>此版本发行说明为空</strong>
+            <p>作者没有为 v{version} 填写更新内容，暂时没有可显示的变更记录。</p>
+          </div>
         )}
       </div>
     </Modal>
